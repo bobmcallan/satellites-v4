@@ -1,0 +1,8 @@
+{
+    "mcpServers": {
+        "satellites": {
+            "type": "http",
+            "url": "https://satellites-pprod.fly.dev/mcp"
+        }
+    }
+}

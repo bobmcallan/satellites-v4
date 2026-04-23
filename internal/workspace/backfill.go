@@ -123,7 +123,7 @@ func BackfillPrimitives(
 // resolveProjectWorkspace returns the current workspace_id for a project,
 // or empty if the project no longer exists or has no workspace stamped.
 func resolveProjectWorkspace(ctx context.Context, projects project.Store, projectID string) (string, error) {
-	p, err := projects.GetByID(ctx, projectID)
+	p, err := projects.GetByID(ctx, projectID, nil)
 	if err != nil {
 		return "", err
 	}

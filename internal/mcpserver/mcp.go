@@ -266,12 +266,12 @@ func (s *Server) handleInfo(ctx context.Context, req mcpgo.CallToolRequest) (*mc
 // project or it must be the system default; cross-project access returns
 // an error. (2) otherwise, fall back to the caller's first owned project.
 // (3) otherwise, fall back to the system default.
-func (s *Server) resolveProjectID(ctx context.Context, requested string, caller CallerIdentity) (string, error) {
+func (s *Server) resolveProjectID(ctx context.Context, requested string, caller CallerIdentity, memberships []string) (string, error) {
 	if requested != "" {
 		if requested == s.defaultProjectID {
 			return requested, nil
 		}
-		p, err := s.projectsSafe().GetByID(ctx, requested)
+		p, err := s.projectsSafe().GetByID(ctx, requested, memberships)
 		if err != nil {
 			return "", errors.New("project not found or access denied")
 		}
@@ -281,7 +281,7 @@ func (s *Server) resolveProjectID(ctx context.Context, requested string, caller 
 		return requested, nil
 	}
 	if s.projects != nil && caller.UserID != "" {
-		list, err := s.projects.ListByOwner(ctx, caller.UserID)
+		list, err := s.projects.ListByOwner(ctx, caller.UserID, memberships)
 		if err == nil && len(list) > 0 {
 			return list[0].ID, nil
 		}
@@ -304,27 +304,64 @@ func (s *Server) projectsSafe() project.Store {
 	return project.NewMemoryStore()
 }
 
-// resolveCallerWorkspaceID returns the caller's default workspace id. Falls
-// back to an empty string when the caller has no workspace — the write-path
-// stores accept that and the boot-time backfill stamps them later.
-func (s *Server) resolveCallerWorkspaceID(ctx context.Context, caller CallerIdentity) string {
-	if s.workspaces == nil || caller.UserID == "" {
-		return ""
+// ensureCallerWorkspaces returns the caller's member-workspace ids, minting
+// a default workspace on first sight via workspace.EnsureDefault (matches
+// the OnUserCreated hook for human logins, and covers synthetic callers
+// like API keys that didn't flow through the auth bootstrap path). Returns
+// nil when the workspace store is disabled (pre-tenant mode). Empty slice
+// only when the caller is unauthenticated.
+func (s *Server) ensureCallerWorkspaces(ctx context.Context, caller CallerIdentity) []string {
+	if s.workspaces == nil {
+		return nil
+	}
+	if caller.UserID == "" {
+		return []string{}
 	}
 	list, err := s.workspaces.ListByMember(ctx, caller.UserID)
-	if err != nil || len(list) == 0 {
+	if err != nil {
+		return []string{}
+	}
+	if len(list) == 0 {
+		if _, err := workspace.EnsureDefault(ctx, s.workspaces, s.logger, caller.UserID, time.Now().UTC()); err == nil {
+			list, _ = s.workspaces.ListByMember(ctx, caller.UserID)
+		}
+	}
+	out := make([]string, 0, len(list))
+	for _, w := range list {
+		out = append(out, w.ID)
+	}
+	return out
+}
+
+// resolveCallerWorkspaceID returns the caller's default workspace id, or
+// empty when the caller is unauthenticated or the workspace store is off.
+// Write paths use this to stamp workspace_id on new rows.
+func (s *Server) resolveCallerWorkspaceID(ctx context.Context, caller CallerIdentity) string {
+	ids := s.ensureCallerWorkspaces(ctx, caller)
+	if len(ids) == 0 {
 		return ""
 	}
-	return list[0].ID
+	return ids[0]
+}
+
+// resolveCallerMemberships returns the caller's memberships slice as the
+// store reads expect: nil when the workspace store is disabled (pre-tenant
+// behaviour), empty slice when the caller has no membership yet (deny-all),
+// non-empty workspace ids otherwise. See docs/architecture.md §8.
+func (s *Server) resolveCallerMemberships(ctx context.Context, caller CallerIdentity) []string {
+	return s.ensureCallerWorkspaces(ctx, caller)
 }
 
 // resolveProjectWorkspaceID returns the workspace_id of the given project,
 // or empty when the project has none yet (legacy path before backfill).
+// This helper reads with a nil memberships filter because it's used on the
+// write path to cascade workspace_id onto children; the caller-facing read
+// scoping is applied by the handler that called resolveProjectID first.
 func (s *Server) resolveProjectWorkspaceID(ctx context.Context, projectID string) string {
 	if s.projects == nil || projectID == "" {
 		return ""
 	}
-	p, err := s.projects.GetByID(ctx, projectID)
+	p, err := s.projects.GetByID(ctx, projectID, nil)
 	if err != nil {
 		return ""
 	}
@@ -339,7 +376,8 @@ func (s *Server) handleDocumentIngestFile(ctx context.Context, req mcpgo.CallToo
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	projectID := req.GetString("project_id", "")
-	resolvedID, err := s.resolveProjectID(ctx, projectID, caller)
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	resolvedID, err := s.resolveProjectID(ctx, projectID, caller, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -378,11 +416,12 @@ func (s *Server) handleDocumentGet(ctx context.Context, req mcpgo.CallToolReques
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	projectID := req.GetString("project_id", "")
-	resolvedID, err := s.resolveProjectID(ctx, projectID, caller)
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	resolvedID, err := s.resolveProjectID(ctx, projectID, caller, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	doc, err := s.docs.GetByFilename(ctx, resolvedID, filename)
+	doc, err := s.docs.GetByFilename(ctx, resolvedID, filename, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -426,11 +465,12 @@ func (s *Server) handleProjectCreate(ctx context.Context, req mcpgo.CallToolRequ
 func (s *Server) handleProjectGet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := UserFrom(ctx)
+	memberships := s.resolveCallerMemberships(ctx, caller)
 	id, err := req.RequireString("id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	p, err := s.projects.GetByID(ctx, id)
+	p, err := s.projects.GetByID(ctx, id, memberships)
 	if err != nil || p.OwnerUserID != caller.UserID {
 		return mcpgo.NewToolResultError("project not found"), nil
 	}
@@ -450,7 +490,8 @@ func (s *Server) handleProjectList(ctx context.Context, req mcpgo.CallToolReques
 	if caller.UserID == "" {
 		return mcpgo.NewToolResultError("no caller identity"), nil
 	}
-	list, err := s.projects.ListByOwner(ctx, caller.UserID)
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	list, err := s.projects.ListByOwner(ctx, caller.UserID, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -477,7 +518,8 @@ func (s *Server) handleLedgerAppend(ctx context.Context, req mcpgo.CallToolReque
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	content := req.GetString("content", "")
-	resolvedID, err := s.resolveProjectID(ctx, projectID, caller)
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	resolvedID, err := s.resolveProjectID(ctx, projectID, caller, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -514,7 +556,8 @@ func (s *Server) handleStoryCreate(ctx context.Context, req mcpgo.CallToolReques
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	resolvedID, err := s.resolveProjectID(ctx, projectID, caller)
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	resolvedID, err := s.resolveProjectID(ctx, projectID, caller, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -552,12 +595,13 @@ func (s *Server) handleStoryGet(ctx context.Context, req mcpgo.CallToolRequest) 
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	st, err := s.stories.GetByID(ctx, id)
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	st, err := s.stories.GetByID(ctx, id, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError("story not found"), nil
 	}
 	// Owner check is project-scoped: the caller must own the story's project.
-	if _, err := s.resolveProjectID(ctx, st.ProjectID, caller); err != nil {
+	if _, err := s.resolveProjectID(ctx, st.ProjectID, caller, memberships); err != nil {
 		return mcpgo.NewToolResultError("story not found"), nil
 	}
 	body, _ := json.Marshal(st)
@@ -577,7 +621,8 @@ func (s *Server) handleStoryList(ctx context.Context, req mcpgo.CallToolRequest)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	resolvedID, err := s.resolveProjectID(ctx, projectID, caller)
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	resolvedID, err := s.resolveProjectID(ctx, projectID, caller, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -587,7 +632,7 @@ func (s *Server) handleStoryList(ctx context.Context, req mcpgo.CallToolRequest)
 		Tag:      req.GetString("tag", ""),
 		Limit:    int(req.GetFloat("limit", 0)),
 	}
-	list, err := s.stories.List(ctx, resolvedID, opts)
+	list, err := s.stories.List(ctx, resolvedID, opts, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -613,14 +658,15 @@ func (s *Server) handleStoryUpdateStatus(ctx context.Context, req mcpgo.CallTool
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	existing, err := s.stories.GetByID(ctx, id)
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	existing, err := s.stories.GetByID(ctx, id, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError("story not found"), nil
 	}
-	if _, err := s.resolveProjectID(ctx, existing.ProjectID, caller); err != nil {
+	if _, err := s.resolveProjectID(ctx, existing.ProjectID, caller, memberships); err != nil {
 		return mcpgo.NewToolResultError("story not found"), nil
 	}
-	updated, err := s.stories.UpdateStatus(ctx, id, status, caller.UserID, time.Now().UTC())
+	updated, err := s.stories.UpdateStatus(ctx, id, status, caller.UserID, time.Now().UTC(), memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -716,7 +762,8 @@ func (s *Server) handleLedgerList(ctx context.Context, req mcpgo.CallToolRequest
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	resolvedID, err := s.resolveProjectID(ctx, projectID, caller)
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	resolvedID, err := s.resolveProjectID(ctx, projectID, caller, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -724,7 +771,7 @@ func (s *Server) handleLedgerList(ctx context.Context, req mcpgo.CallToolRequest
 		Type:  req.GetString("type", ""),
 		Limit: int(req.GetFloat("limit", 0)),
 	}
-	entries, err := s.ledger.List(ctx, resolvedID, opts)
+	entries, err := s.ledger.List(ctx, resolvedID, opts, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}

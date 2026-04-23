@@ -47,9 +47,12 @@ func (o ListOptions) normalised() ListOptions {
 // baseline per the story's AC 3.
 type Store interface {
 	Create(ctx context.Context, s Story, now time.Time) (Story, error)
-	GetByID(ctx context.Context, id string) (Story, error)
-	List(ctx context.Context, projectID string, opts ListOptions) ([]Story, error)
-	UpdateStatus(ctx context.Context, id, newStatus, actor string, now time.Time) (Story, error)
+	// GetByID / List / UpdateStatus all take a memberships slice: nil = no
+	// scoping, empty = deny-all, non-empty = workspace_id IN memberships.
+	// See docs/architecture.md §8.
+	GetByID(ctx context.Context, id string, memberships []string) (Story, error)
+	List(ctx context.Context, projectID string, opts ListOptions, memberships []string) ([]Story, error)
+	UpdateStatus(ctx context.Context, id, newStatus, actor string, now time.Time, memberships []string) (Story, error)
 
 	// BackfillWorkspaceID stamps workspaceID on every row with ProjectID ==
 	// projectID whose workspace_id is empty. Returns the number of rows
@@ -105,23 +108,29 @@ func (m *MemoryStore) Create(ctx context.Context, s Story, now time.Time) (Story
 	return s, nil
 }
 
-func (m *MemoryStore) GetByID(ctx context.Context, id string) (Story, error) {
+func (m *MemoryStore) GetByID(ctx context.Context, id string, memberships []string) (Story, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.rows[id]
 	if !ok {
 		return Story{}, ErrNotFound
 	}
+	if !inStoryMemberships(s.WorkspaceID, memberships) {
+		return Story{}, ErrNotFound
+	}
 	return s, nil
 }
 
-func (m *MemoryStore) List(ctx context.Context, projectID string, opts ListOptions) ([]Story, error) {
+func (m *MemoryStore) List(ctx context.Context, projectID string, opts ListOptions, memberships []string) ([]Story, error) {
 	opts = opts.normalised()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]Story, 0)
 	for _, s := range m.rows {
 		if s.ProjectID != projectID {
+			continue
+		}
+		if !inStoryMemberships(s.WorkspaceID, memberships) {
 			continue
 		}
 		if opts.Status != "" && s.Status != opts.Status {
@@ -144,11 +153,28 @@ func (m *MemoryStore) List(ctx context.Context, projectID string, opts ListOptio
 	return out, nil
 }
 
-func (m *MemoryStore) UpdateStatus(ctx context.Context, id, newStatus, actor string, now time.Time) (Story, error) {
+// inStoryMemberships is the shared membership predicate for story rows.
+// nil = no filter, empty = deny-all, non-empty = workspace_id IN memberships.
+func inStoryMemberships(wsID string, memberships []string) bool {
+	if memberships == nil {
+		return true
+	}
+	for _, m := range memberships {
+		if m == wsID {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *MemoryStore) UpdateStatus(ctx context.Context, id, newStatus, actor string, now time.Time, memberships []string) (Story, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.rows[id]
 	if !ok {
+		return Story{}, ErrNotFound
+	}
+	if !inStoryMemberships(s.WorkspaceID, memberships) {
 		return Story{}, ErrNotFound
 	}
 	if !ValidTransition(s.Status, newStatus) {

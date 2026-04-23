@@ -41,7 +41,7 @@ func TestMemoryStore_CreateAndGetByID(t *testing.T) {
 		t.Errorf("timestamps not stamped from now")
 	}
 
-	got, err := store.GetByID(ctx, p.ID)
+	got, err := store.GetByID(ctx, p.ID, nil)
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestMemoryStore_GetByID_NotFound(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryStore()
 
-	_, err := store.GetByID(ctx, "proj_missing")
+	_, err := store.GetByID(ctx, "proj_missing", nil)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
@@ -71,7 +71,7 @@ func TestMemoryStore_ListByOwner_NewestFirst(t *testing.T) {
 	newer, _ := store.Create(ctx, "user_1", "", "newer", t0.Add(time.Hour))
 	_, _ = store.Create(ctx, "user_2", "", "other-owner", t0.Add(2*time.Hour))
 
-	got, err := store.ListByOwner(ctx, "user_1")
+	got, err := store.ListByOwner(ctx, "user_1", nil)
 	if err != nil {
 		t.Fatalf("ListByOwner: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestMemoryStore_ListByOwner_Empty(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryStore()
 
-	got, err := store.ListByOwner(ctx, "user_unknown")
+	got, err := store.ListByOwner(ctx, "user_unknown", nil)
 	if err != nil {
 		t.Fatalf("ListByOwner: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestMemoryStore_UpdateName(t *testing.T) {
 		t.Errorf("CreatedAt mutated: got %v, want %v", updated.CreatedAt, t0)
 	}
 
-	got, _ := store.GetByID(ctx, p.ID)
+	got, _ := store.GetByID(ctx, p.ID, nil)
 	if got.Name != "renamed" {
 		t.Errorf("GetByID after update: name = %q, want renamed", got.Name)
 	}
@@ -147,8 +147,8 @@ func TestMemoryStore_OwnerIsolation(t *testing.T) {
 	_, _ = store.Create(ctx, "user_a", "", "a-2", now)
 	_, _ = store.Create(ctx, "user_b", "", "b-1", now)
 
-	a, _ := store.ListByOwner(ctx, "user_a")
-	b, _ := store.ListByOwner(ctx, "user_b")
+	a, _ := store.ListByOwner(ctx, "user_a", nil)
+	b, _ := store.ListByOwner(ctx, "user_b", nil)
 	if len(a) != 2 {
 		t.Errorf("user_a list size = %d, want 2", len(a))
 	}

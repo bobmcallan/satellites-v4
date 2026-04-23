@@ -77,7 +77,7 @@ func TestMemoryStore_ListNewestFirst(t *testing.T) {
 	_, _ = store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: "b", Actor: "u_1"}, t0.Add(time.Hour))
 	_, _ = store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: "c", Actor: "u_1"}, t0.Add(2*time.Hour))
 
-	got, err := store.List(ctx, "proj_a", ListOptions{})
+	got, err := store.List(ctx, "proj_a", ListOptions{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestMemoryStore_ListTypeFilter(t *testing.T) {
 	_, _ = store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: "story.status_change"}, now.Add(time.Second))
 	_, _ = store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: "other.event"}, now.Add(2*time.Second))
 
-	got, _ := store.List(ctx, "proj_a", ListOptions{Type: "story.status_change"})
+	got, _ := store.List(ctx, "proj_a", ListOptions{Type: "story.status_change"}, nil)
 	if len(got) != 2 {
 		t.Errorf("type filter returned %d, want 2", len(got))
 	}
@@ -120,19 +120,19 @@ func TestMemoryStore_ListLimitClamp(t *testing.T) {
 	}
 
 	// Default (0) clamps up to 100.
-	got, _ := store.List(ctx, "proj_a", ListOptions{})
+	got, _ := store.List(ctx, "proj_a", ListOptions{}, nil)
 	if len(got) != DefaultListLimit {
 		t.Errorf("default limit returned %d, want %d", len(got), DefaultListLimit)
 	}
 
 	// Explicit 2 returns 2 newest-first.
-	got, _ = store.List(ctx, "proj_a", ListOptions{Limit: 2})
+	got, _ = store.List(ctx, "proj_a", ListOptions{Limit: 2}, nil)
 	if len(got) != 2 {
 		t.Errorf("limit 2 returned %d, want 2", len(got))
 	}
 
 	// Above ceiling clamps down.
-	got, _ = store.List(ctx, "proj_a", ListOptions{Limit: 9999})
+	got, _ = store.List(ctx, "proj_a", ListOptions{Limit: 9999}, nil)
 	if len(got) != MaxListLimit {
 		t.Errorf("ceiling clamp returned %d, want %d", len(got), MaxListLimit)
 	}
@@ -146,9 +146,9 @@ func TestMemoryStore_ProjectIsolation(t *testing.T) {
 	_, _ = store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: "x"}, now)
 	_, _ = store.Append(ctx, LedgerEntry{ProjectID: "proj_b", Type: "x"}, now)
 
-	a, _ := store.List(ctx, "proj_a", ListOptions{})
-	b, _ := store.List(ctx, "proj_b", ListOptions{})
-	c, _ := store.List(ctx, "proj_missing", ListOptions{})
+	a, _ := store.List(ctx, "proj_a", ListOptions{}, nil)
+	b, _ := store.List(ctx, "proj_b", ListOptions{}, nil)
+	c, _ := store.List(ctx, "proj_missing", ListOptions{}, nil)
 	if len(a) != 1 || len(b) != 1 {
 		t.Errorf("per-project counts wrong: a=%d b=%d", len(a), len(b))
 	}

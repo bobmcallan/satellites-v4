@@ -24,11 +24,17 @@ type Store interface {
 	// stamps empty rows with the owner's default workspace.
 	Create(ctx context.Context, ownerUserID, workspaceID, name string, now time.Time) (Project, error)
 
-	// GetByID returns the project with the given id, or ErrNotFound.
-	GetByID(ctx context.Context, id string) (Project, error)
+	// GetByID returns the project with the given id, or ErrNotFound. When
+	// memberships is non-nil the row must carry a workspace_id that appears
+	// in the slice; non-member rows return ErrNotFound (the same shape a
+	// missing row would). nil memberships disable scoping (bootstrap and
+	// backfill paths that must see every row).
+	GetByID(ctx context.Context, id string, memberships []string) (Project, error)
 
 	// ListByOwner returns the owner's projects, newest-first by CreatedAt.
-	ListByOwner(ctx context.Context, ownerUserID string) ([]Project, error)
+	// memberships scoping matches GetByID semantics: nil = no scoping,
+	// empty = deny-all, non-empty = workspace_id IN memberships.
+	ListByOwner(ctx context.Context, ownerUserID string, memberships []string) ([]Project, error)
 
 	// UpdateName renames an existing project and bumps UpdatedAt. Returns the
 	// updated Project. ErrNotFound on missing id.
@@ -72,30 +78,52 @@ func (m *MemoryStore) Create(ctx context.Context, ownerUserID, workspaceID, name
 }
 
 // GetByID implements Store for MemoryStore.
-func (m *MemoryStore) GetByID(ctx context.Context, id string) (Project, error) {
+func (m *MemoryStore) GetByID(ctx context.Context, id string, memberships []string) (Project, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p, ok := m.rows[id]
 	if !ok {
 		return Project{}, ErrNotFound
 	}
+	if !inMemberships(p.WorkspaceID, memberships) {
+		return Project{}, ErrNotFound
+	}
 	return p, nil
 }
 
 // ListByOwner implements Store for MemoryStore.
-func (m *MemoryStore) ListByOwner(ctx context.Context, ownerUserID string) ([]Project, error) {
+func (m *MemoryStore) ListByOwner(ctx context.Context, ownerUserID string, memberships []string) ([]Project, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]Project, 0)
 	for _, p := range m.rows {
-		if p.OwnerUserID == ownerUserID {
-			out = append(out, p)
+		if p.OwnerUserID != ownerUserID {
+			continue
 		}
+		if !inMemberships(p.WorkspaceID, memberships) {
+			continue
+		}
+		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].CreatedAt.After(out[j].CreatedAt)
 	})
 	return out, nil
+}
+
+// inMemberships is the shared membership-filter predicate. nil = no filter
+// (seed/backfill paths); empty slice = deny-all; non-empty = row passes if
+// its workspace_id is in the slice.
+func inMemberships(wsID string, memberships []string) bool {
+	if memberships == nil {
+		return true
+	}
+	for _, m := range memberships {
+		if m == wsID {
+			return true
+		}
+	}
+	return false
 }
 
 // UpdateName implements Store for MemoryStore.

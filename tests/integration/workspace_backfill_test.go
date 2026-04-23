@@ -136,28 +136,28 @@ func TestWorkspaceBackfill_AcrossPrimitives(t *testing.T) {
 	wsID := wsList[0].ID
 
 	// All rows should now carry that workspace_id.
-	pr, err := projStore.GetByID(ctx, p.ID)
+	pr, err := projStore.GetByID(ctx, p.ID, nil)
 	if err != nil {
 		t.Fatalf("re-read project: %v", err)
 	}
 	if pr.WorkspaceID != wsID {
 		t.Errorf("project workspace_id = %q, want %q", pr.WorkspaceID, wsID)
 	}
-	sr, err := storyStore.GetByID(ctx, s.ID)
+	sr, err := storyStore.GetByID(ctx, s.ID, nil)
 	if err != nil {
 		t.Fatalf("re-read story: %v", err)
 	}
 	if sr.WorkspaceID != wsID {
 		t.Errorf("story workspace_id = %q, want %q", sr.WorkspaceID, wsID)
 	}
-	entries, err := ledStore.List(ctx, p.ID, ledger.ListOptions{})
+	entries, err := ledStore.List(ctx, p.ID, ledger.ListOptions{}, nil)
 	if err != nil {
 		t.Fatalf("ledger list: %v", err)
 	}
 	if len(entries) == 0 || entries[0].WorkspaceID != wsID {
 		t.Errorf("ledger workspace_id = %+v, want %q", entries, wsID)
 	}
-	docGot, err := docStore.GetByFilename(ctx, p.ID, "x.md")
+	docGot, err := docStore.GetByFilename(ctx, p.ID, "x.md", nil)
 	if err != nil {
 		t.Fatalf("document get: %v", err)
 	}

@@ -33,11 +33,11 @@ func (e *erroringLedger) Append(ctx context.Context, entry ledger.LedgerEntry, n
 	return e.backing.Append(ctx, entry, now)
 }
 
-func (e *erroringLedger) List(ctx context.Context, projectID string, opts ledger.ListOptions) ([]ledger.LedgerEntry, error) {
+func (e *erroringLedger) List(ctx context.Context, projectID string, opts ledger.ListOptions, memberships []string) ([]ledger.LedgerEntry, error) {
 	if e.backing == nil {
 		return []ledger.LedgerEntry{}, nil
 	}
-	return e.backing.List(ctx, projectID, opts)
+	return e.backing.List(ctx, projectID, opts, memberships)
 }
 
 func (e *erroringLedger) BackfillWorkspaceID(ctx context.Context, projectID, workspaceID string) (int, error) {
@@ -119,7 +119,7 @@ func TestMemoryStore_CreateAndGet(t *testing.T) {
 	if s.Tags == nil {
 		t.Error("tags should be non-nil slice")
 	}
-	got, err := store.GetByID(ctx, s.ID)
+	got, err := store.GetByID(ctx, s.ID, nil)
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestMemoryStore_GetByID_NotFound(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	store := NewMemoryStore(ledger.NewMemoryStore())
-	if _, err := store.GetByID(ctx, "sty_missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetByID(ctx, "sty_missing", nil); !errors.Is(err, ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
 }
@@ -158,25 +158,25 @@ func TestMemoryStore_ListFiltersAndOrder(t *testing.T) {
 	_, _ = store.Create(ctx, Story{ProjectID: "proj_b", Title: "other-proj", Priority: "high"}, t0.Add(2*time.Hour))
 
 	// Project isolation + newest first.
-	list, _ := store.List(ctx, "proj_a", ListOptions{})
+	list, _ := store.List(ctx, "proj_a", ListOptions{}, nil)
 	if len(list) != 2 || list[0].ID != newer.ID || list[1].ID != older.ID {
 		t.Errorf("list order/isolation wrong: %v", list)
 	}
 
 	// Priority filter.
-	high, _ := store.List(ctx, "proj_a", ListOptions{Priority: "high"})
+	high, _ := store.List(ctx, "proj_a", ListOptions{Priority: "high"}, nil)
 	if len(high) != 1 || high[0].ID != newer.ID {
 		t.Errorf("priority filter: %v", high)
 	}
 
 	// Tag filter.
-	portal, _ := store.List(ctx, "proj_a", ListOptions{Tag: "portal"})
+	portal, _ := store.List(ctx, "proj_a", ListOptions{Tag: "portal"}, nil)
 	if len(portal) != 1 || portal[0].ID != newer.ID {
 		t.Errorf("tag filter: %v", portal)
 	}
 
 	// Status filter.
-	backlog, _ := store.List(ctx, "proj_a", ListOptions{Status: StatusBacklog})
+	backlog, _ := store.List(ctx, "proj_a", ListOptions{Status: StatusBacklog}, nil)
 	if len(backlog) != 2 {
 		t.Errorf("status filter: want 2 backlog, got %d", len(backlog))
 	}
@@ -194,7 +194,7 @@ func TestMemoryStore_UpdateStatus_EmitsLedger(t *testing.T) {
 	// backlog → ready → in_progress → done at strictly increasing times.
 	for i, next := range []string{StatusReady, StatusInProgress, StatusDone} {
 		var err error
-		s, err = store.UpdateStatus(ctx, s.ID, next, "u_alice", now.Add(time.Duration(i+1)*time.Second))
+		s, err = store.UpdateStatus(ctx, s.ID, next, "u_alice", now.Add(time.Duration(i+1)*time.Second), nil)
 		if err != nil {
 			t.Fatalf("UpdateStatus %q: %v", next, err)
 		}
@@ -203,7 +203,7 @@ func TestMemoryStore_UpdateStatus_EmitsLedger(t *testing.T) {
 		t.Errorf("final status = %q, want done", s.Status)
 	}
 
-	entries, _ := led.List(ctx, "proj_a", ledger.ListOptions{Type: LedgerEntryType})
+	entries, _ := led.List(ctx, "proj_a", ledger.ListOptions{Type: LedgerEntryType}, nil)
 	if len(entries) != 3 {
 		t.Fatalf("ledger rows: got %d, want 3", len(entries))
 	}
@@ -237,10 +237,10 @@ func TestMemoryStore_UpdateStatus_RejectsInvalid(t *testing.T) {
 	s, _ := store.Create(ctx, Story{ProjectID: "proj_a", Title: "x"}, now)
 
 	// backlog → done is invalid (must pass through ready + in_progress).
-	if _, err := store.UpdateStatus(ctx, s.ID, StatusDone, "u_alice", now); !errors.Is(err, ErrInvalidTransition) {
+	if _, err := store.UpdateStatus(ctx, s.ID, StatusDone, "u_alice", now, nil); !errors.Is(err, ErrInvalidTransition) {
 		t.Errorf("want ErrInvalidTransition, got %v", err)
 	}
-	entries, _ := led.List(ctx, "proj_a", ledger.ListOptions{})
+	entries, _ := led.List(ctx, "proj_a", ledger.ListOptions{}, nil)
 	if len(entries) != 0 {
 		t.Errorf("ledger must not be written on invalid transition; got %d entries", len(entries))
 	}
@@ -258,13 +258,13 @@ func TestMemoryStore_UpdateStatus_RollbackOnLedgerError(t *testing.T) {
 		t.Fatalf("precondition: status = %q, want backlog", s.Status)
 	}
 
-	_, err := store.UpdateStatus(ctx, s.ID, StatusReady, "u_alice", now)
+	_, err := store.UpdateStatus(ctx, s.ID, StatusReady, "u_alice", now, nil)
 	if err == nil {
 		t.Fatal("expected rollback error")
 	}
 
 	// Status must be reverted to backlog.
-	after, _ := store.GetByID(ctx, s.ID)
+	after, _ := store.GetByID(ctx, s.ID, nil)
 	if after.Status != StatusBacklog {
 		t.Errorf("status not reverted: got %q, want backlog", after.Status)
 	}
@@ -274,7 +274,7 @@ func TestMemoryStore_UpdateStatus_NotFound(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	store := NewMemoryStore(ledger.NewMemoryStore())
-	if _, err := store.UpdateStatus(ctx, "sty_missing", StatusReady, "u_alice", time.Now()); !errors.Is(err, ErrNotFound) {
+	if _, err := store.UpdateStatus(ctx, "sty_missing", StatusReady, "u_alice", time.Now(), nil); !errors.Is(err, ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
 }

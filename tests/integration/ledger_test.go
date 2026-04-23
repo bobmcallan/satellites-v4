@@ -72,7 +72,7 @@ func TestLedgerSurrealStore_RoundTrip(t *testing.T) {
 	}
 
 	// List proj_a should be newest-first with 3 entries.
-	listA, err := store.List(ctx, "proj_a", ledger.ListOptions{})
+	listA, err := store.List(ctx, "proj_a", ledger.ListOptions{}, nil)
 	if err != nil {
 		t.Fatalf("List proj_a: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestLedgerSurrealStore_RoundTrip(t *testing.T) {
 	}
 
 	// Type filter.
-	statusOnly, _ := store.List(ctx, "proj_a", ledger.ListOptions{Type: "story.status_change"})
+	statusOnly, _ := store.List(ctx, "proj_a", ledger.ListOptions{Type: "story.status_change"}, nil)
 	if len(statusOnly) != 2 {
 		t.Errorf("type filter: count = %d, want 2", len(statusOnly))
 	}
@@ -103,13 +103,13 @@ func TestLedgerSurrealStore_RoundTrip(t *testing.T) {
 	}
 
 	// Limit clamp.
-	capped, _ := store.List(ctx, "proj_a", ledger.ListOptions{Limit: 1})
+	capped, _ := store.List(ctx, "proj_a", ledger.ListOptions{Limit: 1}, nil)
 	if len(capped) != 1 {
 		t.Errorf("limit 1 returned %d", len(capped))
 	}
 
 	// Project isolation.
-	listB, _ := store.List(ctx, "proj_b", ledger.ListOptions{})
+	listB, _ := store.List(ctx, "proj_b", ledger.ListOptions{}, nil)
 	if len(listB) != 1 {
 		t.Errorf("proj_b count = %d, want 1", len(listB))
 	}

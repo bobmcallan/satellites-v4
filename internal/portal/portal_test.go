@@ -22,7 +22,7 @@ func newTestPortal(t *testing.T, cfg *config.Config) (*Portal, *auth.MemoryUserS
 	projects := project.NewMemoryStore()
 	ledgerStore := ledger.NewMemoryStore()
 	stories := story.NewMemoryStore(ledgerStore)
-	p, err := New(cfg, satarbor.New("info"), sessions, users, projects, ledgerStore, stories, time.Now())
+	p, err := New(cfg, satarbor.New("info"), sessions, users, projects, ledgerStore, stories, nil, time.Now())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -489,7 +489,7 @@ func TestStoriesList_DefaultHidesTerminal(t *testing.T) {
 			case story.StatusInProgress:
 				next = story.StatusDone
 			}
-			_, _ = stories.UpdateStatus(ctx, st.ID, next, user.ID, time.Now().Add(time.Duration(i)*time.Second+time.Millisecond))
+			_, _ = stories.UpdateStatus(ctx, st.ID, next, user.ID, time.Now().Add(time.Duration(i)*time.Second+time.Millisecond), nil)
 			cur = next
 			if next == sp.status {
 				break
@@ -611,9 +611,9 @@ func TestStoryDetail_RendersFieldsAndHistory(t *testing.T) {
 	}, base)
 
 	// Transition through the lifecycle.
-	_, _ = stories.UpdateStatus(ctx, st.ID, story.StatusReady, user.ID, base.Add(1*time.Second))
-	_, _ = stories.UpdateStatus(ctx, st.ID, story.StatusInProgress, user.ID, base.Add(2*time.Second))
-	_, _ = stories.UpdateStatus(ctx, st.ID, story.StatusDone, user.ID, base.Add(3*time.Second))
+	_, _ = stories.UpdateStatus(ctx, st.ID, story.StatusReady, user.ID, base.Add(1*time.Second), nil)
+	_, _ = stories.UpdateStatus(ctx, st.ID, story.StatusInProgress, user.ID, base.Add(2*time.Second), nil)
+	_, _ = stories.UpdateStatus(ctx, st.ID, story.StatusDone, user.ID, base.Add(3*time.Second), nil)
 
 	sess, _ := sessions.Create(user.ID, auth.DefaultSessionTTL)
 	req := httptest.NewRequest(http.MethodGet, "/projects/"+proj.ID+"/stories/"+st.ID, nil)

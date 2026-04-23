@@ -26,7 +26,7 @@ func SeedIfEmpty(ctx context.Context, store Store, logger arbor.ILogger, workspa
 // store.Count(projectID) > 0 — seeds are idempotent at the project level;
 // individual file changes should be driven through explicit ingest calls.
 func Seed(ctx context.Context, store Store, logger arbor.ILogger, workspaceID, projectID, docsDir string, files []string) (int, error) {
-	n, err := store.Count(ctx, projectID)
+	n, err := store.Count(ctx, projectID, nil)
 	if err != nil {
 		return 0, err
 	}

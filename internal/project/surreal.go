@@ -47,10 +47,20 @@ func (s *SurrealStore) Create(ctx context.Context, ownerUserID, workspaceID, nam
 // (e.g. "proj_xxx") without the table prefix.
 const selectCols = "meta::id(id) AS id, workspace_id, name, owner_user_id, status, created_at, updated_at"
 
-// GetByID implements Store for SurrealStore.
-func (s *SurrealStore) GetByID(ctx context.Context, id string) (Project, error) {
-	sql := fmt.Sprintf("SELECT %s FROM projects WHERE id = $rid LIMIT 1", selectCols)
+// GetByID implements Store for SurrealStore. Membership filter matches
+// memorystore semantics: nil = no scoping, empty = deny-all, non-empty =
+// `workspace_id IN memberships`.
+func (s *SurrealStore) GetByID(ctx context.Context, id string, memberships []string) (Project, error) {
+	if memberships != nil && len(memberships) == 0 {
+		return Project{}, ErrNotFound
+	}
+	where := "id = $rid"
 	vars := map[string]any{"rid": surrealmodels.NewRecordID("projects", id)}
+	if memberships != nil {
+		where += " AND workspace_id IN $memberships"
+		vars["memberships"] = memberships
+	}
+	sql := fmt.Sprintf("SELECT %s FROM projects WHERE %s LIMIT 1", selectCols, where)
 	results, err := surrealdb.Query[[]Project](ctx, s.db, sql, vars)
 	if err != nil {
 		return Project{}, fmt.Errorf("project: select by id: %w", err)
@@ -62,9 +72,17 @@ func (s *SurrealStore) GetByID(ctx context.Context, id string) (Project, error) 
 }
 
 // ListByOwner implements Store for SurrealStore. Newest-first.
-func (s *SurrealStore) ListByOwner(ctx context.Context, ownerUserID string) ([]Project, error) {
-	sql := fmt.Sprintf("SELECT %s FROM projects WHERE owner_user_id = $owner ORDER BY created_at DESC", selectCols)
+func (s *SurrealStore) ListByOwner(ctx context.Context, ownerUserID string, memberships []string) ([]Project, error) {
+	if memberships != nil && len(memberships) == 0 {
+		return []Project{}, nil
+	}
+	where := "owner_user_id = $owner"
 	vars := map[string]any{"owner": ownerUserID}
+	if memberships != nil {
+		where += " AND workspace_id IN $memberships"
+		vars["memberships"] = memberships
+	}
+	sql := fmt.Sprintf("SELECT %s FROM projects WHERE %s ORDER BY created_at DESC", selectCols, where)
 	results, err := surrealdb.Query[[]Project](ctx, s.db, sql, vars)
 	if err != nil {
 		return nil, fmt.Errorf("project: list by owner: %w", err)
@@ -77,7 +95,7 @@ func (s *SurrealStore) ListByOwner(ctx context.Context, ownerUserID string) ([]P
 
 // UpdateName implements Store for SurrealStore.
 func (s *SurrealStore) UpdateName(ctx context.Context, id, name string, now time.Time) (Project, error) {
-	existing, err := s.GetByID(ctx, id)
+	existing, err := s.GetByID(ctx, id, nil)
 	if err != nil {
 		return Project{}, err
 	}
@@ -103,7 +121,7 @@ func (s *SurrealStore) write(ctx context.Context, p Project) error {
 
 // SetWorkspaceID implements Store for SurrealStore.
 func (s *SurrealStore) SetWorkspaceID(ctx context.Context, id, workspaceID string, now time.Time) (Project, error) {
-	existing, err := s.GetByID(ctx, id)
+	existing, err := s.GetByID(ctx, id, nil)
 	if err != nil {
 		return Project{}, err
 	}

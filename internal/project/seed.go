@@ -21,7 +21,7 @@ const DefaultProjectName = "Satellites v4"
 // scoped to workspaceID when supplied. Backstops document_ingest_file /
 // document_get callers that don't supply their own project_id.
 func SeedDefault(ctx context.Context, store Store, logger arbor.ILogger, workspaceID string) (string, error) {
-	existing, err := store.ListByOwner(ctx, DefaultOwnerUserID)
+	existing, err := store.ListByOwner(ctx, DefaultOwnerUserID, nil)
 	if err != nil {
 		return "", err
 	}

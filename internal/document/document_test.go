@@ -83,7 +83,7 @@ func TestMemoryStore_ProjectIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	a, err := store.GetByFilename(ctx, "proj_a", "x.md")
+	a, err := store.GetByFilename(ctx, "proj_a", "x.md", nil)
 	if err != nil {
 		t.Fatalf("GetByFilename proj_a: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestMemoryStore_ProjectIsolation(t *testing.T) {
 		t.Errorf("proj_a body = %q, want A", a.Body)
 	}
 
-	b, err := store.GetByFilename(ctx, "proj_b", "x.md")
+	b, err := store.GetByFilename(ctx, "proj_b", "x.md", nil)
 	if err != nil {
 		t.Fatalf("GetByFilename proj_b: %v", err)
 	}
@@ -103,13 +103,13 @@ func TestMemoryStore_ProjectIsolation(t *testing.T) {
 		t.Errorf("distinct projects should mint distinct document ids")
 	}
 
-	if nA, _ := store.Count(ctx, "proj_a"); nA != 1 {
+	if nA, _ := store.Count(ctx, "proj_a", nil); nA != 1 {
 		t.Errorf("Count(proj_a) = %d, want 1", nA)
 	}
-	if nB, _ := store.Count(ctx, "proj_b"); nB != 1 {
+	if nB, _ := store.Count(ctx, "proj_b", nil); nB != 1 {
 		t.Errorf("Count(proj_b) = %d, want 1", nB)
 	}
-	if nMissing, _ := store.Count(ctx, "proj_unknown"); nMissing != 0 {
+	if nMissing, _ := store.Count(ctx, "proj_unknown", nil); nMissing != 0 {
 		t.Errorf("Count(proj_unknown) = %d, want 0", nMissing)
 	}
 }
@@ -153,7 +153,7 @@ func TestIngestFile_HappyPath(t *testing.T) {
 	if res.Document.ProjectID != testProjectID {
 		t.Errorf("ingested doc project_id = %q, want %q", res.Document.ProjectID, testProjectID)
 	}
-	got, err := store.GetByFilename(ctx, testProjectID, "architecture.md")
+	got, err := store.GetByFilename(ctx, testProjectID, "architecture.md", nil)
 	if err != nil {
 		t.Fatalf("GetByFilename: %v", err)
 	}

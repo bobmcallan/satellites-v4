@@ -55,9 +55,17 @@ func (s *SurrealStore) Create(ctx context.Context, st Story, now time.Time) (Sto
 	return st, nil
 }
 
-func (s *SurrealStore) GetByID(ctx context.Context, id string) (Story, error) {
-	sql := fmt.Sprintf("SELECT %s FROM stories WHERE id = $rid LIMIT 1", selectCols)
+func (s *SurrealStore) GetByID(ctx context.Context, id string, memberships []string) (Story, error) {
+	if memberships != nil && len(memberships) == 0 {
+		return Story{}, ErrNotFound
+	}
+	where := "id = $rid"
 	vars := map[string]any{"rid": surrealmodels.NewRecordID("stories", id)}
+	if memberships != nil {
+		where += " AND workspace_id IN $memberships"
+		vars["memberships"] = memberships
+	}
+	sql := fmt.Sprintf("SELECT %s FROM stories WHERE %s LIMIT 1", selectCols, where)
 	results, err := surrealdb.Query[[]Story](ctx, s.db, sql, vars)
 	if err != nil {
 		return Story{}, fmt.Errorf("story: get: %w", err)
@@ -68,10 +76,17 @@ func (s *SurrealStore) GetByID(ctx context.Context, id string) (Story, error) {
 	return (*results)[0].Result[0], nil
 }
 
-func (s *SurrealStore) List(ctx context.Context, projectID string, opts ListOptions) ([]Story, error) {
+func (s *SurrealStore) List(ctx context.Context, projectID string, opts ListOptions, memberships []string) ([]Story, error) {
 	opts = opts.normalised()
+	if memberships != nil && len(memberships) == 0 {
+		return []Story{}, nil
+	}
 	conds := []string{"project_id = $project"}
 	vars := map[string]any{"project": projectID, "lim": opts.Limit}
+	if memberships != nil {
+		conds = append(conds, "workspace_id IN $memberships")
+		vars["memberships"] = memberships
+	}
 	if opts.Status != "" {
 		conds = append(conds, "status = $status")
 		vars["status"] = opts.Status
@@ -103,8 +118,8 @@ func (s *SurrealStore) List(ctx context.Context, projectID string, opts ListOpti
 	return (*results)[0].Result, nil
 }
 
-func (s *SurrealStore) UpdateStatus(ctx context.Context, id, newStatus, actor string, now time.Time) (Story, error) {
-	current, err := s.GetByID(ctx, id)
+func (s *SurrealStore) UpdateStatus(ctx context.Context, id, newStatus, actor string, now time.Time, memberships []string) (Story, error) {
+	current, err := s.GetByID(ctx, id, memberships)
 	if err != nil {
 		return Story{}, err
 	}

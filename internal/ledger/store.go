@@ -46,7 +46,9 @@ type Store interface {
 	Append(ctx context.Context, entry LedgerEntry, now time.Time) (LedgerEntry, error)
 
 	// List returns entries for projectID, newest-first, subject to opts.
-	List(ctx context.Context, projectID string, opts ListOptions) ([]LedgerEntry, error)
+	// memberships: nil = no scoping, empty = deny-all, non-empty =
+	// workspace_id IN memberships (docs/architecture.md §8).
+	List(ctx context.Context, projectID string, opts ListOptions, memberships []string) ([]LedgerEntry, error)
 
 	// BackfillWorkspaceID stamps workspaceID on ledger rows with the given
 	// projectID whose workspace_id is empty. Feature-order:2 migration;
@@ -76,13 +78,16 @@ func (m *MemoryStore) Append(ctx context.Context, entry LedgerEntry, now time.Ti
 }
 
 // List implements Store for MemoryStore.
-func (m *MemoryStore) List(ctx context.Context, projectID string, opts ListOptions) ([]LedgerEntry, error) {
+func (m *MemoryStore) List(ctx context.Context, projectID string, opts ListOptions, memberships []string) ([]LedgerEntry, error) {
 	opts = opts.normalised()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]LedgerEntry, 0)
 	for _, e := range m.rows {
 		if e.ProjectID != projectID {
+			continue
+		}
+		if !inLedgerMemberships(e.WorkspaceID, memberships) {
 			continue
 		}
 		if opts.Type != "" && e.Type != opts.Type {
@@ -97,6 +102,20 @@ func (m *MemoryStore) List(ctx context.Context, projectID string, opts ListOptio
 		out = out[:opts.Limit]
 	}
 	return out, nil
+}
+
+// inLedgerMemberships is the shared membership predicate for ledger rows.
+// nil = no filter, empty = deny-all, non-empty = workspace_id IN memberships.
+func inLedgerMemberships(wsID string, memberships []string) bool {
+	if memberships == nil {
+		return true
+	}
+	for _, m := range memberships {
+		if m == wsID {
+			return true
+		}
+	}
+	return false
 }
 
 // BackfillWorkspaceID implements Store for MemoryStore.

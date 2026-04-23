@@ -34,12 +34,14 @@ type Store interface {
 	Upsert(ctx context.Context, workspaceID, projectID, filename, docType string, body []byte, now time.Time) (UpsertResult, error)
 
 	// GetByFilename returns the active document with the given filename
-	// inside projectID.
-	GetByFilename(ctx context.Context, projectID, filename string) (Document, error)
+	// inside projectID. memberships: nil = no scoping, empty = deny-all,
+	// non-empty = workspace_id IN memberships (docs/architecture.md §8).
+	GetByFilename(ctx context.Context, projectID, filename string, memberships []string) (Document, error)
 
 	// Count returns the number of active documents in projectID. Boot
 	// seeding uses this to skip work on a pre-populated project.
-	Count(ctx context.Context, projectID string) (int, error)
+	// memberships semantics match GetByFilename.
+	Count(ctx context.Context, projectID string, memberships []string) (int, error)
 
 	// BackfillWorkspaceID stamps workspaceID on documents with the given
 	// projectID whose workspace_id is empty. Feature-order:2 migration;
@@ -101,27 +103,48 @@ func (m *MemoryStore) Upsert(ctx context.Context, workspaceID, projectID, filena
 }
 
 // GetByFilename implements Store for MemoryStore.
-func (m *MemoryStore) GetByFilename(ctx context.Context, projectID, filename string) (Document, error) {
+func (m *MemoryStore) GetByFilename(ctx context.Context, projectID, filename string, memberships []string) (Document, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	doc, ok := m.rows[memKey(projectID, filename)]
 	if !ok {
 		return Document{}, ErrNotFound
 	}
+	if !inDocMemberships(doc.WorkspaceID, memberships) {
+		return Document{}, ErrNotFound
+	}
 	return doc, nil
 }
 
 // Count implements Store for MemoryStore.
-func (m *MemoryStore) Count(ctx context.Context, projectID string) (int, error) {
+func (m *MemoryStore) Count(ctx context.Context, projectID string, memberships []string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	n := 0
 	for _, d := range m.rows {
-		if d.ProjectID == projectID {
-			n++
+		if d.ProjectID != projectID {
+			continue
 		}
+		if !inDocMemberships(d.WorkspaceID, memberships) {
+			continue
+		}
+		n++
 	}
 	return n, nil
+}
+
+// inDocMemberships is the shared membership predicate for document rows.
+// nil = no filter, empty = deny-all, non-empty = workspace_id IN memberships.
+func inDocMemberships(wsID string, memberships []string) bool {
+	if memberships == nil {
+		return true
+	}
+	for _, m := range memberships {
+		if m == wsID {
+			return true
+		}
+	}
+	return false
 }
 
 // NewID returns a fresh document id in the canonical `doc_<8hex>` form.

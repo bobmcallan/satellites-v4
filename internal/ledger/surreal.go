@@ -42,18 +42,26 @@ func (s *SurrealStore) Append(ctx context.Context, entry LedgerEntry, now time.T
 }
 
 // List implements Store for SurrealStore. Newest-first, limit clamped.
-func (s *SurrealStore) List(ctx context.Context, projectID string, opts ListOptions) ([]LedgerEntry, error) {
+func (s *SurrealStore) List(ctx context.Context, projectID string, opts ListOptions, memberships []string) ([]LedgerEntry, error) {
 	opts = opts.normalised()
-	var (
-		sql  string
-		vars = map[string]any{"project": projectID, "lim": opts.Limit}
-	)
-	if opts.Type != "" {
-		sql = fmt.Sprintf("SELECT %s FROM ledger WHERE project_id = $project AND type = $type ORDER BY created_at DESC LIMIT $lim", selectCols)
-		vars["type"] = opts.Type
-	} else {
-		sql = fmt.Sprintf("SELECT %s FROM ledger WHERE project_id = $project ORDER BY created_at DESC LIMIT $lim", selectCols)
+	if memberships != nil && len(memberships) == 0 {
+		return []LedgerEntry{}, nil
 	}
+	conds := []string{"project_id = $project"}
+	vars := map[string]any{"project": projectID, "lim": opts.Limit}
+	if memberships != nil {
+		conds = append(conds, "workspace_id IN $memberships")
+		vars["memberships"] = memberships
+	}
+	if opts.Type != "" {
+		conds = append(conds, "type = $type")
+		vars["type"] = opts.Type
+	}
+	where := conds[0]
+	for i := 1; i < len(conds); i++ {
+		where += " AND " + conds[i]
+	}
+	sql := fmt.Sprintf("SELECT %s FROM ledger WHERE %s ORDER BY created_at DESC LIMIT $lim", selectCols, where)
 	results, err := surrealdb.Query[[]LedgerEntry](ctx, s.db, sql, vars)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: list: %w", err)

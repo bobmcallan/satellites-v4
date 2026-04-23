@@ -81,7 +81,7 @@ func TestProjectSurrealStore_RoundTrip(t *testing.T) {
 	}
 
 	// GetByID round-trip.
-	got, err := store.GetByID(ctx, p1.ID)
+	got, err := store.GetByID(ctx, p1.ID, nil)
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
@@ -90,12 +90,12 @@ func TestProjectSurrealStore_RoundTrip(t *testing.T) {
 	}
 
 	// GetByID missing → ErrNotFound.
-	if _, err := store.GetByID(ctx, "proj_missing"); !errors.Is(err, project.ErrNotFound) {
+	if _, err := store.GetByID(ctx, "proj_missing", nil); !errors.Is(err, project.ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
 
 	// ListByOwner filters + newest-first.
-	list, err := store.ListByOwner(ctx, "user_alice")
+	list, err := store.ListByOwner(ctx, "user_alice", nil)
 	if err != nil {
 		t.Fatalf("ListByOwner: %v", err)
 	}

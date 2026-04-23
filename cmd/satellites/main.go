@@ -100,7 +100,15 @@ func main() {
 		if err != nil {
 			logger.Warn().Str("error", err.Error()).Msg("system workspace seed failed")
 		}
-		_ = systemWsID
+		// Grant the synthetic "apikey" user admin access to the system
+		// workspace so Bearer-API-key callers share the system scope. The
+		// alternative — minting a per-API-key workspace — would require
+		// per-key accounting that feature-order:4 can add later.
+		if systemWsID != "" {
+			if err := wsStore.AddMember(ctx, systemWsID, "apikey", workspace.RoleAdmin, "system", time.Now().UTC()); err != nil {
+				logger.Warn().Str("error", err.Error()).Msg("apikey system membership seed failed")
+			}
+		}
 
 		// Seed default project, then idempotently stamp any legacy
 		// document rows that pre-date the project primitive.
@@ -136,7 +144,7 @@ func main() {
 		}
 	}
 
-	portalHandlers, err := portal.New(cfg, logger, sessions, users, projStore, ledgerStore, storyStore, startedAt)
+	portalHandlers, err := portal.New(cfg, logger, sessions, users, projStore, ledgerStore, storyStore, wsStore, startedAt)
 	if err != nil {
 		logger.Error().Str("error", err.Error()).Msg("portal init failed")
 		os.Exit(1)

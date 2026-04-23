@@ -19,43 +19,65 @@ import (
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/project"
 	"github.com/bobmcallan/satellites/internal/story"
+	"github.com/bobmcallan/satellites/internal/workspace"
 	"github.com/bobmcallan/satellites/pages"
 )
 
 // Portal wires template rendering, the auth dependencies, and the static
 // filesystem into a set of http.Handlers.
 type Portal struct {
-	tmpl      *template.Template
-	cfg       *config.Config
-	logger    arbor.ILogger
-	sessions  auth.SessionStore
-	users     auth.UserStoreByID
-	projects  project.Store
-	ledger    ledger.Store
-	stories   story.Store
-	startedAt time.Time
+	tmpl       *template.Template
+	cfg        *config.Config
+	logger     arbor.ILogger
+	sessions   auth.SessionStore
+	users      auth.UserStoreByID
+	projects   project.Store
+	ledger     ledger.Store
+	stories    story.Store
+	workspaces workspace.Store
+	startedAt  time.Time
 }
 
 // New constructs the Portal handler set. Template parsing errors return
 // immediately so main() can exit with a clear message. Nil store args
 // disable the corresponding page group (the handlers render a "disabled"
-// panel or 404).
-func New(cfg *config.Config, logger arbor.ILogger, sessions auth.SessionStore, users auth.UserStoreByID, projects project.Store, ledgerStore ledger.Store, stories story.Store, startedAt time.Time) (*Portal, error) {
+// panel or 404). A nil workspaces store keeps the pre-tenant behaviour
+// (membership scoping disabled) — used by tests that don't need it.
+func New(cfg *config.Config, logger arbor.ILogger, sessions auth.SessionStore, users auth.UserStoreByID, projects project.Store, ledgerStore ledger.Store, stories story.Store, workspaces workspace.Store, startedAt time.Time) (*Portal, error) {
 	tmpl, err := pages.Templates()
 	if err != nil {
 		return nil, err
 	}
 	return &Portal{
-		tmpl:      tmpl,
-		cfg:       cfg,
-		logger:    logger,
-		sessions:  sessions,
-		users:     users,
-		projects:  projects,
-		ledger:    ledgerStore,
-		stories:   stories,
-		startedAt: startedAt,
+		tmpl:       tmpl,
+		cfg:        cfg,
+		logger:     logger,
+		sessions:   sessions,
+		users:      users,
+		projects:   projects,
+		ledger:     ledgerStore,
+		stories:    stories,
+		workspaces: workspaces,
+		startedAt:  startedAt,
 	}, nil
+}
+
+// resolveMemberships mirrors the MCP handler helper: nil when the workspace
+// store is absent (pre-tenant tests), empty slice when the user has no
+// memberships (deny-all), non-empty slice of workspace ids otherwise.
+func (p *Portal) resolveMemberships(r *http.Request, user auth.User) []string {
+	if p.workspaces == nil {
+		return nil
+	}
+	list, err := p.workspaces.ListByMember(r.Context(), user.ID)
+	if err != nil || len(list) == 0 {
+		return []string{}
+	}
+	out := make([]string, 0, len(list))
+	for _, w := range list {
+		out = append(out, w.ID)
+	}
+	return out
 }
 
 // Register attaches the portal's routes to mux. Uses `{$}` for the exact-
@@ -180,7 +202,7 @@ func (p *Portal) handleProjectsList(w http.ResponseWriter, r *http.Request) {
 	if p.projects == nil {
 		data.Disabled = true
 	} else {
-		list, err := p.projects.ListByOwner(r.Context(), user.ID)
+		list, err := p.projects.ListByOwner(r.Context(), user.ID, p.resolveMemberships(r, user))
 		if err != nil {
 			p.logger.Error().Str("error", err.Error()).Msg("projects list failed")
 			http.Error(w, "list failed", http.StatusInternalServerError)
@@ -211,7 +233,7 @@ func (p *Portal) handleProjectDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	pr, err := p.projects.GetByID(r.Context(), id)
+	pr, err := p.projects.GetByID(r.Context(), id, p.resolveMemberships(r, user))
 	if err != nil || pr.OwnerUserID != user.ID {
 		http.NotFound(w, r)
 		return
@@ -264,7 +286,8 @@ func (p *Portal) handleProjectLedger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	proj, err := p.projects.GetByID(r.Context(), id)
+	memberships := p.resolveMemberships(r, user)
+	proj, err := p.projects.GetByID(r.Context(), id, memberships)
 	if err != nil || proj.OwnerUserID != user.ID {
 		http.NotFound(w, r)
 		return
@@ -285,7 +308,7 @@ func (p *Portal) handleProjectLedger(w http.ResponseWriter, r *http.Request) {
 				limit = n
 			}
 		}
-		entries, err := p.ledger.List(r.Context(), proj.ID, ledger.ListOptions{Limit: limit})
+		entries, err := p.ledger.List(r.Context(), proj.ID, ledger.ListOptions{Limit: limit}, memberships)
 		if err != nil {
 			p.logger.Error().Str("error", err.Error()).Msg("ledger list failed")
 			http.Error(w, "list failed", http.StatusInternalServerError)
@@ -381,7 +404,8 @@ func (p *Portal) handleStoriesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	proj, err := p.projects.GetByID(r.Context(), id)
+	memberships := p.resolveMemberships(r, user)
+	proj, err := p.projects.GetByID(r.Context(), id, memberships)
 	if err != nil || proj.OwnerUserID != user.ID {
 		http.NotFound(w, r)
 		return
@@ -402,7 +426,7 @@ func (p *Portal) handleStoriesList(w http.ResponseWriter, r *http.Request) {
 		if statusParam != "" && statusParam != "all" {
 			opts.Status = statusParam
 		}
-		list, err := p.stories.List(r.Context(), proj.ID, opts)
+		list, err := p.stories.List(r.Context(), proj.ID, opts, memberships)
 		if err != nil {
 			p.logger.Error().Str("error", err.Error()).Msg("stories list failed")
 			http.Error(w, "list failed", http.StatusInternalServerError)
@@ -437,12 +461,13 @@ func (p *Portal) handleStoryDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	projID := r.PathValue("id")
 	storyID := r.PathValue("story_id")
-	proj, err := p.projects.GetByID(r.Context(), projID)
+	memberships := p.resolveMemberships(r, user)
+	proj, err := p.projects.GetByID(r.Context(), projID, memberships)
 	if err != nil || proj.OwnerUserID != user.ID {
 		http.NotFound(w, r)
 		return
 	}
-	s, err := p.stories.GetByID(r.Context(), storyID)
+	s, err := p.stories.GetByID(r.Context(), storyID, memberships)
 	if err != nil || s.ProjectID != proj.ID {
 		http.NotFound(w, r)
 		return
@@ -456,7 +481,7 @@ func (p *Portal) handleStoryDetail(w http.ResponseWriter, r *http.Request) {
 		Story:   viewStoryRow(s),
 	}
 	if p.ledger != nil {
-		entries, err := p.ledger.List(r.Context(), proj.ID, ledger.ListOptions{Type: story.LedgerEntryType, Limit: 50})
+		entries, err := p.ledger.List(r.Context(), proj.ID, ledger.ListOptions{Type: story.LedgerEntryType, Limit: 50}, memberships)
 		if err != nil {
 			p.logger.Error().Str("error", err.Error()).Msg("ledger list failed")
 			http.Error(w, "list failed", http.StatusInternalServerError)

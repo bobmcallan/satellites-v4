@@ -74,13 +74,13 @@ func TestStorySurrealStore_RoundTrip(t *testing.T) {
 	// Transition through the happy path at strictly increasing times to
 	// avoid SurrealDB datetime tie-breaks.
 	for i, next := range []string{story.StatusReady, story.StatusInProgress, story.StatusDone} {
-		_, err := stories.UpdateStatus(ctx, s.ID, next, "u_alice", now.Add(time.Duration(i+1)*1200*time.Millisecond))
+		_, err := stories.UpdateStatus(ctx, s.ID, next, "u_alice", now.Add(time.Duration(i+1)*1200*time.Millisecond), nil)
 		if err != nil {
 			t.Fatalf("UpdateStatus %q: %v", next, err)
 		}
 	}
 
-	got, err := stories.GetByID(ctx, s.ID)
+	got, err := stories.GetByID(ctx, s.ID, nil)
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
@@ -89,12 +89,12 @@ func TestStorySurrealStore_RoundTrip(t *testing.T) {
 	}
 
 	// Invalid transition: done → ready is terminal.
-	if _, err := stories.UpdateStatus(ctx, s.ID, story.StatusReady, "u_alice", now.Add(10*time.Second)); err == nil {
+	if _, err := stories.UpdateStatus(ctx, s.ID, story.StatusReady, "u_alice", now.Add(10*time.Second), nil); err == nil {
 		t.Errorf("terminal state should reject further transitions")
 	}
 
 	// Ledger contains exactly 3 rows for this story.
-	entries, _ := led.List(ctx, "proj_a", ledger.ListOptions{Type: story.LedgerEntryType})
+	entries, _ := led.List(ctx, "proj_a", ledger.ListOptions{Type: story.LedgerEntryType}, nil)
 	if len(entries) != 3 {
 		t.Errorf("ledger rows = %d, want 3", len(entries))
 	}
@@ -105,11 +105,11 @@ func TestStorySurrealStore_RoundTrip(t *testing.T) {
 	}
 
 	// List filters.
-	byTag, _ := stories.List(ctx, "proj_a", story.ListOptions{Tag: "epic:v4-stories"})
+	byTag, _ := stories.List(ctx, "proj_a", story.ListOptions{Tag: "epic:v4-stories"}, nil)
 	if len(byTag) != 1 {
 		t.Errorf("tag filter count = %d", len(byTag))
 	}
-	byStatus, _ := stories.List(ctx, "proj_a", story.ListOptions{Status: story.StatusDone})
+	byStatus, _ := stories.List(ctx, "proj_a", story.ListOptions{Status: story.StatusDone}, nil)
 	if len(byStatus) != 1 {
 		t.Errorf("status=done count = %d", len(byStatus))
 	}

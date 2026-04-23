@@ -41,6 +41,13 @@ type Store interface {
 	// GetRole returns the member's role on the workspace, or ErrNotFound
 	// when there is no membership row.
 	GetRole(ctx context.Context, workspaceID, userID string) (string, error)
+
+	// AddMember inserts (or updates) a membership row. The full MCP verb
+	// surface (add/list/update_role/remove with the admin-only guard + the
+	// last-admin guard) lands in feature-order:4; this minimal store verb
+	// is here now so the boot path can grant the "apikey" synthetic user
+	// access to the system workspace without bespoke surgery.
+	AddMember(ctx context.Context, workspaceID, userID, role, addedBy string, now time.Time) error
 }
 
 // MemoryStore is a concurrency-safe in-process Store used by unit tests.
@@ -138,6 +145,31 @@ func (m *MemoryStore) GetRole(ctx context.Context, workspaceID, userID string) (
 		return "", ErrNotFound
 	}
 	return member.Role, nil
+}
+
+// AddMember implements Store for MemoryStore.
+func (m *MemoryStore) AddMember(ctx context.Context, workspaceID, userID, role, addedBy string, now time.Time) error {
+	if !IsValidRole(role) {
+		return ErrInvalidRole
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.rows[workspaceID]; !ok {
+		return ErrNotFound
+	}
+	members, ok := m.members[workspaceID]
+	if !ok {
+		members = map[string]Member{}
+		m.members[workspaceID] = members
+	}
+	members[userID] = Member{
+		WorkspaceID: workspaceID,
+		UserID:      userID,
+		Role:        role,
+		AddedAt:     now,
+		AddedBy:     addedBy,
+	}
+	return nil
 }
 
 var _ Store = (*MemoryStore)(nil)

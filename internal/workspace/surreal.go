@@ -172,4 +172,22 @@ func (s *SurrealStore) writeMember(ctx context.Context, m Member) error {
 	return nil
 }
 
+// AddMember implements Store for SurrealStore.
+func (s *SurrealStore) AddMember(ctx context.Context, workspaceID, userID, role, addedBy string, now time.Time) error {
+	if !IsValidRole(role) {
+		return ErrInvalidRole
+	}
+	if _, err := s.GetByID(ctx, workspaceID); err != nil {
+		return err
+	}
+	member := Member{
+		WorkspaceID: workspaceID,
+		UserID:      userID,
+		Role:        role,
+		AddedAt:     now,
+		AddedBy:     addedBy,
+	}
+	return s.writeMember(ctx, member)
+}
+
 var _ Store = (*SurrealStore)(nil)

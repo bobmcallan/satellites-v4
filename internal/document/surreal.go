@@ -30,7 +30,7 @@ const selectCols = "meta::id(id) AS id, workspace_id, project_id, filename, type
 
 func (s *SurrealStore) Upsert(ctx context.Context, workspaceID, projectID, filename, docType string, body []byte, now time.Time) (UpsertResult, error) {
 	hash := HashBody(body)
-	existing, err := s.GetByFilename(ctx, projectID, filename)
+	existing, err := s.GetByFilename(ctx, projectID, filename, nil)
 	if err == nil {
 		if existing.BodyHash == hash {
 			return UpsertResult{Document: existing}, nil
@@ -80,9 +80,21 @@ func (s *SurrealStore) write(ctx context.Context, doc Document) error {
 	return nil
 }
 
-func (s *SurrealStore) GetByFilename(ctx context.Context, projectID, filename string) (Document, error) {
-	sql := fmt.Sprintf("SELECT %s FROM documents WHERE project_id = $project AND filename = $filename AND status = 'active' LIMIT 1", selectCols)
+func (s *SurrealStore) GetByFilename(ctx context.Context, projectID, filename string, memberships []string) (Document, error) {
+	if memberships != nil && len(memberships) == 0 {
+		return Document{}, ErrNotFound
+	}
+	conds := []string{"project_id = $project", "filename = $filename", "status = 'active'"}
 	vars := map[string]any{"project": projectID, "filename": filename}
+	if memberships != nil {
+		conds = append(conds, "workspace_id IN $memberships")
+		vars["memberships"] = memberships
+	}
+	where := conds[0]
+	for i := 1; i < len(conds); i++ {
+		where += " AND " + conds[i]
+	}
+	sql := fmt.Sprintf("SELECT %s FROM documents WHERE %s LIMIT 1", selectCols, where)
 	results, err := surrealdb.Query[[]Document](ctx, s.db, sql, vars)
 	if err != nil {
 		return Document{}, fmt.Errorf("document: select by filename: %w", err)
@@ -93,12 +105,24 @@ func (s *SurrealStore) GetByFilename(ctx context.Context, projectID, filename st
 	return (*results)[0].Result[0], nil
 }
 
-func (s *SurrealStore) Count(ctx context.Context, projectID string) (int, error) {
-	sql := "SELECT count() AS n FROM documents WHERE project_id = $project AND status = 'active' GROUP ALL"
+func (s *SurrealStore) Count(ctx context.Context, projectID string, memberships []string) (int, error) {
+	if memberships != nil && len(memberships) == 0 {
+		return 0, nil
+	}
+	conds := []string{"project_id = $project", "status = 'active'"}
+	vars := map[string]any{"project": projectID}
+	if memberships != nil {
+		conds = append(conds, "workspace_id IN $memberships")
+		vars["memberships"] = memberships
+	}
+	where := conds[0]
+	for i := 1; i < len(conds); i++ {
+		where += " AND " + conds[i]
+	}
+	sql := fmt.Sprintf("SELECT count() AS n FROM documents WHERE %s GROUP ALL", where)
 	type row struct {
 		N int `json:"n"`
 	}
-	vars := map[string]any{"project": projectID}
 	results, err := surrealdb.Query[[]row](ctx, s.db, sql, vars)
 	if err != nil {
 		return 0, fmt.Errorf("document: count: %w", err)

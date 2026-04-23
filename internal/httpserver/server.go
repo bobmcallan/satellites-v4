@@ -29,6 +29,12 @@ type Server struct {
 	mux       *http.ServeMux
 }
 
+// Mount adds a handler at the given pattern. Must be called before Start.
+// Used to wire the MCP handler at /mcp without coupling httpserver to mcp-go.
+func (s *Server) Mount(pattern string, h http.Handler) {
+	s.mux.Handle(pattern, h)
+}
+
 // RouteRegistrar is anything that can attach its own routes to a mux. The
 // auth handlers satisfy this; later stories can plug in MCP + portal.
 type RouteRegistrar interface {

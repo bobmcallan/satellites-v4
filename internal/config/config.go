@@ -48,6 +48,11 @@ type Config struct {
 	GithubClientID       string
 	GithubClientSecret   string
 	OAuthRedirectBaseURL string
+
+	// APIKeys are Bearer tokens accepted on /mcp when a session cookie is
+	// absent. Typical use: CI agents + the local Claude harness. Loaded from
+	// SATELLITES_API_KEYS (comma-separated).
+	APIKeys []string
 }
 
 // Load reads the environment and returns a validated Config. Missing required
@@ -111,6 +116,13 @@ func Load() (*Config, error) {
 	}
 	if v := os.Getenv("OAUTH_REDIRECT_BASE_URL"); v != "" {
 		cfg.OAuthRedirectBaseURL = v
+	}
+	if v := os.Getenv("SATELLITES_API_KEYS"); v != "" {
+		for _, part := range strings.Split(v, ",") {
+			if k := strings.TrimSpace(part); k != "" {
+				cfg.APIKeys = append(cfg.APIKeys, k)
+			}
+		}
 	}
 
 	if err := cfg.validate(); err != nil {

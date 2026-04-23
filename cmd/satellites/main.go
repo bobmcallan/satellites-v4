@@ -15,6 +15,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/httpserver"
+	"github.com/bobmcallan/satellites/internal/mcpserver"
 )
 
 func main() {
@@ -53,6 +54,16 @@ func main() {
 	}
 
 	srv := httpserver.New(cfg, logger, startedAt, authHandlers)
+
+	mcp := mcpserver.New(cfg, logger, startedAt)
+	mcpAuth := mcpserver.AuthMiddleware(mcpserver.AuthDeps{
+		Sessions: sessions,
+		Users:    users,
+		APIKeys:  cfg.APIKeys,
+		Logger:   logger,
+	})
+	srv.Mount("/mcp", mcpAuth(mcp))
+
 	if err := srv.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error().Str("error", err.Error()).Msg("server terminated with error")
 		os.Exit(1)

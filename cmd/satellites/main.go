@@ -14,6 +14,8 @@ import (
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
 	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/config"
+	"github.com/bobmcallan/satellites/internal/db"
+	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/httpserver"
 	"github.com/bobmcallan/satellites/internal/mcpserver"
 	"github.com/bobmcallan/satellites/internal/portal"
@@ -62,7 +64,32 @@ func main() {
 
 	srv := httpserver.New(cfg, logger, startedAt, authHandlers, portalHandlers)
 
-	mcp := mcpserver.New(cfg, logger, startedAt)
+	// Optional SurrealDB connection + document surface. When DB_DSN is
+	// empty we keep booting (tests, dev without Surreal) but the MCP doc
+	// tools are disabled and /healthz omits db_ok.
+	var docStore document.Store
+	if cfg.DBDSN != "" {
+		dbCfg, err := db.ParseDSN(cfg.DBDSN)
+		if err != nil {
+			logger.Error().Str("error", err.Error()).Msg("db dsn parse failed")
+			os.Exit(1)
+		}
+		conn, err := db.Connect(ctx, dbCfg)
+		if err != nil {
+			logger.Error().Str("error", err.Error()).Msg("db connect failed")
+			os.Exit(1)
+		}
+		docStore = document.NewSurrealStore(conn)
+		srv.SetHealthCheck(func(hcCtx context.Context) error { return db.Ping(hcCtx, conn) })
+		if _, err := document.SeedIfEmpty(ctx, docStore, logger, cfg.DocsDir); err != nil {
+			logger.Warn().Str("error", err.Error()).Msg("document seed failed")
+		}
+	}
+
+	mcp := mcpserver.New(cfg, logger, startedAt, mcpserver.Deps{
+		DocStore: docStore,
+		DocsDir:  cfg.DocsDir,
+	})
 	mcpAuth := mcpserver.AuthMiddleware(mcpserver.AuthDeps{
 		Sessions: sessions,
 		Users:    users,

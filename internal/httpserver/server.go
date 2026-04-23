@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/ternarybob/arbor"
@@ -27,6 +28,18 @@ type Server struct {
 	http      *http.Server
 	startedAt time.Time
 	mux       *http.ServeMux
+
+	healthCheck atomic.Pointer[HealthCheck]
+}
+
+// SetHealthCheck swaps in an optional liveness hook used by /healthz. Safe
+// to call after New. Pass nil to detach.
+func (s *Server) SetHealthCheck(h HealthCheck) {
+	if h == nil {
+		s.healthCheck.Store(nil)
+		return
+	}
+	s.healthCheck.Store(&h)
 }
 
 // Mount adds a handler at the given pattern. Must be called before Start.
@@ -40,6 +53,11 @@ func (s *Server) Mount(pattern string, h http.Handler) {
 type RouteRegistrar interface {
 	Register(mux *http.ServeMux)
 }
+
+// HealthCheck is the optional hook /healthz calls to expose liveness of a
+// downstream dependency (e.g. SurrealDB). Returns nil when the dependency
+// is healthy; a non-nil error is rendered as `db_ok:false` + `db_error:<msg>`.
+type HealthCheck func(ctx context.Context) error
 
 // New constructs a Server that listens on cfg.Port, uses logger for request
 // and lifecycle logs, and stamps /healthz with the supplied startedAt instant.
@@ -102,7 +120,8 @@ func (s *Server) Start(ctx context.Context) error {
 
 // healthz returns the process's liveness + identity metadata as JSON. Uptime
 // is computed against s.startedAt — the caller's notion of "process start",
-// not "server bind time".
+// not "server bind time". When a HealthCheck is attached, the payload also
+// carries db_ok (+ db_error on failure).
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 	payload := map[string]any{
 		"version":        config.Version,
@@ -110,6 +129,16 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 		"commit":         config.GitCommit,
 		"started_at":     s.startedAt.UTC().Format(time.RFC3339),
 		"uptime_seconds": int64(time.Since(s.startedAt).Seconds()),
+	}
+	if hc := s.healthCheck.Load(); hc != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := (*hc)(ctx); err != nil {
+			payload["db_ok"] = false
+			payload["db_error"] = err.Error()
+		} else {
+			payload["db_ok"] = true
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

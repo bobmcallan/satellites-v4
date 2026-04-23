@@ -53,6 +53,10 @@ type Config struct {
 	// absent. Typical use: CI agents + the local Claude harness. Loaded from
 	// SATELLITES_API_KEYS (comma-separated).
 	APIKeys []string
+
+	// DocsDir is the container-side path containing the mounted docs
+	// volume that document_ingest_file reads from. Defaults to /app/docs.
+	DocsDir string
 }
 
 // Load reads the environment and returns a validated Config. Missing required
@@ -66,6 +70,7 @@ func Load() (*Config, error) {
 		DevMode:      true,
 		DBDSN:        "",
 		FlyMachineID: "",
+		DocsDir:      "/app/docs",
 	}
 
 	if v := firstNonEmpty(os.Getenv("PORT"), os.Getenv("SATELLITES_PORT")); v != "" {
@@ -123,6 +128,9 @@ func Load() (*Config, error) {
 				cfg.APIKeys = append(cfg.APIKeys, k)
 			}
 		}
+	}
+	if v := os.Getenv("DOCS_DIR"); v != "" {
+		cfg.DocsDir = v
 	}
 
 	if err := cfg.validate(); err != nil {

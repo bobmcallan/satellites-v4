@@ -6,12 +6,18 @@ package integration
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"net/http"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // repoRoot resolves the satellites-v4 repo root by walking up from this file's
@@ -44,9 +50,8 @@ func buildBinary(t *testing.T, name string) string {
 }
 
 // runBinary executes path with a bounded timeout, returning combined stdout
-// and stderr. The current satellites-v4 binaries print a single boot line
-// and exit; when a future feature introduces a long-running mode, switch the
-// callers to a start/stop pattern rather than re-interpreting this helper.
+// and stderr. Used for the agent smoke — which still print-and-exits pre-agent
+// story.
 func runBinary(t *testing.T, path string, timeout time.Duration) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -56,4 +61,66 @@ func runBinary(t *testing.T, path string, timeout time.Duration) string {
 		t.Fatalf("binary %s exited non-zero: %v\n%s", filepath.Base(path), err, out)
 	}
 	return strings.TrimRight(string(out), "\n")
+}
+
+// startServerContainer builds the satellites image from docker/Dockerfile and
+// starts it as a testcontainer waiting on /healthz. Returns the base URL
+// (scheme+host+mapped-port) and a cleanup function the caller must defer.
+func startServerContainer(t *testing.T, ctx context.Context) (string, func()) {
+	t.Helper()
+	root := repoRoot(t)
+	req := testcontainers.ContainerRequest{
+		FromDockerfile: testcontainers.FromDockerfile{
+			Context:    root,
+			Dockerfile: "docker/Dockerfile",
+			KeepImage:  true,
+		},
+		ExposedPorts: []string{"8080/tcp"},
+		Env: map[string]string{
+			"PORT":      "8080",
+			"ENV":       "dev",
+			"LOG_LEVEL": "info",
+			"DEV_MODE":  "true",
+		},
+		WaitingFor: wait.ForHTTP("/healthz").
+			WithPort("8080/tcp").
+			WithStartupTimeout(90 * time.Second).
+			WithResponseMatcher(func(body io.Reader) bool {
+				// The URL matcher already handles the 200 status; the body
+				// matcher just drains and accepts.
+				_, _ = io.Copy(io.Discard, body)
+				return true
+			}),
+	}
+	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: req,
+		Started:          true,
+	})
+	if err != nil {
+		t.Fatalf("start container: %v", err)
+	}
+	host, err := container.Host(ctx)
+	if err != nil {
+		t.Fatalf("container host: %v", err)
+	}
+	mapped, err := container.MappedPort(ctx, "8080/tcp")
+	if err != nil {
+		t.Fatalf("container port: %v", err)
+	}
+	baseURL := fmt.Sprintf("http://%s:%s", host, mapped.Port())
+	stop := func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := container.Terminate(stopCtx); err != nil {
+			t.Logf("container terminate: %v", err)
+		}
+	}
+	// Extra safety: do a plain GET /healthz before handing control back.
+	hcCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req2, _ := http.NewRequestWithContext(hcCtx, http.MethodGet, baseURL+"/healthz", nil)
+	if resp, err := http.DefaultClient.Do(req2); err == nil {
+		resp.Body.Close()
+	}
+	return baseURL, stop
 }

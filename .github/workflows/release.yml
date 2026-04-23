@@ -1,0 +1,167 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (e.g. latest, v1.2.3)"
+        required: false
+        default: "latest"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: satellites
+  APP_NAME: satellites-pprod
+  FLY_IMAGE: registry.fly.io/satellites-pprod:latest
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: |
+          go build ./cmd/satellites/
+          go build ./cmd/satellites-agent/
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test ./internal/... -timeout 120s
+
+      - name: Integration tests
+        run: go test ./tests/integration/... -timeout 600s
+
+  push:
+    needs: compile
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version metadata
+        id: meta
+        run: |
+          VERSION=$(awk '/^\[satellites\]/{f=1;next} /^\[/{f=0} f && /^version/{gsub(/version\s*=\s*/,""); gsub(/ /,""); print; exit}' .version)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "build=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
+          echo "commit=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
+      - name: Docker metadata
+        id: docker-meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=,format=short
+            type=raw,value=${{ steps.meta.outputs.version }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ steps.docker-meta.outputs.tags }}
+          labels: ${{ steps.docker-meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            BUILD=${{ steps.meta.outputs.build }}
+            GIT_COMMIT=${{ steps.meta.outputs.commit }}
+          cache-from: type=gha,scope=satellites
+          cache-to: type=gha,mode=max,scope=satellites
+
+  deploy:
+    needs: push
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: fly-deploy-${{ env.APP_NAME }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Check FLY_API_TOKEN is set
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -z "${FLY_API_TOKEN}" ]; then
+            echo "::error::FLY_API_TOKEN repo secret is missing — add it in repo Settings → Secrets → Actions before deploying"
+            exit 1
+          fi
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image to Fly registry
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl auth docker
+          docker pull ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
+          docker tag ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest ${{ env.FLY_IMAGE }}
+          docker push ${{ env.FLY_IMAGE }}
+
+      - name: Pre-deploy machine check
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          stuck=$(flyctl machines list --app ${{ env.APP_NAME }} --json \
+            | jq '[.[] | select(.state == "replacing" or .state == "destroying")] | length')
+          if [ "$stuck" -gt 0 ]; then
+            echo "::warning::Found $stuck stuck machine(s) — forcing cleanup"
+            flyctl machines list --app ${{ env.APP_NAME }} --json \
+              | jq -r '.[] | select(.state == "replacing" or .state == "destroying") | .id' \
+              | xargs -I{} flyctl machines destroy {} --app ${{ env.APP_NAME }} --force
+            sleep 5
+          fi
+
+      - name: Deploy to Fly.io
+        uses: nick-fields/retry@v3
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        with:
+          timeout_minutes: 10
+          max_attempts: 2
+          retry_wait_seconds: 30
+          command: |
+            flyctl deploy \
+              --app ${{ env.APP_NAME }} \
+              --image ${{ env.FLY_IMAGE }} \
+              --strategy rolling \
+              --wait-timeout 300 \
+              --yes

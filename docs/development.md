@@ -51,6 +51,18 @@ The discipline: one harness, one dependency surface, one set of helpers. Don't f
 - **Benchmarks** — live next to the code under test.
 - **CI-specific checks** (lint, vet, fmt) — driven by `script/build.sh` commands, not the integration harness.
 
+## Run PPROD smoke after deploy
+
+After a push to `main` triggers the release workflow and the Fly deploy settles, run the PPROD smoke to verify the three things that matter — the login page renders, `/healthz` returns a commit SHA matching your local HEAD, and `/mcp` with a known API key returns the `satellites_info` tool payload.
+
+```
+SATELLITES_PPROD_URL=https://satellites-pprod.fly.dev \
+SATELLITES_PPROD_API_KEY=<key-from-repo-secrets> \
+go test -tags=pprod ./tests/integration/... -run Pprod
+```
+
+The test is guarded by `//go:build pprod` so it stays invisible to the default `go test ./tests/integration/...` run. It `t.Fatal`s — not skips — when either env var is unset so CI or operator mistakes fail loudly. Commit propagation tolerates up to 2 minutes of Fly rolling-deploy lag (the `healthz_commit_match` sub-test retries every 5 s).
+
 ## Troubleshooting
 
 - *"go: no such target"* — you ran the command outside the repo root. The harness resolves the repo root at runtime, so tests work from any CWD; only the `go test ./tests/integration/...` invocation needs the repo root.

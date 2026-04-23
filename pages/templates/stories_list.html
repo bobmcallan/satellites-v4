@@ -1,0 +1,59 @@
+{{define "stories_list.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  {{template "head.html" .}}
+</head>
+<body>
+  {{template "nav.html" .}}
+  <main class="portal-main">
+    <section class="panel-headed">
+      <header class="panel-header">
+        <h1>{{.Project.Name}} · stories</h1>
+      </header>
+      <div class="panel-body">
+        <p class="muted">
+          <a href="/projects/{{.Project.ID}}">&larr; back to project</a>
+          &nbsp;·&nbsp;
+          {{if .StatusAll}}
+            showing all &nbsp;·&nbsp; <a href="?">default filter</a>
+          {{else}}
+            showing open &nbsp;·&nbsp; <a href="?status=all">show all</a>
+          {{end}}
+        </p>
+        {{if .Disabled}}
+          <p class="muted">Stories are unavailable in this environment (no database configured).</p>
+        {{else if not .Stories}}
+          <p class="muted">No stories match the current filter.</p>
+        {{else}}
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>title</th>
+                <th>status</th>
+                <th>priority</th>
+                <th>tags</th>
+                <th>created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range .Stories}}
+              <tr>
+                <td><a href="/projects/{{$.Project.ID}}/stories/{{.ID}}">{{.Title}}</a></td>
+                <td><code>{{.Status}}</code></td>
+                <td>{{.Priority}}</td>
+                <td>
+                  {{range .Tags}}<code class="tag-chip">{{.}}</code> {{end}}
+                </td>
+                <td><code>{{.CreatedAt}}</code></td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+        {{end}}
+      </div>
+    </section>
+  </main>
+</body>
+</html>
+{{end}}

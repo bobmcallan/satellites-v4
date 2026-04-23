@@ -1,0 +1,45 @@
+{{define "projects_list.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  {{template "head.html" .}}
+</head>
+<body>
+  {{template "nav.html" .}}
+  <main class="portal-main">
+    <section class="panel-headed">
+      <header class="panel-header"><h1>projects</h1></header>
+      <div class="panel-body">
+        {{if .Disabled}}
+          <p class="muted">Projects are unavailable in this environment (no database configured).</p>
+        {{else if not .Projects}}
+          <p class="muted">You don't own any projects yet.</p>
+          <p class="muted">Create one via the MCP <code>project_create</code> tool.</p>
+        {{else}}
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>name</th>
+                <th>id</th>
+                <th>status</th>
+                <th>created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range .Projects}}
+              <tr>
+                <td><a href="/projects/{{.ID}}">{{.Name}}</a></td>
+                <td><code>{{.ID}}</code></td>
+                <td>{{.Status}}</td>
+                <td><code>{{.CreatedAt}}</code></td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+        {{end}}
+      </div>
+    </section>
+  </main>
+</body>
+</html>
+{{end}}

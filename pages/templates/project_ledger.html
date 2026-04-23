@@ -1,0 +1,60 @@
+{{define "project_ledger.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  {{template "head.html" .}}
+</head>
+<body>
+  {{template "nav.html" .}}
+  <main class="portal-main">
+    <section class="panel-headed">
+      <header class="panel-header">
+        <h1>{{.Project.Name}} · ledger</h1>
+      </header>
+      <div class="panel-body">
+        <p class="muted">
+          <a href="/projects/{{.Project.ID}}">&larr; back to project</a>
+          &nbsp;·&nbsp;
+          showing {{.Limit}} entries (newest first)
+        </p>
+        {{if .Disabled}}
+          <p class="muted">Ledger is unavailable in this environment (no database configured).</p>
+        {{else if not .Entries}}
+          <p class="muted">No ledger entries yet for this project.</p>
+        {{else}}
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>created</th>
+                <th>type</th>
+                <th>actor</th>
+                <th>content</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range .Entries}}
+              <tr>
+                <td><code>{{.CreatedAt}}</code></td>
+                <td><code>{{.Type}}</code></td>
+                <td><code>{{.Actor}}</code></td>
+                <td>
+                  {{if .Content}}
+                  <details>
+                    <summary class="muted">expand</summary>
+                    <pre class="ledger-content">{{.Content}}</pre>
+                  </details>
+                  {{else}}
+                  <span class="muted">—</span>
+                  {{end}}
+                </td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+        {{end}}
+      </div>
+    </section>
+  </main>
+</body>
+</html>
+{{end}}

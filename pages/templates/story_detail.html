@@ -1,0 +1,69 @@
+{{define "story_detail.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  {{template "head.html" .}}
+</head>
+<body>
+  {{template "nav.html" .}}
+  <main class="portal-main">
+    <section class="panel-headed">
+      <header class="panel-header">
+        <h1>{{.Story.Title}}</h1>
+      </header>
+      <div class="panel-body">
+        <p class="muted">
+          <a href="/projects/{{.Project.ID}}/stories">&larr; back to stories</a>
+        </p>
+        <dl class="kv-list">
+          <dt>id</dt><dd><code>{{.Story.ID}}</code></dd>
+          <dt>status</dt><dd><code>{{.Story.Status}}</code></dd>
+          <dt>priority</dt><dd>{{.Story.Priority}}</dd>
+          <dt>category</dt><dd>{{.Story.Category}}</dd>
+          <dt>tags</dt><dd>{{range .Story.Tags}}<code class="tag-chip">{{.}}</code> {{end}}</dd>
+          <dt>created</dt><dd><code>{{.Story.CreatedAt}}</code></dd>
+          <dt>updated</dt><dd><code>{{.Story.UpdatedAt}}</code></dd>
+        </dl>
+        {{if .Story.Description}}
+        <h2>description</h2>
+        <pre class="story-prose">{{.Story.Description}}</pre>
+        {{end}}
+        {{if .Story.AcceptanceCriteria}}
+        <h2>acceptance criteria</h2>
+        <pre class="story-prose">{{.Story.AcceptanceCriteria}}</pre>
+        {{end}}
+      </div>
+    </section>
+    <section class="panel-headed">
+      <header class="panel-header"><h2>status history</h2></header>
+      <div class="panel-body">
+        {{if not .History}}
+          <p class="muted">No status changes recorded yet.</p>
+        {{else}}
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>when</th>
+                <th>from</th>
+                <th>to</th>
+                <th>actor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range .History}}
+              <tr>
+                <td><code>{{.CreatedAt}}</code></td>
+                <td><code>{{.From}}</code></td>
+                <td><code>{{.To}}</code></td>
+                <td><code>{{.Actor}}</code></td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+        {{end}}
+      </div>
+    </section>
+  </main>
+</body>
+</html>
+{{end}}

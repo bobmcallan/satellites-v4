@@ -1,0 +1,30 @@
+{{define "project_detail.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  {{template "head.html" .}}
+</head>
+<body>
+  {{template "nav.html" .}}
+  <main class="portal-main">
+    <section class="panel-headed">
+      <header class="panel-header">
+        <h1>{{.Project.Name}}</h1>
+      </header>
+      <div class="panel-body">
+        <dl class="kv-list">
+          <dt>id</dt><dd><code>{{.Project.ID}}</code></dd>
+          <dt>status</dt><dd>{{.Project.Status}}</dd>
+          <dt>owner</dt><dd><code>{{.Project.OwnerUserID}}</code>{{if .OwnerYou}} <span class="muted">(you)</span>{{end}}</dd>
+          <dt>created</dt><dd><code>{{.Project.CreatedAt}}</code></dd>
+          <dt>updated</dt><dd><code>{{.Project.UpdatedAt}}</code></dd>
+        </dl>
+        <p class="muted">
+          <a href="/projects">&larr; back to projects</a>
+        </p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
+{{end}}

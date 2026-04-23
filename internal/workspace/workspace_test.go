@@ -171,6 +171,107 @@ func TestEnsureDefault_Idempotent(t *testing.T) {
 	}
 }
 
+func TestMemoryStore_AddMember_UnknownRole(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryStore()
+	w, _ := store.Create(ctx, "u1", "ws", time.Now().UTC())
+	if err := store.AddMember(ctx, w.ID, "u2", "garbage", "u1", time.Now().UTC()); !errors.Is(err, ErrInvalidRole) {
+		t.Errorf("want ErrInvalidRole, got %v", err)
+	}
+}
+
+func TestMemoryStore_ListMembers_OrderedAndFiltered(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryStore()
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	w, _ := store.Create(ctx, "u1", "ws", t0)
+	if err := store.AddMember(ctx, w.ID, "u2", RoleMember, "u1", t0.Add(time.Hour)); err != nil {
+		t.Fatalf("add u2: %v", err)
+	}
+	if err := store.AddMember(ctx, w.ID, "u3", RoleViewer, "u1", t0.Add(2*time.Hour)); err != nil {
+		t.Fatalf("add u3: %v", err)
+	}
+	members, err := store.ListMembers(ctx, w.ID)
+	if err != nil {
+		t.Fatalf("ListMembers: %v", err)
+	}
+	if len(members) != 3 {
+		t.Fatalf("want 3 members, got %d", len(members))
+	}
+	if members[0].UserID != "u1" || members[2].UserID != "u3" {
+		t.Errorf("unexpected order: %+v", members)
+	}
+}
+
+func TestMemoryStore_ListMembers_UnknownWorkspace(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryStore()
+	if _, err := store.ListMembers(ctx, "wksp_missing"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestMemoryStore_UpdateRole(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryStore()
+	w, _ := store.Create(ctx, "u1", "ws", time.Now().UTC())
+	_ = store.AddMember(ctx, w.ID, "u2", RoleMember, "u1", time.Now().UTC())
+
+	if err := store.UpdateRole(ctx, w.ID, "u2", RoleAdmin, time.Now().UTC()); err != nil {
+		t.Fatalf("UpdateRole: %v", err)
+	}
+	role, err := store.GetRole(ctx, w.ID, "u2")
+	if err != nil {
+		t.Fatalf("GetRole: %v", err)
+	}
+	if role != RoleAdmin {
+		t.Errorf("role = %q, want admin", role)
+	}
+}
+
+func TestMemoryStore_UpdateRole_InvalidRole(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryStore()
+	w, _ := store.Create(ctx, "u1", "ws", time.Now().UTC())
+	if err := store.UpdateRole(ctx, w.ID, "u1", "garbage", time.Now().UTC()); !errors.Is(err, ErrInvalidRole) {
+		t.Errorf("want ErrInvalidRole, got %v", err)
+	}
+}
+
+func TestMemoryStore_UpdateRole_NotAMember(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryStore()
+	w, _ := store.Create(ctx, "u1", "ws", time.Now().UTC())
+	if err := store.UpdateRole(ctx, w.ID, "u_missing", RoleMember, time.Now().UTC()); !errors.Is(err, ErrMemberNotFound) {
+		t.Errorf("want ErrMemberNotFound, got %v", err)
+	}
+}
+
+func TestMemoryStore_RemoveMember(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryStore()
+	w, _ := store.Create(ctx, "u1", "ws", time.Now().UTC())
+	_ = store.AddMember(ctx, w.ID, "u2", RoleMember, "u1", time.Now().UTC())
+
+	if err := store.RemoveMember(ctx, w.ID, "u2"); err != nil {
+		t.Fatalf("RemoveMember: %v", err)
+	}
+	is, _ := store.IsMember(ctx, w.ID, "u2")
+	if is {
+		t.Error("u2 should not be a member after removal")
+	}
+	if err := store.RemoveMember(ctx, w.ID, "u2"); !errors.Is(err, ErrMemberNotFound) {
+		t.Errorf("second remove: want ErrMemberNotFound, got %v", err)
+	}
+}
+
 func TestEnsureDefault_PerUser(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

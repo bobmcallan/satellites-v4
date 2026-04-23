@@ -15,6 +15,10 @@ var ErrNotFound = errors.New("workspace: not found")
 // admin/member/reviewer/viewer enum.
 var ErrInvalidRole = errors.New("workspace: invalid role")
 
+// ErrMemberNotFound is returned when a member-specific operation targets
+// a user/workspace pair with no membership row.
+var ErrMemberNotFound = errors.New("workspace: member not found")
+
 // Store is the persistence surface for workspaces and their members.
 // SurrealStore is the production implementation; MemoryStore is the in-process
 // test double.
@@ -42,12 +46,25 @@ type Store interface {
 	// when there is no membership row.
 	GetRole(ctx context.Context, workspaceID, userID string) (string, error)
 
-	// AddMember inserts (or updates) a membership row. The full MCP verb
-	// surface (add/list/update_role/remove with the admin-only guard + the
-	// last-admin guard) lands in feature-order:4; this minimal store verb
-	// is here now so the boot path can grant the "apikey" synthetic user
-	// access to the system workspace without bespoke surgery.
+	// AddMember inserts (or updates) a membership row. Used both by the
+	// boot-time "apikey → system workspace" seed and by the feature-order:4
+	// workspace_member_add MCP verb. Role validation happens here; caller
+	// guards (admin-only, last-admin) live at the handler layer.
 	AddMember(ctx context.Context, workspaceID, userID, role, addedBy string, now time.Time) error
+
+	// ListMembers returns all membership rows on a workspace, ordered by
+	// AddedAt ascending so the oldest (typically creator/admin) comes
+	// first. Handler-layer callers use this for admin-count enforcement
+	// and the workspace_member_list MCP verb.
+	ListMembers(ctx context.Context, workspaceID string) ([]Member, error)
+
+	// UpdateRole mutates an existing member's role. Returns ErrMemberNotFound
+	// when the user isn't a member; ErrInvalidRole on an unknown role.
+	UpdateRole(ctx context.Context, workspaceID, userID, newRole string, now time.Time) error
+
+	// RemoveMember deletes a membership row. Returns ErrMemberNotFound when
+	// the user isn't a member.
+	RemoveMember(ctx context.Context, workspaceID, userID string) error
 }
 
 // MemoryStore is a concurrency-safe in-process Store used by unit tests.
@@ -169,6 +186,63 @@ func (m *MemoryStore) AddMember(ctx context.Context, workspaceID, userID, role, 
 		AddedAt:     now,
 		AddedBy:     addedBy,
 	}
+	return nil
+}
+
+// ListMembers implements Store for MemoryStore. Ordered by AddedAt ascending.
+func (m *MemoryStore) ListMembers(ctx context.Context, workspaceID string) ([]Member, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	members, ok := m.members[workspaceID]
+	if !ok {
+		if _, ok := m.rows[workspaceID]; !ok {
+			return nil, ErrNotFound
+		}
+		return []Member{}, nil
+	}
+	out := make([]Member, 0, len(members))
+	for _, mem := range members {
+		out = append(out, mem)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].AddedAt.Before(out[j].AddedAt)
+	})
+	return out, nil
+}
+
+// UpdateRole implements Store for MemoryStore.
+func (m *MemoryStore) UpdateRole(ctx context.Context, workspaceID, userID, newRole string, now time.Time) error {
+	if !IsValidRole(newRole) {
+		return ErrInvalidRole
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	members, ok := m.members[workspaceID]
+	if !ok {
+		return ErrMemberNotFound
+	}
+	mem, ok := members[userID]
+	if !ok {
+		return ErrMemberNotFound
+	}
+	mem.Role = newRole
+	mem.AddedAt = now
+	members[userID] = mem
+	return nil
+}
+
+// RemoveMember implements Store for MemoryStore.
+func (m *MemoryStore) RemoveMember(ctx context.Context, workspaceID, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	members, ok := m.members[workspaceID]
+	if !ok {
+		return ErrMemberNotFound
+	}
+	if _, ok := members[userID]; !ok {
+		return ErrMemberNotFound
+	}
+	delete(members, userID)
 	return nil
 }
 

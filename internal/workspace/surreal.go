@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -188,6 +189,65 @@ func (s *SurrealStore) AddMember(ctx context.Context, workspaceID, userID, role,
 		AddedBy:     addedBy,
 	}
 	return s.writeMember(ctx, member)
+}
+
+// ListMembers implements Store for SurrealStore. Ordered by AddedAt asc.
+func (s *SurrealStore) ListMembers(ctx context.Context, workspaceID string) ([]Member, error) {
+	sql := fmt.Sprintf(
+		"SELECT %s FROM workspace_members WHERE workspace_id = $ws ORDER BY added_at ASC",
+		memberSelectCols,
+	)
+	vars := map[string]any{"ws": workspaceID}
+	results, err := surrealdb.Query[[]Member](ctx, s.db, sql, vars)
+	if err != nil {
+		return nil, fmt.Errorf("workspace: list members: %w", err)
+	}
+	if results == nil || len(*results) == 0 {
+		return []Member{}, nil
+	}
+	return (*results)[0].Result, nil
+}
+
+// UpdateRole implements Store for SurrealStore. Preserves added_at/added_by
+// on role mutation — those fields record the original membership, not the
+// latest change.
+func (s *SurrealStore) UpdateRole(ctx context.Context, workspaceID, userID, newRole string, now time.Time) error {
+	if !IsValidRole(newRole) {
+		return ErrInvalidRole
+	}
+	if _, err := s.GetRole(ctx, workspaceID, userID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return ErrMemberNotFound
+		}
+		return err
+	}
+	sql := "UPDATE $rid SET role = $role"
+	vars := map[string]any{
+		"rid":  surrealmodels.NewRecordID("workspace_members", memberKey(workspaceID, userID)),
+		"role": newRole,
+	}
+	if _, err := surrealdb.Query[any](ctx, s.db, sql, vars); err != nil {
+		return fmt.Errorf("workspace: update role: %w", err)
+	}
+	return nil
+}
+
+// RemoveMember implements Store for SurrealStore.
+func (s *SurrealStore) RemoveMember(ctx context.Context, workspaceID, userID string) error {
+	if _, err := s.GetRole(ctx, workspaceID, userID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return ErrMemberNotFound
+		}
+		return err
+	}
+	sql := "DELETE $rid"
+	vars := map[string]any{
+		"rid": surrealmodels.NewRecordID("workspace_members", memberKey(workspaceID, userID)),
+	}
+	if _, err := surrealdb.Query[any](ctx, s.db, sql, vars); err != nil {
+		return fmt.Errorf("workspace: remove member: %w", err)
+	}
+	return nil
 }
 
 var _ Store = (*SurrealStore)(nil)

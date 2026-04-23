@@ -1,23 +1,23 @@
 # Satellites v4 — Architecture
 
-Authoritative reference for the v4 substrate. Every implementation epic must source its scope from this document. Decisions trace to one or more of the twelve v4 principles seeded on `proj_fb8fb884` (story_18d1646a).
+Authoritative reference for the v4 substrate. Every implementation epic must source its scope from this document. Decisions trace to one or more of the twelve v4 principles seeded on the project. Principles are cited by short name throughout; the authoritative full names and rationales live on the project's principle documents in the v4 document store.
 
-Principle IDs referenced throughout:
+Short names used in this document:
 
-| ID | Short name |
-|----|------------|
-| `pr_7ade92ae` | Project is the top-level primitive within a workspace |
-| `pr_c25cc661` | Five primitives per project |
-| `pr_93835b29` | Documents share one schema, discriminated by type |
-| `pr_a9ccecfb` | Story is the unit of work; epics are tags |
-| `pr_75826278` | Tasks are the orchestration queue |
-| `pr_f81f60ca` | Satellites-agent is the worker |
-| `pr_441a9fa9` | Preplan scope is tight |
-| `pr_10c48b6c` | Documents drive feature stories |
-| `pr_c52ba6e8` | Repo is a first-class primitive with a semantic index |
-| `pr_0c11b762` | Evidence is the primary trust leverage |
-| `pr_20440c77` | Process order and evidence are first-class; no shortcuts |
-| `pr_0779e5af` | Workspace is the multi-tenant isolation primitive |
+| Short name | Full principle |
+|------------|----------------|
+| Project is top-level primitive | Project is the top-level primitive within a workspace |
+| Five primitives per project | Five primitives per project: documents, stories, tasks, ledger, repo |
+| Documents share one schema | Documents share one schema, discriminated by type |
+| Story is the unit | Story is the unit of work; epics are tags, not primitives |
+| Tasks are the queue | Tasks are the orchestration queue |
+| Satellites-agent is the worker | Satellites-agent is the worker; orchestration lives elsewhere |
+| Preplan scope is tight | Preplan scope is tight: relevance, dependencies, prior delivery, decision |
+| Documents drive feature stories | Documents drive feature stories |
+| Repo is a first-class primitive | Repo is a first-class primitive with a semantic index |
+| Evidence is the primary trust leverage | Evidence is the primary trust leverage |
+| Process order and evidence are first-class | Process order and evidence are first-class; no shortcuts |
+| Workspace is the multi-tenant primitive | Workspace is the multi-tenant isolation primitive |
 
 ---
 
@@ -42,7 +42,7 @@ Principle IDs referenced throughout:
 - **Multica** (agents-as-peers via autonomy + skill accumulation). Gets right: agents learn from outcomes, collaborate across sessions, and compound skills. Takes a different stance: trust is emergent from competence rather than constructed from evidence. v4's bet is that emergent trust is hard to audit after the fact, especially in regulated or multi-tenant settings — so v4 forgoes skill-accumulation-driven autonomy in exchange for a ledger that a reviewer can read end-to-end without re-running the agent.
 - **Classic CI/PR review.** Gets right: every change passes a reviewable checkpoint. Takes a different stance: v4 pushes the review boundary earlier — preplan, plan, develop, story_close each leave evidence, not just the final diff.
 
-**Principles:** `pr_0c11b762` (Evidence is the primary trust leverage).
+**Principles:** Evidence is the primary trust leverage.
 
 ---
 
@@ -122,7 +122,7 @@ story {
   category:   enum(feature, bug, improvement, infrastructure, documentation),
   priority:   enum(critical, high, medium, low),
   tags:       []string,    // includes epic:*, feature-order:*
-  source_documents: []FK document  // per pr_10c48b6c
+  source_documents: []FK document  // per "Documents drive feature stories"
   estimated_points, actual_points, resolution,
   created_at/by, updated_at/by
 }
@@ -153,9 +153,9 @@ Append-only event log. See section 6.
 
 ### Repo
 
-First-class primitive (`pr_c52ba6e8`). See section 7.
+First-class primitive per "Repo is a first-class primitive". See section 7.
 
-**Principles:** `pr_0779e5af` (Workspace), `pr_7ade92ae` (Project), `pr_c25cc661` (Five primitives), `pr_93835b29` (Documents share one schema), `pr_a9ccecfb` (Story is the unit), `pr_75826278` (Tasks are the queue), `pr_c52ba6e8` (Repo first-class).
+**Principles:** Workspace is the multi-tenant primitive, Project is top-level primitive, Five primitives per project, Documents share one schema, Story is the unit, Tasks are the queue, Repo is a first-class primitive.
 
 ---
 
@@ -209,7 +209,7 @@ The server does not decide *what to do next*; it dispatches what orchestrators (
 
 ### Satellites-agent
 
-Worker. One binary, one role: pull a claimed task, execute it, write evidence, close. Never calls "pick the next story" verbs (`pr_f81f60ca`). Runs in one of two modes:
+Worker. One binary, one role: pull a claimed task, execute it, write evidence, close. Never calls "pick the next story" verbs — orchestration lives with the Claude session or cron, not the worker. Runs in one of two modes:
 
 - **Stage-execute** — task payload names a `contract_instance_id`; agent runs that contract's agent_instruction.
 - **Free-standing** — task payload names a script/command; agent runs it with captured stdout/stderr as evidence.
@@ -218,7 +218,7 @@ Worker. One binary, one role: pull a claimed task, execute it, write evidence, c
 
 Interactive orchestrator. The human operates it; it calls MCP verbs to decide *what to do next* (which story to file, which contract to claim, what plan to submit). No server-side task-producing cron is required for Claude-driven flows — the session is the trigger.
 
-**Principles:** `pr_f81f60ca` (Agent is the worker; orchestration lives elsewhere), `pr_75826278` (Tasks are the queue).
+**Principles:** Satellites-agent is the worker, Tasks are the queue.
 
 ---
 
@@ -282,7 +282,7 @@ sequenceDiagram
 
 *Diagram 4 — typical orchestration flow.*
 
-**Principles:** `pr_75826278` (Tasks are the queue), `pr_f81f60ca` (Worker separation), `pr_0779e5af` (workspace-scoped dispatch).
+**Principles:** Tasks are the queue, Satellites-agent is the worker, Workspace is the multi-tenant primitive.
 
 ---
 
@@ -315,11 +315,11 @@ contract_instance {
 }
 ```
 
-There is **no separate `workflow` table** (`pr_c25cc661`). The list of CIs for a story IS the workflow.
+There is **no separate `workflow` table** — the list of CIs for a story IS the workflow. This follows directly from "Five primitives per project": workflow is not a sixth primitive.
 
 ### Preplan is tight
 
-Preplan answers one question: *should we do this story?* Evidence is four fields — relevance, dependencies, prior-delivery, recommendation — plus an optional `pipeline_selected` decision for downstream sizing. AC amendments, workflow selection, and task-list generation are the `plan` stage's responsibility (`pr_441a9fa9`).
+Preplan answers one question: *should we do this story?* Evidence is four fields — relevance, dependencies, prior-delivery, recommendation — plus an optional `pipeline_selected` decision for downstream sizing. AC amendments, workflow selection, and task-list generation are the `plan` stage's responsibility.
 
 ### Process-order gate (server-side invariant, not a convention)
 
@@ -339,9 +339,9 @@ This is not a guideline — the code path is the gate. A capable agent that subm
 - For close calls: the CI belongs to a session the server knows about.
 - For preplan close: if a `proposed_workflow` is attached, it satisfies the project's `workflow_spec` (required slots, min/max counts).
 
-Bypass is not a feature (`pr_20440c77`). The reviewer-review contract's rubric can flag weak evidence; the process-order gate refuses to advance without the prior ledger row at all.
+Bypass is not a feature. The reviewer-review contract's rubric can flag weak evidence; the process-order gate refuses to advance without the prior ledger row at all.
 
-**Principles:** `pr_441a9fa9` (Preplan tight), `pr_20440c77` (Process order invariant), `pr_a9ccecfb` (Story is the unit), `pr_c25cc661` (No separate workflow primitive).
+**Principles:** Preplan scope is tight, Process order and evidence are first-class, Story is the unit, Five primitives per project.
 
 ---
 
@@ -416,7 +416,7 @@ What the ledger stores vs. what is derived:
 
 Derivations are re-computable; deleting a derivation's cache and replaying the ledger reproduces the same state.
 
-**Principles:** `pr_0c11b762` (Evidence as primary trust leverage), `pr_c25cc661` (Ledger is one of five primitives), `pr_0779e5af` (Workspace-scoped fan-out).
+**Principles:** Evidence is the primary trust leverage, Five primitives per project, Workspace is the multi-tenant primitive.
 
 ---
 
@@ -454,9 +454,9 @@ Indexing uses jcodemunch's symbol/semantic pipeline. The index lives outside the
 - `repo_get_file(repo_id, path)` — raw file content.
 - `repo_get_outline(repo_id, path)` — file outline (symbols + nesting).
 
-Every verb is workspace-scoped (the caller must have membership on the workspace that owns the `repo_id`). Agents and Claude sessions use these instead of cloning (`pr_c52ba6e8`).
+Every verb is workspace-scoped (the caller must have membership on the workspace that owns the `repo_id`). Agents and Claude sessions use these instead of cloning.
 
-**Principles:** `pr_c52ba6e8` (Repo is a first-class primitive with a semantic index), `pr_0779e5af` (workspace-scoped queries).
+**Principles:** Repo is a first-class primitive, Workspace is the multi-tenant primitive.
 
 ---
 
@@ -498,9 +498,9 @@ A user is a member of zero or more workspaces. Session auth resolves the caller'
 
 ### System-scope documents
 
-The lifecycle contracts (preplan, plan, story_close) are `scope:system` and `workspace_id = NULL`. They are visible to every workspace's queries but seeded via platform bootstrap, not MCP mutation (`pr_contract_separation`). This is the only non-workspace-scoped read path, and it is read-only.
+The lifecycle contracts (preplan, plan, story_close) are `scope:system` and `workspace_id = NULL`. They are visible to every workspace's queries but seeded via platform bootstrap, not MCP mutation (per the lifecycle/project contract separation rule). This is the only non-workspace-scoped read path, and it is read-only.
 
-**Principles:** `pr_0779e5af` (Workspace is multi-tenant primitive).
+**Principles:** Workspace is the multi-tenant primitive.
 
 ---
 
@@ -543,13 +543,13 @@ Worker concurrency is bounded per workspace (capacity = `workspace.settings.agen
 
 The rule: **nothing the worker reports is taken at face value without a server-side check that could, in principle, reject it.** Evidence is the audit trail *after* the gate accepts — the gate is the trust primitive.
 
-**Principles:** `pr_0c11b762` (Evidence as primary trust), `pr_20440c77` (Process order invariant), `pr_f81f60ca` (Worker separation).
+**Principles:** Evidence is the primary trust leverage, Process order and evidence are first-class, Satellites-agent is the worker.
 
 ---
 
 ## 10. Out of scope for this document
 
-- **Portal / UI design** — covered by story_187782e7 (`docs/ui-design.md`).
+- **Portal / UI design** — covered by `docs/ui-design.md`.
 - **Deployment + infrastructure** — covered in the `satellites-v4-infra` project.
 - **Specific implementation language/framework for each component** unless architectural (Go for server + agent is carried from v3 and v4 bootstrap; any cross-language choice would get its own design note).
 - **Migration from v3** — v4 is greenfield on purpose; there is no data migration from v3 planned under this document.
@@ -560,21 +560,21 @@ The rule: **nothing the worker reports is taken at face value without a server-s
 
 ## V3 mistakes v4 avoids (and why)
 
-1. **No workspace tier.** v3 rooted everything at the project level. Retrofitting tenancy is the hardest shape to add after the fact; v4 commits to workspace from bootstrap so every index, query, and websocket topic carries `workspace_id` from day one (`pr_0779e5af`).
-2. **Separate tables per document kind.** v3 grew a principle table, contract table, skill table, reviewer table, artifact store — each with its own CRUD surface, drift, and migration overhead. v4 uses one `document` table with a `type` discriminator (`pr_93835b29`); one search index, one backup path, one migration.
-3. **Implicit pipelines + workflows as separate primitives.** v3 had pipeline-shape AND workflow-shape AND contract tables, with emergent coupling between them. v4 collapses: the workflow IS the ordered list of CIs on a story; `pr_c25cc661` limits the primitives to five.
-4. **Orchestration logic inside the agent.** v3 agents sometimes decided their own next action. v4 enforces the split (`pr_f81f60ca`) — orchestrators (Claude, cron) decide; workers execute.
-5. **No server-side process-order gate.** v3 relied on convention — phases were expected to run in order, but the server would accept a late-stage claim without the predecessor evidence row. v4 makes the gate load-bearing (`pr_20440c77`): skipping a phase is a server-side rejection, not a cultural lapse.
-6. **Preplan-as-mini-plan drift.** v3 preplans trended toward proposing task breakdowns and AC amendments — the `plan` stage's job. v4 scopes preplan tight (`pr_441a9fa9`) to the proceed/cancel decision.
-7. **Sub-stories / subtasks.** v3 had optional parent-child story relationships; v4 removes them (`pr_a9ccecfb`) — every unit of work is a top-level story with its own lifecycle and evidence.
-8. **Feature stories without documents.** v3 allowed features to be filed directly from chat; scope disputes became un-resolvable. v4 ties feature stories to documents (`pr_10c48b6c`); bugs/ops/infra are the only categories exempted.
+1. **No workspace tier.** v3 rooted everything at the project level. Retrofitting tenancy is the hardest shape to add after the fact; v4 commits to workspace from bootstrap so every index, query, and websocket topic carries `workspace_id` from day one ("Workspace is the multi-tenant primitive").
+2. **Separate tables per document kind.** v3 grew a principle table, contract table, skill table, reviewer table, artifact store — each with its own CRUD surface, drift, and migration overhead. v4 uses one `document` table with a `type` discriminator ("Documents share one schema"); one search index, one backup path, one migration.
+3. **Implicit pipelines + workflows as separate primitives.** v3 had pipeline-shape AND workflow-shape AND contract tables, with emergent coupling between them. v4 collapses: the workflow IS the ordered list of CIs on a story; "Five primitives per project" limits the primitives to five.
+4. **Orchestration logic inside the agent.** v3 agents sometimes decided their own next action. v4 enforces the split ("Satellites-agent is the worker") — orchestrators (Claude, cron) decide; workers execute.
+5. **No server-side process-order gate.** v3 relied on convention — phases were expected to run in order, but the server would accept a late-stage claim without the predecessor evidence row. v4 makes the gate load-bearing ("Process order and evidence are first-class"): skipping a phase is a server-side rejection, not a cultural lapse.
+6. **Preplan-as-mini-plan drift.** v3 preplans trended toward proposing task breakdowns and AC amendments — the `plan` stage's job. v4 scopes preplan tight ("Preplan scope is tight") to the proceed/cancel decision.
+7. **Sub-stories / subtasks.** v3 had optional parent-child story relationships; v4 removes them ("Story is the unit") — every unit of work is a top-level story with its own lifecycle and evidence.
+8. **Feature stories without documents.** v3 allowed features to be filed directly from chat; scope disputes became un-resolvable. v4 ties feature stories to documents ("Documents drive feature stories"); bugs/ops/infra are the only categories exempted.
 
 ## Prior-art lifted from v3 (with credit)
 
 1. **Websocket ledger fan-out.** v3's `LedgerEventListener` + in-process hub + per-subscriber filter is the right shape for live state. v4 keeps the pattern and adds workspace topic scoping.
 2. **MCP-first orchestrator surface.** v3 proved that every agent action through MCP produces a cleaner audit trail than agent-side toolchain orchestration. v4 doubles down on this.
 3. **Contract-instance per stage.** v3 introduced CIs after the "pipeline row" era and the gain was immediate — stage-level ledger scoping, stage-level claim/close/reviewer verdict. v4 keeps CIs as-is.
-4. **Principle-cited reviewer verdicts.** v3's reviewer rubrics cite principle IDs when rejecting; v4 keeps that, with all twelve v4 principles seeded up front.
+4. **Principle-cited reviewer verdicts.** v3's reviewer rubrics cite principle names when rejecting; v4 keeps that, with all twelve v4 principles seeded up front.
 5. **Pipeline-selection as an explicit decision.** v3's preplan added `pipeline_selected` as a structured ledger field. v4 retains it.
 
 ---
@@ -585,18 +585,18 @@ Every v4 principle maps to at least one architectural section. A principle with 
 
 | Principle | Primary section(s) | Role |
 |-----------|---------------------|------|
-| `pr_7ade92ae` Project is top-level | §2 Primitives; §8 Tenancy | Every non-workspace primitive belongs to a project. |
-| `pr_c25cc661` Five primitives | §2 Primitives; §5 (no separate `workflow` table) | Constrains the primitive count; rejects sibling tables. |
-| `pr_93835b29` Documents share one schema | §2 Documents sub-section | One table, `type` discriminator. |
-| `pr_a9ccecfb` Story is the unit | §2 Stories; §5 Lifecycle | Flat stories; epics = tags. |
-| `pr_75826278` Tasks are the queue | §4 Task queue | Single queue for every origin. |
-| `pr_f81f60ca` Agent is the worker | §3 Services; §4 Dispatch; §9 Protocols | Worker/orchestrator split. |
-| `pr_441a9fa9` Preplan tight | §5 Preplan sub-section | Preplan scope = proceed/cancel decision. |
-| `pr_10c48b6c` Documents drive features | §2 Story.source_documents | Feature stories cite documents. |
-| `pr_c52ba6e8` Repo is first-class | §2 Repo; §7 Repo + index | Repo + semantic index as a project primitive. |
-| `pr_0c11b762` Evidence is trust leverage | §1 Positioning; §6 Ledger; §9 Trust boundaries | Whole-document thesis. |
-| `pr_20440c77` Process order invariant | §5 Process-order gate; §9 Trust boundaries | Server-side claim gate. |
-| `pr_0779e5af` Workspace is multi-tenant primitive | §2 Workspace; §4 Dispatch; §6 Fan-out; §8 Tenancy | Isolation at every layer. |
+| Project is top-level primitive | §2 Primitives; §8 Tenancy | Every non-workspace primitive belongs to a project. |
+| Five primitives per project | §2 Primitives; §5 (no separate `workflow` table) | Constrains the primitive count; rejects sibling tables. |
+| Documents share one schema | §2 Documents sub-section | One table, `type` discriminator. |
+| Story is the unit | §2 Stories; §5 Lifecycle | Flat stories; epics = tags. |
+| Tasks are the queue | §4 Task queue | Single queue for every origin. |
+| Satellites-agent is the worker | §3 Services; §4 Dispatch; §9 Protocols | Worker/orchestrator split. |
+| Preplan scope is tight | §5 Preplan sub-section | Preplan scope = proceed/cancel decision. |
+| Documents drive feature stories | §2 Story.source_documents | Feature stories cite documents. |
+| Repo is a first-class primitive | §2 Repo; §7 Repo + index | Repo + semantic index as a project primitive. |
+| Evidence is the primary trust leverage | §1 Positioning; §6 Ledger; §9 Trust boundaries | Whole-document thesis. |
+| Process order and evidence are first-class | §5 Process-order gate; §9 Trust boundaries | Server-side claim gate. |
+| Workspace is the multi-tenant primitive | §2 Workspace; §4 Dispatch; §6 Fan-out; §8 Tenancy | Isolation at every layer. |
 
 All twelve principles referenced. No orphan principles; no orphan sections.
 
@@ -606,4 +606,5 @@ All twelve principles referenced. No orphan principles; no orphan sections.
 
 | version | date | change |
 |---------|------|--------|
-| 0.1.0 | 2026-04-23 | Initial architecture document (story_eb2a2a88). |
+| 0.1.0 | 2026-04-23 | Initial architecture document. |
+| 0.1.1 | 2026-04-23 | Scrubbed external v3 IDs (principles cited by short name; doc filenames in place of doc IDs). |

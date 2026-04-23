@@ -2,7 +2,7 @@
 
 Developer-in-the-loop agentic engineering platform. A server (state + MCP + cron) and a separate worker (satellites-agent) coordinate story implementation against external repos, with humans reviewing every change.
 
-Module path: `github.com/bobmcallan/satellites-v4`.
+Module path: `github.com/bobmcallan/satellites`.
 
 ## Build
 

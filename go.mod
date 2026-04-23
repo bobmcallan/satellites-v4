@@ -1,3 +1,3 @@
-module github.com/bobmcallan/satellites-v4
+module github.com/bobmcallan/satellites
 
 go 1.22

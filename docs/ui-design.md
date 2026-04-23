@@ -259,7 +259,7 @@ Low-fidelity. Shape, not pixels. Each follows the `.panel-headed` primitive from
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ REPO   git@github.com:bobmcallan/satellites-v4.git     branch main    ● up-to-date │
+│ REPO   git@github.com:bobmcallan/satellites.git        branch main    ● up-to-date │
 │ head a91295c7   last-indexed 22:00    18 symbols · 5 files                   │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ SEARCH  [semantic search over symbols + text_______________________]  [go]   │

@@ -7,7 +7,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/bobmcallan/satellites-v4/internal/config"
+	"github.com/bobmcallan/satellites/internal/config"
 )
 
 func main() {

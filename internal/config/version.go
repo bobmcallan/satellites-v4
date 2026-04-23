@@ -17,7 +17,7 @@ import "fmt"
 
 // Version is the semantic version string. Set at link time via:
 //
-//	-X 'github.com/bobmcallan/satellites-v4/internal/config.Version=...'
+//	-X 'github.com/bobmcallan/satellites/internal/config.Version=...'
 var Version = "dev"
 
 // Build is the UTC build timestamp (format: YYYY-MM-DD-HH-MM-SS).

@@ -1,0 +1,30 @@
+{{define "head.html"}}
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Satellites — developer-in-the-loop agentic engineering platform">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<title>{{.Title}} — Satellites</title>
+<script>
+  // Resolve theme before body renders so there is no flash of the wrong
+  // palette. localStorage.theme is "dark" | "light"; absence defaults to dark.
+  (function () {
+    try {
+      var t = localStorage.getItem('theme');
+      if (t === 'light') {
+        document.documentElement.setAttribute('data-theme', 'light');
+      } else {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    } catch (e) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    }
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/portal.css?v={{.Version}}">
+<script src="/static/common.js?v={{.Version}}"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
+{{end}}

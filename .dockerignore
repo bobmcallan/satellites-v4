@@ -12,3 +12,4 @@ coverage.out
 *.log
 .claude/
 .mcp.json
+!pages/

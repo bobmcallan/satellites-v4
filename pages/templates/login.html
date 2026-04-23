@@ -1,0 +1,47 @@
+{{define "login.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  {{template "head.html" .}}
+</head>
+<body>
+  <main class="login-screen">
+    <section class="panel-headed login-panel">
+      <header class="panel-header"><h1>sign in</h1></header>
+      <div class="panel-body">
+        <form method="post" action="/auth/login" class="login-form">
+          {{with .Next}}<input type="hidden" name="next" value="{{.}}">{{end}}
+          <label>
+            <span>username</span>
+            <input type="text" name="username" autocomplete="username" autofocus required>
+          </label>
+          <label>
+            <span>password</span>
+            <input type="password" name="password" autocomplete="current-password" required>
+          </label>
+          <button type="submit" class="btn-primary">sign in</button>
+        </form>
+        <div class="login-divider">or</div>
+        <div class="login-providers">
+          {{if .GoogleEnabled}}
+          <a class="btn-provider" href="/auth/google/start">Sign in with Google</a>
+          {{end}}
+          {{if .GithubEnabled}}
+          <a class="btn-provider" href="/auth/github/start">Sign in with GitHub</a>
+          {{end}}
+          {{if .DevModeEnabled}}
+          <details class="devmode-help">
+            <summary>DevMode login</summary>
+            <p>
+              In dev mode the fixed credential <code>DEV_USERNAME</code> /
+              <code>DEV_PASSWORD</code> is accepted through the form above.
+            </p>
+          </details>
+          {{end}}
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
+{{end}}

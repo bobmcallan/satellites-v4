@@ -93,12 +93,21 @@ func (h *Handlers) authenticate(username, password string) (User, bool) {
 	// hard deny regardless of DEV_MODE env.
 	if h.Cfg.Env != "prod" && h.Cfg.DevMode && h.Cfg.DevUsername != "" && username == h.Cfg.DevUsername {
 		if password != "" && password == h.Cfg.DevPassword {
-			return User{
+			u := User{
 				ID:          "dev-user",
 				Email:       h.Cfg.DevUsername,
 				DisplayName: "Dev User",
 				Provider:    "devmode",
-			}, true
+			}
+			// Ensure downstream session → user lookups resolve. The
+			// MemoryUserStore composes by id + email; register once on
+			// first DevMode login.
+			if ms, ok := h.Users.(*MemoryUserStore); ok {
+				if _, err := ms.GetByID(u.ID); err != nil {
+					ms.Add(u)
+				}
+			}
+			return u, true
 		}
 		return User{}, false
 	}

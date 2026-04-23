@@ -1,0 +1,13 @@
+{{define "nav.html"}}
+<header class="portal-nav">
+  <div class="nav-brand">satellites</div>
+  <div class="nav-spacer"></div>
+  <span class="version-chip" title="commit {{.Commit}}">v{{.Version}} · {{.Commit}}</span>
+  {{if .User.Email}}
+  <form action="/auth/logout" method="post" class="nav-logout">
+    <span class="nav-user">{{.User.Email}}</span>
+    <button type="submit" class="btn-link">sign out</button>
+  </form>
+  {{end}}
+</header>
+{{end}}

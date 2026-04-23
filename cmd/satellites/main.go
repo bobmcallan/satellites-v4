@@ -16,6 +16,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/httpserver"
 	"github.com/bobmcallan/satellites/internal/mcpserver"
+	"github.com/bobmcallan/satellites/internal/portal"
 )
 
 func main() {
@@ -53,7 +54,13 @@ func main() {
 		States:    states,
 	}
 
-	srv := httpserver.New(cfg, logger, startedAt, authHandlers)
+	portalHandlers, err := portal.New(cfg, logger, sessions, users, startedAt)
+	if err != nil {
+		logger.Error().Str("error", err.Error()).Msg("portal init failed")
+		os.Exit(1)
+	}
+
+	srv := httpserver.New(cfg, logger, startedAt, authHandlers, portalHandlers)
 
 	mcp := mcpserver.New(cfg, logger, startedAt)
 	mcpAuth := mcpserver.AuthMiddleware(mcpserver.AuthDeps{

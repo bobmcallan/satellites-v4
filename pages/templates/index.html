@@ -1,0 +1,24 @@
+{{define "index.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  {{template "head.html" .}}
+</head>
+<body>
+  {{template "nav.html" .}}
+  <main class="portal-main">
+    <section class="panel-headed landing-panel">
+      <header class="panel-header"><h1>satellites</h1></header>
+      <div class="panel-body">
+        <p>Signed in as <strong>{{.User.Email}}</strong>.</p>
+        <p class="muted">Walking skeleton. Project, story, task, ledger, document, and repo views arrive in later epics.</p>
+        <p class="muted">
+          Build <code>{{.Build}}</code> · commit <code>{{.Commit}}</code> ·
+          started <code>{{.StartedAt}}</code>
+        </p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
+{{end}}

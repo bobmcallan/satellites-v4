@@ -34,7 +34,7 @@ func NewSurrealStore(db *surrealdb.DB, led ledger.Store) *SurrealStore {
 }
 
 // selectCols preserves the string id (see project/surreal.go note).
-const selectCols = "meta::id(id) AS id, project_id, title, description, acceptance_criteria, status, priority, category, tags, created_by, created_at, updated_at"
+const selectCols = "meta::id(id) AS id, workspace_id, project_id, title, description, acceptance_criteria, status, priority, category, tags, created_by, created_at, updated_at"
 
 func (s *SurrealStore) Create(ctx context.Context, st Story, now time.Time) (Story, error) {
 	if st.Status == "" {
@@ -125,10 +125,11 @@ func (s *SurrealStore) UpdateStatus(ctx context.Context, id, newStatus, actor st
 	}
 	content, _ := json.Marshal(payload)
 	if _, err := s.ledger.Append(ctx, ledger.LedgerEntry{
-		ProjectID: current.ProjectID,
-		Type:      LedgerEntryType,
-		Content:   string(content),
-		Actor:     actor,
+		WorkspaceID: current.WorkspaceID,
+		ProjectID:   current.ProjectID,
+		Type:        LedgerEntryType,
+		Content:     string(content),
+		Actor:       actor,
 	}, now); err != nil {
 		// Compensating write — revert the status. Any error on the revert
 		// is wrapped alongside the original failure so the caller sees
@@ -153,6 +154,20 @@ func (s *SurrealStore) write(ctx context.Context, st Story) error {
 		return fmt.Errorf("story: upsert: %w", err)
 	}
 	return nil
+}
+
+// BackfillWorkspaceID implements Store for SurrealStore.
+func (s *SurrealStore) BackfillWorkspaceID(ctx context.Context, projectID, workspaceID string, now time.Time) (int, error) {
+	sql := "UPDATE stories SET workspace_id = $ws, updated_at = $now WHERE project_id = $project AND (workspace_id IS NONE OR workspace_id = '') RETURN AFTER"
+	vars := map[string]any{"ws": workspaceID, "project": projectID, "now": now}
+	results, err := surrealdb.Query[[]Story](ctx, s.db, sql, vars)
+	if err != nil {
+		return 0, fmt.Errorf("story: backfill workspace_id: %w", err)
+	}
+	if results == nil || len(*results) == 0 {
+		return 0, nil
+	}
+	return len((*results)[0].Result), nil
 }
 
 // Compile-time assertion.

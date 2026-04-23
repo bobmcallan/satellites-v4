@@ -26,9 +26,9 @@ func NewSurrealStore(db *surrealdb.DB) *SurrealStore {
 
 // selectCols preserves the string form of id. SurrealDB otherwise returns
 // id as a RecordID object which JSON-unmarshals as empty into `ID string`.
-const selectCols = "meta::id(id) AS id, project_id, filename, type, body, body_hash, status, version, created_at, updated_at"
+const selectCols = "meta::id(id) AS id, workspace_id, project_id, filename, type, body, body_hash, status, version, created_at, updated_at"
 
-func (s *SurrealStore) Upsert(ctx context.Context, projectID, filename, docType string, body []byte, now time.Time) (UpsertResult, error) {
+func (s *SurrealStore) Upsert(ctx context.Context, workspaceID, projectID, filename, docType string, body []byte, now time.Time) (UpsertResult, error) {
 	hash := HashBody(body)
 	existing, err := s.GetByFilename(ctx, projectID, filename)
 	if err == nil {
@@ -41,22 +41,26 @@ func (s *SurrealStore) Upsert(ctx context.Context, projectID, filename, docType 
 		updated.Version = existing.Version + 1
 		updated.UpdatedAt = now
 		updated.Type = docType
+		if updated.WorkspaceID == "" {
+			updated.WorkspaceID = workspaceID
+		}
 		if err := s.write(ctx, updated); err != nil {
 			return UpsertResult{}, err
 		}
 		return UpsertResult{Document: updated, Changed: true}, nil
 	}
 	doc := Document{
-		ID:        NewID(),
-		ProjectID: projectID,
-		Filename:  filename,
-		Type:      docType,
-		Body:      string(body),
-		BodyHash:  hash,
-		Status:    "active",
-		Version:   1,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          NewID(),
+		WorkspaceID: workspaceID,
+		ProjectID:   projectID,
+		Filename:    filename,
+		Type:        docType,
+		Body:        string(body),
+		BodyHash:    hash,
+		Status:      "active",
+		Version:     1,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	if err := s.write(ctx, doc); err != nil {
 		return UpsertResult{}, err
@@ -115,6 +119,20 @@ func (s *SurrealStore) BackfillProjectID(ctx context.Context, defaultID string) 
 	results, err := surrealdb.Query[[]Document](ctx, s.db, sql, vars)
 	if err != nil {
 		return 0, fmt.Errorf("document: backfill project_id: %w", err)
+	}
+	if results == nil || len(*results) == 0 {
+		return 0, nil
+	}
+	return len((*results)[0].Result), nil
+}
+
+// BackfillWorkspaceID implements Store for SurrealStore.
+func (s *SurrealStore) BackfillWorkspaceID(ctx context.Context, projectID, workspaceID string, now time.Time) (int, error) {
+	sql := "UPDATE documents SET workspace_id = $ws, updated_at = $now WHERE project_id = $project AND (workspace_id IS NONE OR workspace_id = '') RETURN AFTER"
+	vars := map[string]any{"ws": workspaceID, "project": projectID, "now": now}
+	results, err := surrealdb.Query[[]Document](ctx, s.db, sql, vars)
+	if err != nil {
+		return 0, fmt.Errorf("document: backfill workspace_id: %w", err)
 	}
 	if results == nil || len(*results) == 0 {
 		return 0, nil

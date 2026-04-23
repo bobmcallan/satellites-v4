@@ -62,7 +62,7 @@ func TestProjectSurrealStore_RoundTrip(t *testing.T) {
 	now := time.Now().UTC()
 
 	// Create.
-	p1, err := store.Create(ctx, "user_alice", "alpha", now)
+	p1, err := store.Create(ctx, "user_alice", "", "alpha", now)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -70,12 +70,12 @@ func TestProjectSurrealStore_RoundTrip(t *testing.T) {
 		t.Errorf("unexpected Project: %+v", p1)
 	}
 
-	p2, err := store.Create(ctx, "user_alice", "beta", now.Add(time.Hour))
+	p2, err := store.Create(ctx, "user_alice", "", "beta", now.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("Create second: %v", err)
 	}
 
-	_, err = store.Create(ctx, "user_bob", "bob-only", now)
+	_, err = store.Create(ctx, "user_bob", "", "bob-only", now)
 	if err != nil {
 		t.Fatalf("Create third: %v", err)
 	}

@@ -40,6 +40,13 @@ func (e *erroringLedger) List(ctx context.Context, projectID string, opts ledger
 	return e.backing.List(ctx, projectID, opts)
 }
 
+func (e *erroringLedger) BackfillWorkspaceID(ctx context.Context, projectID, workspaceID string) (int, error) {
+	if e.backing == nil {
+		return 0, nil
+	}
+	return e.backing.BackfillWorkspaceID(ctx, projectID, workspaceID)
+}
+
 func TestNewID_Format(t *testing.T) {
 	t.Parallel()
 	id := NewID()

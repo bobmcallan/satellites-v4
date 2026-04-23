@@ -17,10 +17,12 @@ var ErrNotFound = errors.New("project: not found")
 // Mutation surface is intentionally narrow at v4 baseline: Create + UpdateName.
 // Archive / delete / membership verbs arrive in follow-up stories.
 type Store interface {
-	// Create persists a new Project. The caller supplies ownerUserID + name;
-	// the store mints the id, stamps CreatedAt/UpdatedAt, and sets Status
-	// to StatusActive. Returns the resulting Project.
-	Create(ctx context.Context, ownerUserID, name string, now time.Time) (Project, error)
+	// Create persists a new Project. The caller supplies ownerUserID +
+	// workspaceID + name; the store mints the id, stamps CreatedAt/UpdatedAt,
+	// and sets Status to StatusActive. An empty workspaceID is permitted at
+	// write time so bootstrap + legacy paths can run; the boot-time backfill
+	// stamps empty rows with the owner's default workspace.
+	Create(ctx context.Context, ownerUserID, workspaceID, name string, now time.Time) (Project, error)
 
 	// GetByID returns the project with the given id, or ErrNotFound.
 	GetByID(ctx context.Context, id string) (Project, error)
@@ -31,6 +33,14 @@ type Store interface {
 	// UpdateName renames an existing project and bumps UpdatedAt. Returns the
 	// updated Project. ErrNotFound on missing id.
 	UpdateName(ctx context.Context, id, name string, now time.Time) (Project, error)
+
+	// SetWorkspaceID stamps workspaceID on an existing project. Used by the
+	// boot-time backfill to migrate rows that pre-date workspace scoping.
+	SetWorkspaceID(ctx context.Context, id, workspaceID string, now time.Time) (Project, error)
+
+	// ListMissingWorkspaceID returns rows whose workspace_id is empty.
+	// Backfill uses this to find work to do.
+	ListMissingWorkspaceID(ctx context.Context) ([]Project, error)
 }
 
 // MemoryStore is a concurrency-safe in-process Store used by unit tests.
@@ -45,11 +55,12 @@ func NewMemoryStore() *MemoryStore {
 }
 
 // Create implements Store for MemoryStore.
-func (m *MemoryStore) Create(ctx context.Context, ownerUserID, name string, now time.Time) (Project, error) {
+func (m *MemoryStore) Create(ctx context.Context, ownerUserID, workspaceID, name string, now time.Time) (Project, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p := Project{
 		ID:          NewID(),
+		WorkspaceID: workspaceID,
 		Name:        name,
 		OwnerUserID: ownerUserID,
 		Status:      StatusActive,
@@ -99,6 +110,33 @@ func (m *MemoryStore) UpdateName(ctx context.Context, id, name string, now time.
 	p.UpdatedAt = now
 	m.rows[id] = p
 	return p, nil
+}
+
+// SetWorkspaceID implements Store for MemoryStore.
+func (m *MemoryStore) SetWorkspaceID(ctx context.Context, id, workspaceID string, now time.Time) (Project, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.rows[id]
+	if !ok {
+		return Project{}, ErrNotFound
+	}
+	p.WorkspaceID = workspaceID
+	p.UpdatedAt = now
+	m.rows[id] = p
+	return p, nil
+}
+
+// ListMissingWorkspaceID implements Store for MemoryStore.
+func (m *MemoryStore) ListMissingWorkspaceID(ctx context.Context) ([]Project, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Project, 0)
+	for _, p := range m.rows {
+		if p.WorkspaceID == "" {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 
 // Compile-time assertion that MemoryStore satisfies Store.

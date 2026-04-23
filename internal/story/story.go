@@ -12,9 +12,11 @@ import (
 )
 
 // Story is the unit of deliverable work. Tags carry epic membership via
-// the `epic:<slug>` convention.
+// the `epic:<slug>` convention. WorkspaceID cascades from the parent
+// project at write time per docs/architecture.md §8.
 type Story struct {
 	ID                 string    `json:"id"`
+	WorkspaceID        string    `json:"workspace_id"`
 	ProjectID          string    `json:"project_id"`
 	Title              string    `json:"title"`
 	Description        string    `json:"description"`

@@ -31,7 +31,7 @@ func TestMemoryStore_UpsertIdempotent(t *testing.T) {
 	store := NewMemoryStore()
 	now := time.Now()
 
-	first, err := store.Upsert(ctx, testProjectID, "x.md", "architecture", []byte("body"), now)
+	first, err := store.Upsert(ctx, "", testProjectID, "x.md", "architecture", []byte("body"), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestMemoryStore_UpsertIdempotent(t *testing.T) {
 	}
 
 	// Same body → no-op.
-	second, _ := store.Upsert(ctx, testProjectID, "x.md", "architecture", []byte("body"), now.Add(time.Hour))
+	second, _ := store.Upsert(ctx, "", testProjectID, "x.md", "architecture", []byte("body"), now.Add(time.Hour))
 	if second.Created || second.Changed {
 		t.Errorf("unchanged upsert must be !Created+!Changed: %+v", second)
 	}
@@ -58,7 +58,7 @@ func TestMemoryStore_UpsertIdempotent(t *testing.T) {
 	}
 
 	// Changed body → version++.
-	third, _ := store.Upsert(ctx, testProjectID, "x.md", "architecture", []byte("body2"), now.Add(2*time.Hour))
+	third, _ := store.Upsert(ctx, "", testProjectID, "x.md", "architecture", []byte("body2"), now.Add(2*time.Hour))
 	if third.Created || !third.Changed {
 		t.Errorf("changed upsert must be !Created+Changed: %+v", third)
 	}
@@ -76,10 +76,10 @@ func TestMemoryStore_ProjectIsolation(t *testing.T) {
 	store := NewMemoryStore()
 	now := time.Now()
 
-	if _, err := store.Upsert(ctx, "proj_a", "x.md", "t", []byte("A"), now); err != nil {
+	if _, err := store.Upsert(ctx, "", "proj_a", "x.md", "t", []byte("A"), now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Upsert(ctx, "proj_b", "x.md", "t", []byte("B"), now); err != nil {
+	if _, err := store.Upsert(ctx, "", "proj_b", "x.md", "t", []byte("B"), now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -127,7 +127,7 @@ func TestIngestFile_PathTraversalBlocked(t *testing.T) {
 		"/etc/passwd",
 		"./../outside.md",
 	} {
-		if _, err := IngestFile(ctx, store, logger, testProjectID, dir, bad, time.Now()); err == nil {
+		if _, err := IngestFile(ctx, store, logger, "", testProjectID, dir, bad, time.Now()); err == nil {
 			t.Errorf("expected traversal error for %q", bad)
 		}
 	}
@@ -143,7 +143,7 @@ func TestIngestFile_HappyPath(t *testing.T) {
 	store := NewMemoryStore()
 	logger := satarbor.New("info")
 
-	res, err := IngestFile(ctx, store, logger, testProjectID, dir, "architecture.md", time.Now())
+	res, err := IngestFile(ctx, store, logger, "", testProjectID, dir, "architecture.md", time.Now())
 	if err != nil {
 		t.Fatalf("IngestFile: %v", err)
 	}
@@ -176,9 +176,9 @@ func TestSeed_SkipsWhenProjectPopulated(t *testing.T) {
 	logger := satarbor.New("info")
 
 	// Pre-populate a different doc in the target project so Count > 0.
-	_, _ = store.Upsert(ctx, testProjectID, "already.md", "architecture", []byte("x"), time.Now())
+	_, _ = store.Upsert(ctx, "", testProjectID, "already.md", "architecture", []byte("x"), time.Now())
 
-	n, err := Seed(ctx, store, logger, testProjectID, dir, []string{"architecture.md"})
+	n, err := Seed(ctx, store, logger, "", testProjectID, dir, []string{"architecture.md"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestSeed_IngestsWhenProjectEmpty(t *testing.T) {
 
 	store := NewMemoryStore()
 	logger := satarbor.New("info")
-	n, err := Seed(ctx, store, logger, testProjectID, dir, []string{"architecture.md", "ui-design.md"})
+	n, err := Seed(ctx, store, logger, "", testProjectID, dir, []string{"architecture.md", "ui-design.md"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -96,13 +96,15 @@ func main() {
 		// Seed the system user's default workspace so bootstrap writes
 		// (default project, seeded documents) land in a workspace from day
 		// one. Idempotent — safe across reboots.
-		if _, err := workspace.EnsureDefault(ctx, wsStore, logger, project.DefaultOwnerUserID, time.Now().UTC()); err != nil {
+		systemWsID, err := workspace.EnsureDefault(ctx, wsStore, logger, project.DefaultOwnerUserID, time.Now().UTC())
+		if err != nil {
 			logger.Warn().Str("error", err.Error()).Msg("system workspace seed failed")
 		}
+		_ = systemWsID
 
 		// Seed default project, then idempotently stamp any legacy
 		// document rows that pre-date the project primitive.
-		id, err := project.SeedDefault(ctx, projStore, logger)
+		id, err := project.SeedDefault(ctx, projStore, logger, systemWsID)
 		if err != nil {
 			logger.Error().Str("error", err.Error()).Msg("default project seed failed")
 			os.Exit(1)
@@ -114,8 +116,14 @@ func main() {
 			logger.Info().Int("rows", n).Str("project_id", defaultProjectID).Msg("document project_id backfilled")
 		}
 
-		if _, err := document.SeedIfEmpty(ctx, docStore, logger, defaultProjectID, cfg.DocsDir); err != nil {
+		if _, err := document.SeedIfEmpty(ctx, docStore, logger, systemWsID, defaultProjectID, cfg.DocsDir); err != nil {
 			logger.Warn().Str("error", err.Error()).Msg("document seed failed")
+		}
+
+		// Backfill workspace_id across primitives. Idempotent on every
+		// boot — second invocation finds no rows with empty workspace_id.
+		if _, err := workspace.BackfillPrimitives(ctx, wsStore, projStore, storyStore, ledgerStore, docStore, logger, time.Now().UTC()); err != nil {
+			logger.Warn().Str("error", err.Error()).Msg("workspace backfill failed")
 		}
 
 		// Wire user-creation → EnsureDefault once the workspace store is up.

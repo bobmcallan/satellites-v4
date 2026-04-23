@@ -24,7 +24,7 @@ func NewSurrealStore(db *surrealdb.DB) *SurrealStore {
 }
 
 // selectCols preserves the string form of id (see internal/project/surreal.go).
-const selectCols = "meta::id(id) AS id, project_id, type, content, actor, created_at"
+const selectCols = "meta::id(id) AS id, workspace_id, project_id, type, content, actor, created_at"
 
 // Append implements Store for SurrealStore.
 func (s *SurrealStore) Append(ctx context.Context, entry LedgerEntry, now time.Time) (LedgerEntry, error) {
@@ -62,6 +62,20 @@ func (s *SurrealStore) List(ctx context.Context, projectID string, opts ListOpti
 		return []LedgerEntry{}, nil
 	}
 	return (*results)[0].Result, nil
+}
+
+// BackfillWorkspaceID implements Store for SurrealStore.
+func (s *SurrealStore) BackfillWorkspaceID(ctx context.Context, projectID, workspaceID string) (int, error) {
+	sql := "UPDATE ledger SET workspace_id = $ws WHERE project_id = $project AND (workspace_id IS NONE OR workspace_id = '') RETURN AFTER"
+	vars := map[string]any{"ws": workspaceID, "project": projectID}
+	results, err := surrealdb.Query[[]LedgerEntry](ctx, s.db, sql, vars)
+	if err != nil {
+		return 0, fmt.Errorf("ledger: backfill workspace_id: %w", err)
+	}
+	if results == nil || len(*results) == 0 {
+		return 0, nil
+	}
+	return len((*results)[0].Result), nil
 }
 
 // Compile-time assertion that SurrealStore satisfies Store.

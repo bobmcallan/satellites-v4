@@ -25,9 +25,10 @@ func NewSurrealStore(db *surrealdb.DB) *SurrealStore {
 }
 
 // Create implements Store for SurrealStore.
-func (s *SurrealStore) Create(ctx context.Context, ownerUserID, name string, now time.Time) (Project, error) {
+func (s *SurrealStore) Create(ctx context.Context, ownerUserID, workspaceID, name string, now time.Time) (Project, error) {
 	p := Project{
 		ID:          NewID(),
+		WorkspaceID: workspaceID,
 		Name:        name,
 		OwnerUserID: ownerUserID,
 		Status:      StatusActive,
@@ -44,7 +45,7 @@ func (s *SurrealStore) Create(ctx context.Context, ownerUserID, name string, now
 // SurrealDB otherwise returns id as a RecordID object, which JSON-unmarshals
 // as empty into `ID string`. `meta::id(id) AS id` returns just the id portion
 // (e.g. "proj_xxx") without the table prefix.
-const selectCols = "meta::id(id) AS id, name, owner_user_id, status, created_at, updated_at"
+const selectCols = "meta::id(id) AS id, workspace_id, name, owner_user_id, status, created_at, updated_at"
 
 // GetByID implements Store for SurrealStore.
 func (s *SurrealStore) GetByID(ctx context.Context, id string) (Project, error) {
@@ -98,6 +99,33 @@ func (s *SurrealStore) write(ctx context.Context, p Project) error {
 		return fmt.Errorf("project: upsert: %w", err)
 	}
 	return nil
+}
+
+// SetWorkspaceID implements Store for SurrealStore.
+func (s *SurrealStore) SetWorkspaceID(ctx context.Context, id, workspaceID string, now time.Time) (Project, error) {
+	existing, err := s.GetByID(ctx, id)
+	if err != nil {
+		return Project{}, err
+	}
+	existing.WorkspaceID = workspaceID
+	existing.UpdatedAt = now
+	if err := s.write(ctx, existing); err != nil {
+		return Project{}, err
+	}
+	return existing, nil
+}
+
+// ListMissingWorkspaceID implements Store for SurrealStore.
+func (s *SurrealStore) ListMissingWorkspaceID(ctx context.Context) ([]Project, error) {
+	sql := fmt.Sprintf("SELECT %s FROM projects WHERE workspace_id IS NONE OR workspace_id = '' ORDER BY created_at ASC", selectCols)
+	results, err := surrealdb.Query[[]Project](ctx, s.db, sql, nil)
+	if err != nil {
+		return nil, fmt.Errorf("project: list missing workspace_id: %w", err)
+	}
+	if results == nil || len(*results) == 0 {
+		return []Project{}, nil
+	}
+	return (*results)[0].Result, nil
 }
 
 // Compile-time assertion that SurrealStore satisfies Store.

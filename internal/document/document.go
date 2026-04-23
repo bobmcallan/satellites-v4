@@ -14,19 +14,21 @@ import (
 
 // Document is the single schema, type-discriminated shape shared by every
 // type of authored content in satellites-v4. Every row scopes to exactly
-// one project via ProjectID — see principle pr_7ade92ae. Workspace scoping
-// is reserved for a later epic.
+// one project via ProjectID — see principle pr_7ade92ae — and to exactly
+// one workspace via WorkspaceID per docs/architecture.md §8. WorkspaceID
+// cascades from the parent project at write time.
 type Document struct {
-	ID        string    `json:"id"`
-	ProjectID string    `json:"project_id"`
-	Filename  string    `json:"filename"`
-	Type      string    `json:"type"`
-	Body      string    `json:"body"`
-	BodyHash  string    `json:"body_hash"`
-	Status    string    `json:"status"` // "active" | "archived"
-	Version   int       `json:"version"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	WorkspaceID string    `json:"workspace_id"`
+	ProjectID   string    `json:"project_id"`
+	Filename    string    `json:"filename"`
+	Type        string    `json:"type"`
+	Body        string    `json:"body"`
+	BodyHash    string    `json:"body_hash"`
+	Status      string    `json:"status"` // "active" | "archived"
+	Version     int       `json:"version"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // HashBody returns a sha256 content hash prefixed with "sha256:"; used as

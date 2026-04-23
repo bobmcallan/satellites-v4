@@ -35,14 +35,23 @@ func (o ListOptions) normalised() ListOptions {
 // intentionally narrow — Append + List only, no mutation verbs. Append-only
 // is enforced at the interface level so a reviewer can audit this file and
 // confirm no mutation paths exist.
+//
+// BackfillWorkspaceID is the sole exception and is allowed for the
+// feature-order:2 migration from pre-workspace rows; it only stamps
+// workspace_id on rows where it was empty, never rewrites any other field.
 type Store interface {
 	// Append persists a new entry. The Store mints ID + CreatedAt; the
-	// caller supplies ProjectID, Type, Content, Actor. Returns the stored
-	// entry with the server-assigned fields filled in.
+	// caller supplies WorkspaceID, ProjectID, Type, Content, Actor. Returns
+	// the stored entry with the server-assigned fields filled in.
 	Append(ctx context.Context, entry LedgerEntry, now time.Time) (LedgerEntry, error)
 
 	// List returns entries for projectID, newest-first, subject to opts.
 	List(ctx context.Context, projectID string, opts ListOptions) ([]LedgerEntry, error)
+
+	// BackfillWorkspaceID stamps workspaceID on ledger rows with the given
+	// projectID whose workspace_id is empty. Feature-order:2 migration;
+	// idempotent.
+	BackfillWorkspaceID(ctx context.Context, projectID, workspaceID string) (int, error)
 }
 
 // MemoryStore is a concurrency-safe in-process Store used by unit tests.
@@ -88,6 +97,22 @@ func (m *MemoryStore) List(ctx context.Context, projectID string, opts ListOptio
 		out = out[:opts.Limit]
 	}
 	return out, nil
+}
+
+// BackfillWorkspaceID implements Store for MemoryStore.
+func (m *MemoryStore) BackfillWorkspaceID(ctx context.Context, projectID, workspaceID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for i, e := range m.rows {
+		if e.ProjectID != projectID || e.WorkspaceID != "" {
+			continue
+		}
+		e.WorkspaceID = workspaceID
+		m.rows[i] = e
+		n++
+	}
+	return n, nil
 }
 
 // Compile-time assertion that MemoryStore satisfies Store.

@@ -23,9 +23,12 @@ func TestNewID_Format(t *testing.T) {
 // Update/Delete/GetByID to the interface would fail this test (via the
 // reflect walk) and the compile-time `var _ Store = ...` assertion in
 // store.go / surreal.go.
+//
+// BackfillWorkspaceID is allow-listed — it only stamps workspace_id on
+// rows where it was empty and is scoped to the feature-order:2 migration.
 func TestStoreInterface_AppendOnly(t *testing.T) {
 	t.Parallel()
-	want := map[string]bool{"Append": true, "List": true}
+	want := map[string]bool{"Append": true, "List": true, "BackfillWorkspaceID": true}
 	typ := reflect.TypeOf((*Store)(nil)).Elem()
 	if typ.NumMethod() != len(want) {
 		t.Fatalf("Store declares %d methods; want exactly %d (%v)", typ.NumMethod(), len(want), want)
@@ -33,7 +36,7 @@ func TestStoreInterface_AppendOnly(t *testing.T) {
 	for i := 0; i < typ.NumMethod(); i++ {
 		m := typ.Method(i).Name
 		if !want[m] {
-			t.Errorf("unexpected method on Store: %q (append-only interface must only expose Append + List)", m)
+			t.Errorf("unexpected method on Store: %q (append-only interface: Append + List + BackfillWorkspaceID)", m)
 		}
 	}
 }

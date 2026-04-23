@@ -50,6 +50,11 @@ type Store interface {
 	GetByID(ctx context.Context, id string) (Story, error)
 	List(ctx context.Context, projectID string, opts ListOptions) ([]Story, error)
 	UpdateStatus(ctx context.Context, id, newStatus, actor string, now time.Time) (Story, error)
+
+	// BackfillWorkspaceID stamps workspaceID on every row with ProjectID ==
+	// projectID whose workspace_id is empty. Returns the number of rows
+	// touched. Boot-time backfill for feature-order:2.
+	BackfillWorkspaceID(ctx context.Context, projectID, workspaceID string, now time.Time) (int, error)
 }
 
 // transitionPayload is the JSON shape written into the ledger `content`
@@ -162,10 +167,11 @@ func (m *MemoryStore) UpdateStatus(ctx context.Context, id, newStatus, actor str
 	}
 	content, _ := json.Marshal(payload)
 	if _, err := m.ledger.Append(ctx, ledger.LedgerEntry{
-		ProjectID: s.ProjectID,
-		Type:      LedgerEntryType,
-		Content:   string(content),
-		Actor:     actor,
+		WorkspaceID: s.WorkspaceID,
+		ProjectID:   s.ProjectID,
+		Type:        LedgerEntryType,
+		Content:     string(content),
+		Actor:       actor,
 	}, now); err != nil {
 		// Revert the in-memory status change — the ledger emission is
 		// load-bearing (pr_20440c77). Caller sees the original error.
@@ -174,6 +180,23 @@ func (m *MemoryStore) UpdateStatus(ctx context.Context, id, newStatus, actor str
 		return Story{}, fmt.Errorf("story: ledger emission failed (status reverted): %w", err)
 	}
 	return s, nil
+}
+
+// BackfillWorkspaceID implements Store for MemoryStore.
+func (m *MemoryStore) BackfillWorkspaceID(ctx context.Context, projectID, workspaceID string, now time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, s := range m.rows {
+		if s.ProjectID != projectID || s.WorkspaceID != "" {
+			continue
+		}
+		s.WorkspaceID = workspaceID
+		s.UpdatedAt = now
+		m.rows[id] = s
+		n++
+	}
+	return n, nil
 }
 
 func containsTag(tags []string, target string) bool {

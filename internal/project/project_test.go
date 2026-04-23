@@ -27,7 +27,7 @@ func TestMemoryStore_CreateAndGetByID(t *testing.T) {
 	store := NewMemoryStore()
 	now := time.Now().UTC()
 
-	p, err := store.Create(ctx, "user_1", "first project", now)
+	p, err := store.Create(ctx, "user_1", "", "first project", now)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -67,9 +67,9 @@ func TestMemoryStore_ListByOwner_NewestFirst(t *testing.T) {
 	store := NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	older, _ := store.Create(ctx, "user_1", "older", t0)
-	newer, _ := store.Create(ctx, "user_1", "newer", t0.Add(time.Hour))
-	_, _ = store.Create(ctx, "user_2", "other-owner", t0.Add(2*time.Hour))
+	older, _ := store.Create(ctx, "user_1", "", "older", t0)
+	newer, _ := store.Create(ctx, "user_1", "", "newer", t0.Add(time.Hour))
+	_, _ = store.Create(ctx, "user_2", "", "other-owner", t0.Add(2*time.Hour))
 
 	got, err := store.ListByOwner(ctx, "user_1")
 	if err != nil {
@@ -103,7 +103,7 @@ func TestMemoryStore_UpdateName(t *testing.T) {
 	store := NewMemoryStore()
 	t0 := time.Now().UTC()
 
-	p, _ := store.Create(ctx, "user_1", "original", t0)
+	p, _ := store.Create(ctx, "user_1", "", "original", t0)
 
 	t1 := t0.Add(time.Hour)
 	updated, err := store.UpdateName(ctx, p.ID, "renamed", t1)
@@ -143,9 +143,9 @@ func TestMemoryStore_OwnerIsolation(t *testing.T) {
 	store := NewMemoryStore()
 	now := time.Now().UTC()
 
-	_, _ = store.Create(ctx, "user_a", "a-1", now)
-	_, _ = store.Create(ctx, "user_a", "a-2", now)
-	_, _ = store.Create(ctx, "user_b", "b-1", now)
+	_, _ = store.Create(ctx, "user_a", "", "a-1", now)
+	_, _ = store.Create(ctx, "user_a", "", "a-2", now)
+	_, _ = store.Create(ctx, "user_b", "", "b-1", now)
 
 	a, _ := store.ListByOwner(ctx, "user_a")
 	b, _ := store.ListByOwner(ctx, "user_b")

@@ -19,9 +19,12 @@ const (
 )
 
 // Project is the top-level primitive within a workspace. Every other v4
-// primitive row carries a ProjectID scoping back to one of these rows.
+// primitive row carries a ProjectID scoping back to one of these rows, and
+// every Project row carries a WorkspaceID scoping back to the tenant
+// boundary (docs/architecture.md §8).
 type Project struct {
 	ID          string    `json:"id"`
+	WorkspaceID string    `json:"workspace_id"`
 	Name        string    `json:"name"`
 	OwnerUserID string    `json:"owner_user_id"`
 	Status      string    `json:"status"`

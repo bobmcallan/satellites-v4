@@ -204,9 +204,9 @@ func TestProjectsList_RendersOwnedOnly(t *testing.T) {
 	users.Add(bob)
 
 	now := time.Now().UTC()
-	_, _ = projects.Create(ctx, alice.ID, "alpha", now)
-	_, _ = projects.Create(ctx, alice.ID, "beta", now.Add(time.Hour))
-	_, _ = projects.Create(ctx, bob.ID, "bob-only", now)
+	_, _ = projects.Create(ctx, alice.ID, "", "alpha", now)
+	_, _ = projects.Create(ctx, alice.ID, "", "beta", now.Add(time.Hour))
+	_, _ = projects.Create(ctx, bob.ID, "", "bob-only", now)
 
 	sess, _ := sessions.Create(alice.ID, auth.DefaultSessionTTL)
 	req := httptest.NewRequest(http.MethodGet, "/projects", nil)
@@ -237,7 +237,7 @@ func TestProjectDetail_OwnerRenders(t *testing.T) {
 
 	alice := auth.User{ID: "u_alice", Email: "alice@local"}
 	users.Add(alice)
-	proj, _ := projects.Create(ctx, alice.ID, "alpha", time.Now().UTC())
+	proj, _ := projects.Create(ctx, alice.ID, "", "alpha", time.Now().UTC())
 
 	sess, _ := sessions.Create(alice.ID, auth.DefaultSessionTTL)
 	req := httptest.NewRequest(http.MethodGet, "/projects/"+proj.ID, nil)
@@ -267,7 +267,7 @@ func TestProjectDetail_CrossOwner404(t *testing.T) {
 	bob := auth.User{ID: "u_bob", Email: "bob@local"}
 	users.Add(alice)
 	users.Add(bob)
-	proj, _ := projects.Create(ctx, alice.ID, "alice-only", time.Now().UTC())
+	proj, _ := projects.Create(ctx, alice.ID, "", "alice-only", time.Now().UTC())
 
 	sess, _ := sessions.Create(bob.ID, auth.DefaultSessionTTL)
 	req := httptest.NewRequest(http.MethodGet, "/projects/"+proj.ID, nil)
@@ -327,7 +327,7 @@ func TestProjectLedger_CrossOwner404(t *testing.T) {
 	bob := auth.User{ID: "u_bob", Email: "bob@local"}
 	users.Add(alice)
 	users.Add(bob)
-	proj, _ := projects.Create(ctx, alice.ID, "alice-only", time.Now().UTC())
+	proj, _ := projects.Create(ctx, alice.ID, "", "alice-only", time.Now().UTC())
 
 	sess, _ := sessions.Create(bob.ID, auth.DefaultSessionTTL)
 	req := httptest.NewRequest(http.MethodGet, "/projects/"+proj.ID+"/ledger", nil)
@@ -352,7 +352,7 @@ func TestProjectLedger_RendersNewestFirst(t *testing.T) {
 
 	user := auth.User{ID: "u_alice", Email: "alice@local"}
 	users.Add(user)
-	proj, _ := projects.Create(ctx, user.ID, "alpha", time.Now().UTC())
+	proj, _ := projects.Create(ctx, user.ID, "", "alpha", time.Now().UTC())
 
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_, _ = ledgerStore.Append(ctx, ledger.LedgerEntry{ProjectID: proj.ID, Type: "story.created", Actor: "u_alice", Content: "first-event"}, t0)
@@ -389,7 +389,7 @@ func TestProjectLedger_LimitParamTruncates(t *testing.T) {
 
 	user := auth.User{ID: "u_alice", Email: "alice@local"}
 	users.Add(user)
-	proj, _ := projects.Create(ctx, user.ID, "alpha", time.Now().UTC())
+	proj, _ := projects.Create(ctx, user.ID, "", "alpha", time.Now().UTC())
 
 	t0 := time.Now().UTC()
 	for i := 0; i < 4; i++ {
@@ -424,7 +424,7 @@ func TestProjectLedger_EmptyState(t *testing.T) {
 
 	user := auth.User{ID: "u_alice", Email: "alice@local"}
 	users.Add(user)
-	proj, _ := projects.Create(ctx, user.ID, "alpha", time.Now().UTC())
+	proj, _ := projects.Create(ctx, user.ID, "", "alpha", time.Now().UTC())
 
 	sess, _ := sessions.Create(user.ID, auth.DefaultSessionTTL)
 	req := httptest.NewRequest(http.MethodGet, "/projects/"+proj.ID+"/ledger", nil)
@@ -463,7 +463,7 @@ func TestStoriesList_DefaultHidesTerminal(t *testing.T) {
 
 	user := auth.User{ID: "u_alice", Email: "alice@local"}
 	users.Add(user)
-	proj, _ := projects.Create(ctx, user.ID, "alpha", time.Now().UTC())
+	proj, _ := projects.Create(ctx, user.ID, "", "alpha", time.Now().UTC())
 
 	// Seed 4 stories, one per terminal bucket.
 	specs := []struct {
@@ -539,7 +539,7 @@ func TestStoriesList_RowColumns(t *testing.T) {
 
 	user := auth.User{ID: "u_alice", Email: "alice@local"}
 	users.Add(user)
-	proj, _ := projects.Create(ctx, user.ID, "alpha", time.Now().UTC())
+	proj, _ := projects.Create(ctx, user.ID, "", "alpha", time.Now().UTC())
 
 	_, _ = stories.Create(ctx, story.Story{
 		ProjectID: proj.ID,
@@ -574,7 +574,7 @@ func TestStoriesList_CrossOwner404(t *testing.T) {
 	bob := auth.User{ID: "u_bob", Email: "bob@local"}
 	users.Add(alice)
 	users.Add(bob)
-	proj, _ := projects.Create(ctx, alice.ID, "alice-only", time.Now().UTC())
+	proj, _ := projects.Create(ctx, alice.ID, "", "alice-only", time.Now().UTC())
 
 	sess, _ := sessions.Create(bob.ID, auth.DefaultSessionTTL)
 	req := httptest.NewRequest(http.MethodGet, "/projects/"+proj.ID+"/stories", nil)
@@ -596,7 +596,7 @@ func TestStoryDetail_RendersFieldsAndHistory(t *testing.T) {
 
 	user := auth.User{ID: "u_alice", Email: "alice@local"}
 	users.Add(user)
-	proj, _ := projects.Create(ctx, user.ID, "alpha", time.Now().UTC())
+	proj, _ := projects.Create(ctx, user.ID, "", "alpha", time.Now().UTC())
 
 	base := time.Now().UTC()
 	st, _ := stories.Create(ctx, story.Story{
@@ -654,7 +654,7 @@ func TestStoryDetail_CrossOwner404(t *testing.T) {
 	bob := auth.User{ID: "u_bob", Email: "bob@local"}
 	users.Add(alice)
 	users.Add(bob)
-	proj, _ := projects.Create(ctx, alice.ID, "alice-only", time.Now().UTC())
+	proj, _ := projects.Create(ctx, alice.ID, "", "alice-only", time.Now().UTC())
 	st, _ := stories.Create(ctx, story.Story{ProjectID: proj.ID, Title: "secret", CreatedBy: alice.ID}, time.Now())
 
 	sess, _ := sessions.Create(bob.ID, auth.DefaultSessionTTL)

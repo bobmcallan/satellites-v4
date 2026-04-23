@@ -18,14 +18,14 @@ var DefaultSeedFiles = []string{
 // SeedIfEmpty ingests DefaultSeedFiles into projectID when the project
 // currently has zero active documents. Returns the number of ingestions
 // performed (0 if skipped).
-func SeedIfEmpty(ctx context.Context, store Store, logger arbor.ILogger, projectID, docsDir string) (int, error) {
-	return Seed(ctx, store, logger, projectID, docsDir, DefaultSeedFiles)
+func SeedIfEmpty(ctx context.Context, store Store, logger arbor.ILogger, workspaceID, projectID, docsDir string) (int, error) {
+	return Seed(ctx, store, logger, workspaceID, projectID, docsDir, DefaultSeedFiles)
 }
 
 // Seed runs IngestFile over files scoped to projectID. Skips work when
 // store.Count(projectID) > 0 — seeds are idempotent at the project level;
 // individual file changes should be driven through explicit ingest calls.
-func Seed(ctx context.Context, store Store, logger arbor.ILogger, projectID, docsDir string, files []string) (int, error) {
+func Seed(ctx context.Context, store Store, logger arbor.ILogger, workspaceID, projectID, docsDir string, files []string) (int, error) {
 	n, err := store.Count(ctx, projectID)
 	if err != nil {
 		return 0, err
@@ -37,7 +37,7 @@ func Seed(ctx context.Context, store Store, logger arbor.ILogger, projectID, doc
 	now := time.Now().UTC()
 	ingested := 0
 	for _, f := range files {
-		if _, err := IngestFile(ctx, store, logger, projectID, docsDir, f, now); err != nil {
+		if _, err := IngestFile(ctx, store, logger, workspaceID, projectID, docsDir, f, now); err != nil {
 			logger.Warn().Str("filename", f).Str("error", err.Error()).Msg("document seed skip")
 			continue
 		}

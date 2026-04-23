@@ -30,11 +30,15 @@ type SessionStore interface {
 	Delete(id string) error
 }
 
-// Session is the server-side session record.
+// Session is the server-side session record. ActiveWorkspaceID is the
+// workspace the session is currently scoped to — populated by the portal
+// switcher (feature-order:5). Empty means "fall back to the user's first
+// member workspace" at handler resolution time.
 type Session struct {
-	ID        string
-	UserID    string
-	ExpiresAt time.Time
+	ID                string
+	UserID            string
+	ActiveWorkspaceID string
+	ExpiresAt         time.Time
 }
 
 // Expired reports whether the session is past its expiry.

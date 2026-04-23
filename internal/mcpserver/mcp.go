@@ -304,6 +304,33 @@ func (s *Server) projectsSafe() project.Store {
 	return project.NewMemoryStore()
 }
 
+// resolveCallerWorkspaceID returns the caller's default workspace id. Falls
+// back to an empty string when the caller has no workspace — the write-path
+// stores accept that and the boot-time backfill stamps them later.
+func (s *Server) resolveCallerWorkspaceID(ctx context.Context, caller CallerIdentity) string {
+	if s.workspaces == nil || caller.UserID == "" {
+		return ""
+	}
+	list, err := s.workspaces.ListByMember(ctx, caller.UserID)
+	if err != nil || len(list) == 0 {
+		return ""
+	}
+	return list[0].ID
+}
+
+// resolveProjectWorkspaceID returns the workspace_id of the given project,
+// or empty when the project has none yet (legacy path before backfill).
+func (s *Server) resolveProjectWorkspaceID(ctx context.Context, projectID string) string {
+	if s.projects == nil || projectID == "" {
+		return ""
+	}
+	p, err := s.projects.GetByID(ctx, projectID)
+	if err != nil {
+		return ""
+	}
+	return p.WorkspaceID
+}
+
 func (s *Server) handleDocumentIngestFile(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := UserFrom(ctx)
@@ -316,7 +343,11 @@ func (s *Server) handleDocumentIngestFile(ctx context.Context, req mcpgo.CallToo
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	res, err := document.IngestFile(ctx, s.docs, s.logger, resolvedID, s.docsDir, path, time.Now().UTC())
+	wsID := s.resolveProjectWorkspaceID(ctx, resolvedID)
+	if wsID == "" {
+		wsID = s.resolveCallerWorkspaceID(ctx, caller)
+	}
+	res, err := document.IngestFile(ctx, s.docs, s.logger, wsID, resolvedID, s.docsDir, path, time.Now().UTC())
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -376,7 +407,8 @@ func (s *Server) handleProjectCreate(ctx context.Context, req mcpgo.CallToolRequ
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	p, err := s.projects.Create(ctx, caller.UserID, name, time.Now().UTC())
+	wsID := s.resolveCallerWorkspaceID(ctx, caller)
+	p, err := s.projects.Create(ctx, caller.UserID, wsID, name, time.Now().UTC())
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -449,11 +481,13 @@ func (s *Server) handleLedgerAppend(ctx context.Context, req mcpgo.CallToolReque
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
+	wsID := s.resolveProjectWorkspaceID(ctx, resolvedID)
 	e, err := s.ledger.Append(ctx, ledger.LedgerEntry{
-		ProjectID: resolvedID,
-		Type:      eventType,
-		Content:   content,
-		Actor:     caller.UserID,
+		WorkspaceID: wsID,
+		ProjectID:   resolvedID,
+		Type:        eventType,
+		Content:     content,
+		Actor:       caller.UserID,
 	}, time.Now().UTC())
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -485,7 +519,9 @@ func (s *Server) handleStoryCreate(ctx context.Context, req mcpgo.CallToolReques
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	tagsRaw := req.GetStringSlice("tags", nil)
+	wsID := s.resolveProjectWorkspaceID(ctx, resolvedID)
 	st, err := s.stories.Create(ctx, story.Story{
+		WorkspaceID:        wsID,
 		ProjectID:          resolvedID,
 		Title:              title,
 		Description:        req.GetString("description", ""),

@@ -22,12 +22,15 @@ const (
 
 // Event is the unit fanned out to subscribers. ID is assigned by the hub
 // at Publish time and is monotonic across the hub (not per-topic), so
-// string comparison matches insertion order.
+// string comparison matches insertion order. WorkspaceID is populated by
+// publishers that originate a workspace-scoped mutation; the AuthHub
+// wrapper (slice 10.2) validates it against the topic's workspace suffix.
 type Event struct {
-	ID    string
-	Topic string
-	Kind  string
-	Data  any
+	ID          string
+	Topic       string
+	Kind        string
+	WorkspaceID string
+	Data        any
 }
 
 type subscription struct {

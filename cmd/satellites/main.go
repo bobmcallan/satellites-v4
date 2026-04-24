@@ -21,6 +21,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/dispatcher"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/httpserver"
+	"github.com/bobmcallan/satellites/internal/hub"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/mcpserver"
 	"github.com/bobmcallan/satellites/internal/portal"
@@ -30,6 +31,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/story"
 	"github.com/bobmcallan/satellites/internal/task"
 	"github.com/bobmcallan/satellites/internal/workspace"
+	"github.com/bobmcallan/satellites/internal/wshandler"
 )
 
 func main() {
@@ -222,7 +224,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := httpserver.New(cfg, logger, startedAt, authHandlers, portalHandlers)
+	// Websocket hub (slice 10.1) + workspace-aware AuthHub (slice 10.2).
+	// The hub is shared across the process; emit hooks (slice 10.3) will
+	// attach publishers to the same instance at the store layer.
+	sharedHub := hub.New()
+	var authHub *hub.AuthHub
+	var wsHandlers *wshandler.Handler
+	if wsStore != nil && ledgerStore != nil {
+		audit := &ledgerMismatchAudit{
+			ledger:    ledgerStore,
+			projectID: defaultProjectID,
+			logger:    logger,
+		}
+		authHub = hub.NewAuthHub(sharedHub, wsStore, audit)
+		wsHandlers = wshandler.New(wshandler.Deps{
+			AuthHub:  authHub,
+			Sessions: &sessionResolverAdapter{sessions: sessions, users: users},
+			Logger:   logger,
+		})
+	}
+
+	registrars := []httpserver.RouteRegistrar{authHandlers, portalHandlers}
+	if wsHandlers != nil {
+		registrars = append(registrars, wsHandlers)
+	}
+	srv := httpserver.New(cfg, logger, startedAt, registrars...)
 	if dbPing != nil {
 		srv.SetHealthCheck(dbPing)
 	}

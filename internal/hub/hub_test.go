@@ -85,9 +85,17 @@ func TestReplayCap500(t *testing.T) {
 func TestBackpressureEviction(t *testing.T) {
 	h := New()
 	laggard := h.Subscribe(testTopic, "laggard")
+
+	// Fill the laggard channel to capacity (64). Healthy is subscribed
+	// afterwards so its channel is empty when the overflow publishes
+	// arrive — otherwise the rapid fill burst can race the drain loop
+	// and trip healthy's own lagging strike, which makes the test flaky.
+	for i := 0; i < defaultChanBuf; i++ {
+		h.Publish(testTopic, Event{Kind: "fill", Data: i})
+	}
+
 	healthy := h.Subscribe(testTopic, "healthy")
 
-	// Drain healthy in the background so it never blocks the hub.
 	var healthyEvents []Event
 	var hmu sync.Mutex
 	done := make(chan struct{})
@@ -99,11 +107,6 @@ func TestBackpressureEviction(t *testing.T) {
 		}
 		close(done)
 	}()
-
-	// Fill the laggard channel to capacity (64).
-	for i := 0; i < defaultChanBuf; i++ {
-		h.Publish(testTopic, Event{Kind: "fill", Data: i})
-	}
 
 	// 65th publish overflows laggard: strike=1, lagging, NOT yet evicted.
 	h.Publish(testTopic, Event{Kind: "overflow-1"})

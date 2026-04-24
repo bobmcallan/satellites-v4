@@ -98,6 +98,8 @@ jobs:
             GIT_COMMIT=${{ steps.meta.outputs.commit }}
           cache-from: type=gha,scope=satellites
           cache-to: type=gha,mode=max,scope=satellites
+          provenance: false
+          sbom: false
 
   deploy:
     needs: push

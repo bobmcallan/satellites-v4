@@ -57,6 +57,14 @@ type Config struct {
 	// DocsDir is the container-side path containing the mounted docs
 	// volume that document_ingest_file reads from. Defaults to /app/docs.
 	DocsDir string
+
+	// GrantsEnforced toggles the mcpserver grant middleware's enforcement
+	// mode. When false (the default until story_7d9c4b1b lands the
+	// SessionStart hook that issues orchestrator grants), the middleware
+	// is a pass-through. When true, MCP verbs outside the bootstrap
+	// allowlist are rejected unless the caller holds a role-grant whose
+	// effective verb allowlist covers the tool.
+	GrantsEnforced bool
 }
 
 // Load reads the environment and returns a validated Config. Missing required
@@ -131,6 +139,13 @@ func Load() (*Config, error) {
 	}
 	if v := os.Getenv("DOCS_DIR"); v != "" {
 		cfg.DocsDir = v
+	}
+	if v := os.Getenv("SATELLITES_GRANTS_ENFORCED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid SATELLITES_GRANTS_ENFORCED %q: %w", v, err)
+		}
+		cfg.GrantsEnforced = b
 	}
 
 	if err := cfg.validate(); err != nil {

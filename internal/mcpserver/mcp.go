@@ -21,6 +21,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/project"
 	"github.com/bobmcallan/satellites/internal/reviewer"
+	"github.com/bobmcallan/satellites/internal/rolegrant"
 	"github.com/bobmcallan/satellites/internal/session"
 	"github.com/bobmcallan/satellites/internal/story"
 	"github.com/bobmcallan/satellites/internal/workspace"
@@ -44,6 +45,7 @@ type Server struct {
 	contracts        contract.Store
 	sessions         session.Store
 	reviewer         reviewer.Reviewer
+	grants           rolegrant.Store
 }
 
 // Deps bundles the optional per-tool dependencies passed through to
@@ -59,6 +61,10 @@ type Deps struct {
 	ContractStore    contract.Store
 	SessionStore     session.Store
 	Reviewer         reviewer.Reviewer
+	// RoleGrantStore is optional; nil disables the agent_role_* MCP
+	// verbs and forces the grant middleware into pass-through mode even
+	// when Config.GrantsEnforced is true. Story_1efbfc48.
+	RoleGrantStore rolegrant.Store
 }
 
 // New constructs the MCP server with the satellites_info tool registered.
@@ -79,16 +85,24 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		contracts:        deps.ContractStore,
 		sessions:         deps.SessionStore,
 		reviewer:         deps.Reviewer,
+		grants:           deps.RoleGrantStore,
 	}
 	if s.reviewer == nil {
 		s.reviewer = reviewer.AcceptAll{}
 	}
 
+	serverOpts := []mcpserver.ServerOption{
+		mcpserver.WithToolCapabilities(true),
+		mcpserver.WithInstructions("Satellites v4 — walking skeleton."),
+	}
+	// Grant middleware is always installed; it's a pass-through unless
+	// Config.GrantsEnforced is true AND the RoleGrantStore is wired.
+	serverOpts = append(serverOpts, mcpserver.WithToolHandlerMiddleware(s.grantMiddleware()))
+
 	s.mcp = mcpserver.NewMCPServer(
 		"satellites",
 		config.Version,
-		mcpserver.WithToolCapabilities(true),
-		mcpserver.WithInstructions("Satellites v4 — walking skeleton."),
+		serverOpts...,
 	)
 
 	infoTool := mcpgo.NewTool("satellites_info",
@@ -448,6 +462,37 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("user_id", mcpgo.Required(), mcpgo.Description("User id to remove.")),
 		)
 		s.mcp.AddTool(removeMemberTool, s.handleWorkspaceMemberRemove)
+	}
+
+	if s.grants != nil {
+		claimTool := mcpgo.NewTool("agent_role_claim",
+			mcpgo.WithDescription("Claim a role-grant binding a grantee (session/task/worker) to a role under an agent document. Validates role in agent.permitted_roles and that agent.tool_ceiling covers role.allowed_mcp_verbs. Writes a kind:role-grant,event:claimed ledger row."),
+			mcpgo.WithString("workspace_id", mcpgo.Required(), mcpgo.Description("Workspace scope for the grant.")),
+			mcpgo.WithString("role_id", mcpgo.Required(), mcpgo.Description("Role document id (type=role).")),
+			mcpgo.WithString("agent_id", mcpgo.Required(), mcpgo.Description("Agent document id (type=agent).")),
+			mcpgo.WithString("grantee_kind", mcpgo.Required(), mcpgo.Description("session | task | worker")),
+			mcpgo.WithString("grantee_id", mcpgo.Required(), mcpgo.Description("Stable id for the grantee (chat UUID for session, task id for task, worker id for worker).")),
+			mcpgo.WithString("project_id", mcpgo.Description("Optional project scope for the grant.")),
+		)
+		s.mcp.AddTool(claimTool, s.handleAgentRoleClaim)
+
+		releaseTool := mcpgo.NewTool("agent_role_release",
+			mcpgo.WithDescription("Release an active grant. Idempotent: a second call on a released grant returns the released row and writes a redundant-release ledger entry without mutating status."),
+			mcpgo.WithString("grant_id", mcpgo.Required(), mcpgo.Description("Grant id (grant_<8hex>).")),
+			mcpgo.WithString("reason", mcpgo.Description("Free-form release reason (e.g. task_close, session_end).")),
+		)
+		s.mcp.AddTool(releaseTool, s.handleAgentRoleRelease)
+
+		listTool := mcpgo.NewTool("agent_role_list",
+			mcpgo.WithDescription("List role-grants matching the supplied filters. Workspace-scoped."),
+			mcpgo.WithString("role_id", mcpgo.Description("Filter by role id.")),
+			mcpgo.WithString("agent_id", mcpgo.Description("Filter by agent id.")),
+			mcpgo.WithString("grantee_kind", mcpgo.Description("Filter by grantee kind.")),
+			mcpgo.WithString("grantee_id", mcpgo.Description("Filter by grantee id.")),
+			mcpgo.WithString("status", mcpgo.Description("active | released")),
+			mcpgo.WithNumber("limit", mcpgo.Description("Max rows to return.")),
+		)
+		s.mcp.AddTool(listTool, s.handleAgentRoleList)
 	}
 
 	s.streamable = mcpserver.NewStreamableHTTPServer(s.mcp,

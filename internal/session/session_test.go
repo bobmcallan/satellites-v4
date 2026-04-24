@@ -83,6 +83,43 @@ func TestIsStale(t *testing.T) {
 	}
 }
 
+func TestMemoryStore_SetOrchestratorGrant(t *testing.T) {
+	t.Parallel()
+	s := NewMemoryStore()
+	ctx := context.Background()
+	t0 := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Second)
+	if _, err := s.Register(ctx, "u1", "abc", SourceSessionStart, t0); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	got, err := s.SetOrchestratorGrant(ctx, "u1", "abc", "grant_xyz", t1)
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if got.OrchestratorGrantID != "grant_xyz" {
+		t.Fatalf("grant id not stamped: %q", got.OrchestratorGrantID)
+	}
+	if !got.LastSeenAt.Equal(t1) {
+		t.Fatalf("last_seen_at not touched: got %v want %v", got.LastSeenAt, t1)
+	}
+	read, err := s.Get(ctx, "u1", "abc")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if read.OrchestratorGrantID != "grant_xyz" {
+		t.Fatalf("grant id not persisted: %q", read.OrchestratorGrantID)
+	}
+}
+
+func TestMemoryStore_SetOrchestratorGrant_NotFound(t *testing.T) {
+	t.Parallel()
+	s := NewMemoryStore()
+	_, err := s.SetOrchestratorGrant(context.Background(), "u1", "missing", "grant_xyz", time.Now())
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
 func TestMemoryStore_RegisterIdempotent(t *testing.T) {
 	t.Parallel()
 	s := NewMemoryStore()

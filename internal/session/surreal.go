@@ -24,7 +24,7 @@ func NewSurrealStore(db *surrealdb.DB) *SurrealStore {
 	return s
 }
 
-const selectCols = "meta::id(id) AS id, user_id, session_id, source, registered_at, last_seen_at"
+const selectCols = "meta::id(id) AS id, user_id, session_id, source, registered_at, last_seen_at, orchestrator_grant_id"
 
 func rowID(userID, sessionID string) string {
 	// Record ids only tolerate a limited charset; join via "::" and let
@@ -79,6 +79,20 @@ func (s *SurrealStore) Touch(ctx context.Context, userID, sessionID string, now 
 	if err != nil {
 		return Session{}, err
 	}
+	sess.LastSeenAt = now
+	if err := s.write(ctx, sess); err != nil {
+		return Session{}, err
+	}
+	return sess, nil
+}
+
+// SetOrchestratorGrant implements Store for SurrealStore.
+func (s *SurrealStore) SetOrchestratorGrant(ctx context.Context, userID, sessionID, grantID string, now time.Time) (Session, error) {
+	sess, err := s.Get(ctx, userID, sessionID)
+	if err != nil {
+		return Session{}, err
+	}
+	sess.OrchestratorGrantID = grantID
 	sess.LastSeenAt = now
 	if err := s.write(ctx, sess); err != nil {
 		return Session{}, err

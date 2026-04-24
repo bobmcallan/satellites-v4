@@ -13,6 +13,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/rolegrant"
+	"github.com/bobmcallan/satellites/internal/session"
 )
 
 // handleAgentRoleClaim implements the agent_role_claim MCP verb.
@@ -295,4 +296,106 @@ func jsonResult(payload any) (*mcpgo.CallToolResult, error) {
 		return nil, fmt.Errorf("jsonResult: marshal: %w", err)
 	}
 	return mcpgo.NewToolResultText(string(b)), nil
+}
+
+// Orchestrator seed canonical names. main.go's boot sequence creates
+// these system-scope docs; the SessionStart path looks them up by name.
+const (
+	SeedRoleOrchestratorName  = "role_orchestrator"
+	SeedAgentOrchestratorName = "agent_claude_orchestrator"
+)
+
+// issueOrchestratorGrant mints a role-grant on behalf of a freshly
+// registered session. Returns the updated session (with
+// OrchestratorGrantID set) on success; ok=false with the unchanged
+// session on any failure so the caller can keep going. Failures are
+// logged but not propagated — session registration must not fail on a
+// missing seed or a transient FK error.
+func (s *Server) issueOrchestratorGrant(ctx context.Context, sess session.Session, userID string, now time.Time) (session.Session, bool) {
+	if s.grants == nil || s.docs == nil || s.sessions == nil {
+		return sess, false
+	}
+	role, err := s.docs.GetByName(ctx, "", SeedRoleOrchestratorName, nil)
+	if err != nil || role.Type != document.TypeRole || role.Status != document.StatusActive {
+		if s.logger != nil {
+			s.logger.Debug().Str("name", SeedRoleOrchestratorName).Msg("orchestrator role seed not resolved; skipping grant")
+		}
+		return sess, false
+	}
+	agent, err := s.docs.GetByName(ctx, "", SeedAgentOrchestratorName, nil)
+	if err != nil || agent.Type != document.TypeAgent || agent.Status != document.StatusActive {
+		if s.logger != nil {
+			s.logger.Debug().Str("name", SeedAgentOrchestratorName).Msg("orchestrator agent seed not resolved; skipping grant")
+		}
+		return sess, false
+	}
+	workspaceID := sess.UserID
+	if caller, _ := UserFrom(ctx); caller.UserID != "" {
+		workspaceID = caller.UserID
+	}
+	grant, err := s.grants.Create(ctx, rolegrant.RoleGrant{
+		WorkspaceID: workspaceID,
+		RoleID:      role.ID,
+		AgentID:     agent.ID,
+		GranteeKind: rolegrant.GranteeSession,
+		GranteeID:   sess.SessionID,
+	}, now)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn().Str("session_id", sess.SessionID).Str("error", err.Error()).Msg("orchestrator grant issuance failed; session registered without grant")
+		}
+		return sess, false
+	}
+	updated, err := s.sessions.SetOrchestratorGrant(ctx, userID, sess.SessionID, grant.ID, now)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn().Str("session_id", sess.SessionID).Str("error", err.Error()).Msg("session SetOrchestratorGrant failed; grant minted but row not stamped")
+		}
+		return sess, false
+	}
+	if s.ledger != nil {
+		_, _ = s.ledger.Append(ctx, ledger.LedgerEntry{
+			Type:       ledger.TypeDecision,
+			Content:    fmt.Sprintf("orchestrator grant issued at SessionStart: grant=%s session=%s user=%s", grant.ID, sess.SessionID, userID),
+			Tags:       []string{"kind:role-grant", "event:claimed", "trigger:session_start", "grant_id:" + grant.ID, "session_id:" + sess.SessionID},
+			Durability: ledger.DurabilityDurable,
+			SourceType: ledger.SourceSystem,
+			Status:     ledger.StatusActive,
+			CreatedBy:  userID,
+		}, now)
+	}
+	return updated, true
+}
+
+// resolveGrantEffectiveVerbs returns the effective verb allowlist for a
+// grant id by reading the grant row, its role document, and its agent
+// document — returning the intersection of role.allowed_mcp_verbs and
+// agent.tool_ceiling. Empty slice on any lookup failure so callers can
+// distinguish "no verbs resolved" from "grant exists". Cost: three
+// store reads; acceptable on the session_whoami hot path.
+func (s *Server) resolveGrantEffectiveVerbs(ctx context.Context, grantID string) []string {
+	if s.grants == nil || s.docs == nil {
+		return nil
+	}
+	grant, err := s.grants.GetByID(ctx, grantID, nil)
+	if err != nil {
+		return nil
+	}
+	role, err := s.docs.GetByID(ctx, grant.RoleID, nil)
+	if err != nil {
+		return nil
+	}
+	agent, err := s.docs.GetByID(ctx, grant.AgentID, nil)
+	if err != nil {
+		return nil
+	}
+	rp, err := decodeRolePayload(role.Structured)
+	if err != nil {
+		return nil
+	}
+	ap, err := decodeAgentPayload(agent.Structured)
+	if err != nil {
+		return nil
+	}
+	return intersectPatterns(ap.ToolCeiling, rp.AllowedMCPVerbs)
 }

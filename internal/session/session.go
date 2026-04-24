@@ -24,10 +24,17 @@ const (
 // Session records a registered harness session. (UserID, SessionID) is
 // the primary key. LastSeenAt is refreshed on every claim so an active
 // agent keeps its slot alive.
+//
+// OrchestratorGrantID is populated by the SessionStart path in
+// story_7d9c4b1b: when the server has a RoleGrantStore wired and the
+// system-scope orchestrator docs (role_orchestrator, agent_claude_orchestrator)
+// are seeded, Register mints a role-grant on behalf of the session and
+// stores the returned grant id here. Empty when the wiring is absent.
 type Session struct {
-	UserID     string    `json:"user_id"`
-	SessionID  string    `json:"session_id"`
-	Source     string    `json:"source"`
-	Registered time.Time `json:"registered_at"`
-	LastSeenAt time.Time `json:"last_seen_at"`
+	UserID              string    `json:"user_id"`
+	SessionID           string    `json:"session_id"`
+	Source              string    `json:"source"`
+	Registered          time.Time `json:"registered_at"`
+	LastSeenAt          time.Time `json:"last_seen_at"`
+	OrchestratorGrantID string    `json:"orchestrator_grant_id,omitempty"`
 }

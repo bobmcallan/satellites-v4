@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -143,6 +144,15 @@ func main() {
 			logger.Warn().Str("error", err.Error()).Msg("document seed failed")
 		}
 
+		// Seed the system-scope orchestrator role + agent documents that
+		// the SessionStart path uses to mint orchestrator grants. System
+		// scope means workspace_id=systemWsID, project_id=nil. Idempotent:
+		// skip when a document with the canonical name already exists.
+		// Story_7d9c4b1b.
+		if err := seedOrchestratorDocs(ctx, docStore, systemWsID, time.Now().UTC()); err != nil {
+			logger.Warn().Str("error", err.Error()).Msg("orchestrator docs seed failed")
+		}
+
 		if surrealLedger, ok := ledgerStore.(*ledger.SurrealStore); ok {
 			if n, err := surrealLedger.MigrateLegacyRows(ctx, time.Now().UTC()); err != nil {
 				logger.Warn().Str("error", err.Error()).Msg("ledger migrate legacy rows failed")
@@ -203,4 +213,55 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info().Msg("server stopped cleanly")
+}
+
+// seedOrchestratorDocs creates the system-scope `role_orchestrator` and
+// `agent_claude_orchestrator` documents that the SessionStart path uses
+// to mint orchestrator grants. Idempotent: existing rows are left
+// untouched. Called from main during boot; a nil docStore short-circuits
+// so early-boot tests that don't configure Surreal stay green.
+// Story_7d9c4b1b.
+func seedOrchestratorDocs(ctx context.Context, docStore document.Store, workspaceID string, now time.Time) error {
+	if docStore == nil {
+		return nil
+	}
+	// Create the role first so we can reference its id from the agent's
+	// permitted_roles payload.
+	role, err := docStore.GetByName(ctx, "", "role_orchestrator", nil)
+	if err != nil {
+		role, err = docStore.Create(ctx, document.Document{
+			WorkspaceID: workspaceID,
+			ProjectID:   nil,
+			Type:        document.TypeRole,
+			Name:        "role_orchestrator",
+			Scope:       document.ScopeSystem,
+			Status:      document.StatusActive,
+			Body:        "Orchestrator role — the interactive Claude session's authorisation bundle. Holds every orchestrator-surface MCP verb (document_*, story_*, ledger_*, project_*, repo_*, contract_*, task_*, session_whoami, agent_role_*). Required hooks: SessionStart, PreToolUse, enforce. Seeded by platform bootstrap per pr_contract_separation.",
+			Structured:  []byte(`{"allowed_mcp_verbs":["document_*","story_*","ledger_*","project_*","repo_*","workspace_*","principle_*","contract_*","skill_*","reviewer_*","agent_*","role_*","session_whoami","satellites_info"],"required_hooks":["SessionStart","PreToolUse","enforce"],"claim_requirements":[],"default_context_policy":"fresh-per-claim"}`),
+			Tags:        []string{"v4", "agents-roles", "seed"},
+			CreatedBy:   "system",
+		}, now)
+		if err != nil {
+			return fmt.Errorf("seed role_orchestrator: %w", err)
+		}
+	}
+	if _, err := docStore.GetByName(ctx, "", "agent_claude_orchestrator", nil); err == nil {
+		return nil
+	}
+	structured := `{"provider_chain":[{"provider":"claude","model":"opus-4","tier":"opus"}],"tier":"opus","permitted_roles":["` + role.ID + `"],"tool_ceiling":["*"]}`
+	if _, err := docStore.Create(ctx, document.Document{
+		WorkspaceID: workspaceID,
+		ProjectID:   nil,
+		Type:        document.TypeAgent,
+		Name:        "agent_claude_orchestrator",
+		Scope:       document.ScopeSystem,
+		Status:      document.StatusActive,
+		Body:        "Claude orchestrator agent — the interactive session's delivery-agent configuration. provider_chain=claude/opus, tier=opus, tool_ceiling=['*']. permitted_roles pins role_orchestrator so the SessionStart grant path resolves. Seeded by platform bootstrap.",
+		Structured:  []byte(structured),
+		Tags:        []string{"v4", "agents-roles", "seed"},
+		CreatedBy:   "system",
+	}, now); err != nil {
+		return fmt.Errorf("seed agent_claude_orchestrator: %w", err)
+	}
+	return nil
 }

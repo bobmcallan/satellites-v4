@@ -169,7 +169,10 @@ func (s *Server) handleStoryContractClaim(ctx context.Context, req mcpgo.CallToo
 
 // handleSessionWhoami returns the caller's registered session row, or
 // a structured not-registered error. Used by tests + agents to verify
-// the SessionStart hook populated the registry.
+// the SessionStart hook populated the registry. When an
+// OrchestratorGrantID is stamped on the row, the response also includes
+// effective_verbs derived from the seeded role's allowed_mcp_verbs
+// intersected with the agent's tool_ceiling.
 func (s *Server) handleSessionWhoami(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	caller, _ := UserFrom(ctx)
 	sessionID := req.GetString("session_id", "")
@@ -181,7 +184,20 @@ func (s *Server) handleSessionWhoami(ctx context.Context, req mcpgo.CallToolRequ
 		body, _ := json.Marshal(map[string]any{"error": "session_not_registered"})
 		return mcpgo.NewToolResultError(string(body)), nil
 	}
-	body, _ := json.Marshal(sess)
+	payload := map[string]any{
+		"user_id":       sess.UserID,
+		"session_id":    sess.SessionID,
+		"source":        sess.Source,
+		"registered_at": sess.Registered,
+		"last_seen_at":  sess.LastSeenAt,
+	}
+	if sess.OrchestratorGrantID != "" {
+		payload["orchestrator_grant_id"] = sess.OrchestratorGrantID
+		if verbs := s.resolveGrantEffectiveVerbs(ctx, sess.OrchestratorGrantID); len(verbs) > 0 {
+			payload["effective_verbs"] = verbs
+		}
+	}
+	body, _ := json.Marshal(payload)
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
@@ -189,6 +205,15 @@ func (s *Server) handleSessionWhoami(ctx context.Context, req mcpgo.CallToolRequ
 // populate the registry. In production this is driven by the harness;
 // exposing it as a verb keeps tests honest and gives callers a way to
 // re-register after an unexpected restart.
+//
+// When the RoleGrantStore + document store are both wired AND the
+// system-scope orchestrator docs (role_orchestrator + agent_claude_orchestrator)
+// resolve, Register also mints a role-grant on behalf of the session
+// and stamps the returned grant_id on the session row. Failure in the
+// grant-issuance path is non-fatal: the session row is still created,
+// but the orchestrator_grant_id field stays empty. Rationale: the hook
+// is a hot path and we prefer a session without a grant over a failed
+// registration. Story_7d9c4b1b.
 func (s *Server) handleSessionRegister(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	caller, _ := UserFrom(ctx)
 	sessionID, err := req.RequireString("session_id")
@@ -196,9 +221,13 @@ func (s *Server) handleSessionRegister(ctx context.Context, req mcpgo.CallToolRe
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	source := req.GetString("source", session.SourceSessionStart)
-	sess, err := s.sessions.Register(ctx, caller.UserID, sessionID, source, time.Now().UTC())
+	now := time.Now().UTC()
+	sess, err := s.sessions.Register(ctx, caller.UserID, sessionID, source, now)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	if updated, ok := s.issueOrchestratorGrant(ctx, sess, caller.UserID, now); ok {
+		sess = updated
 	}
 	body, _ := json.Marshal(sess)
 	return mcpgo.NewToolResultText(string(body)), nil

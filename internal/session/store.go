@@ -23,6 +23,13 @@ type Store interface {
 	// the session is not registered. Called by the claim handler after
 	// verifying the session is alive.
 	Touch(ctx context.Context, userID, sessionID string, now time.Time) (Session, error)
+
+	// SetOrchestratorGrant stamps the orchestrator_grant_id on an
+	// existing session row. Called by the SessionStart hook path after
+	// minting a role-grant for the freshly-registered session
+	// (story_7d9c4b1b). Returns ErrNotFound if the session does not
+	// exist.
+	SetOrchestratorGrant(ctx context.Context, userID, sessionID, grantID string, now time.Time) (Session, error)
 }
 
 // MemoryStore is a concurrency-safe in-process Store used by unit tests.
@@ -85,6 +92,21 @@ func (m *MemoryStore) Touch(ctx context.Context, userID, sessionID string, now t
 	if !ok {
 		return Session{}, ErrNotFound
 	}
+	sess.LastSeenAt = now
+	m.rows[key] = sess
+	return sess, nil
+}
+
+// SetOrchestratorGrant implements Store for MemoryStore.
+func (m *MemoryStore) SetOrchestratorGrant(ctx context.Context, userID, sessionID, grantID string, now time.Time) (Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := memKey(userID, sessionID)
+	sess, ok := m.rows[key]
+	if !ok {
+		return Session{}, ErrNotFound
+	}
+	sess.OrchestratorGrantID = grantID
 	sess.LastSeenAt = now
 	m.rows[key] = sess
 	return sess, nil

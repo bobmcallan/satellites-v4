@@ -79,12 +79,13 @@ jobs:
             type=raw,value=${{ steps.meta.outputs.version }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
-      - name: Build and push
+      - name: Build image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/Dockerfile
-          push: true
+          push: false
+          load: true
           tags: ${{ steps.docker-meta.outputs.tags }}
           labels: ${{ steps.docker-meta.outputs.labels }}
           build-args: |
@@ -93,3 +94,14 @@ jobs:
             GIT_COMMIT=${{ steps.meta.outputs.commit }}
           provenance: false
           sbom: false
+
+      - name: Push image
+        env:
+          TAGS: ${{ steps.docker-meta.outputs.tags }}
+        run: |
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            echo "::group::Pushing $tag"
+            docker push "$tag"
+            echo "::endgroup::"
+          done <<< "$TAGS"

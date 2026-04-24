@@ -47,6 +47,34 @@ func (e *erroringLedger) BackfillWorkspaceID(ctx context.Context, projectID, wor
 	return e.backing.BackfillWorkspaceID(ctx, projectID, workspaceID)
 }
 
+func (e *erroringLedger) GetByID(ctx context.Context, id string, memberships []string) (ledger.LedgerEntry, error) {
+	if e.backing == nil {
+		return ledger.LedgerEntry{}, ledger.ErrNotFound
+	}
+	return e.backing.GetByID(ctx, id, memberships)
+}
+
+func (e *erroringLedger) Search(ctx context.Context, projectID string, opts ledger.SearchOptions, memberships []string) ([]ledger.LedgerEntry, error) {
+	if e.backing == nil {
+		return nil, nil
+	}
+	return e.backing.Search(ctx, projectID, opts, memberships)
+}
+
+func (e *erroringLedger) Recall(ctx context.Context, rootID string, memberships []string) ([]ledger.LedgerEntry, error) {
+	if e.backing == nil {
+		return nil, nil
+	}
+	return e.backing.Recall(ctx, rootID, memberships)
+}
+
+func (e *erroringLedger) Dereference(ctx context.Context, id, reason, actor string, now time.Time, memberships []string) (ledger.LedgerEntry, error) {
+	if e.backing == nil {
+		return ledger.LedgerEntry{}, ledger.ErrNotFound
+	}
+	return e.backing.Dereference(ctx, id, reason, actor, now, memberships)
+}
+
 func TestNewID_Format(t *testing.T) {
 	t.Parallel()
 	id := NewID()

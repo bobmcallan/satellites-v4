@@ -2,7 +2,9 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/surrealdb/surrealdb.go"
@@ -52,28 +54,16 @@ func (s *SurrealStore) Append(ctx context.Context, entry LedgerEntry, now time.T
 }
 
 // List implements Store for SurrealStore. Newest-first, limit clamped.
-// Default behaviour excludes dereferenced rows; the slice 7.2 verb layer
-// adds a status filter that lets callers opt in.
+// Default behaviour excludes dereferenced rows; callers opt in via
+// ListOptions.Status='dereferenced' or ListOptions.IncludeDerefd=true.
 func (s *SurrealStore) List(ctx context.Context, projectID string, opts ListOptions, memberships []string) ([]LedgerEntry, error) {
 	opts = opts.normalised()
 	if memberships != nil && len(memberships) == 0 {
 		return []LedgerEntry{}, nil
 	}
-	conds := []string{"project_id = $project", "(status IS NONE OR status != 'dereferenced')"}
-	vars := map[string]any{"project": projectID, "lim": opts.Limit}
-	if memberships != nil {
-		conds = append(conds, "workspace_id IN $memberships")
-		vars["memberships"] = memberships
-	}
-	if opts.Type != "" {
-		conds = append(conds, "type = $type")
-		vars["type"] = opts.Type
-	}
-	where := conds[0]
-	for i := 1; i < len(conds); i++ {
-		where += " AND " + conds[i]
-	}
-	sql := fmt.Sprintf("SELECT %s FROM ledger WHERE %s ORDER BY created_at DESC LIMIT $lim", selectCols, where)
+	conds, vars := s.buildListWhere(projectID, opts, memberships)
+	sql := fmt.Sprintf("SELECT %s FROM ledger WHERE %s ORDER BY created_at DESC LIMIT $lim", selectCols, strings.Join(conds, " AND "))
+	vars["lim"] = opts.Limit
 	results, err := surrealdb.Query[[]LedgerEntry](ctx, s.db, sql, vars)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: list: %w", err)
@@ -82,6 +72,164 @@ func (s *SurrealStore) List(ctx context.Context, projectID string, opts ListOpti
 		return []LedgerEntry{}, nil
 	}
 	return (*results)[0].Result, nil
+}
+
+// buildListWhere translates ListOptions into a SurrealDB WHERE clause +
+// vars map. Workspace memberships and the dereferenced-default-exclude
+// rules live here so List + Search share one source of truth.
+func (s *SurrealStore) buildListWhere(projectID string, opts ListOptions, memberships []string) ([]string, map[string]any) {
+	conds := []string{}
+	vars := map[string]any{}
+	if projectID != "" {
+		conds = append(conds, "project_id = $project")
+		vars["project"] = projectID
+	}
+	if memberships != nil {
+		conds = append(conds, "workspace_id IN $memberships")
+		vars["memberships"] = memberships
+	}
+	if opts.Type != "" {
+		conds = append(conds, "type = $type")
+		vars["type"] = opts.Type
+	}
+	if opts.StoryID != "" {
+		conds = append(conds, "story_id = $story")
+		vars["story"] = opts.StoryID
+	}
+	if opts.ContractID != "" {
+		conds = append(conds, "contract_id = $contract")
+		vars["contract"] = opts.ContractID
+	}
+	if len(opts.Tags) > 0 {
+		conds = append(conds, "tags ANYINSIDE $tags")
+		vars["tags"] = opts.Tags
+	}
+	if opts.Durability != "" {
+		conds = append(conds, "durability = $durability")
+		vars["durability"] = opts.Durability
+	}
+	if opts.SourceType != "" {
+		conds = append(conds, "source_type = $source_type")
+		vars["source_type"] = opts.SourceType
+	}
+	if opts.Sensitive != nil {
+		conds = append(conds, "sensitive = $sensitive")
+		vars["sensitive"] = *opts.Sensitive
+	}
+	if opts.Status != "" {
+		conds = append(conds, "status = $status")
+		vars["status"] = opts.Status
+	} else if !opts.IncludeDerefd {
+		conds = append(conds, "(status IS NONE OR status != 'dereferenced')")
+	}
+	return conds, vars
+}
+
+// Search implements Store for SurrealStore.
+func (s *SurrealStore) Search(ctx context.Context, projectID string, opts SearchOptions, memberships []string) ([]LedgerEntry, error) {
+	if memberships != nil && len(memberships) == 0 {
+		return nil, nil
+	}
+	listOpts := opts.normalised()
+	conds, vars := s.buildListWhere(projectID, listOpts, memberships)
+	q := strings.ToLower(strings.TrimSpace(opts.Query))
+	if q != "" {
+		conds = append(conds, "string::lowercase(content) CONTAINS $q")
+		vars["q"] = q
+	}
+	topK := opts.TopK
+	if topK <= 0 {
+		topK = 20
+	}
+	if topK > 100 {
+		topK = 100
+	}
+	sql := fmt.Sprintf("SELECT %s FROM ledger WHERE %s ORDER BY created_at DESC LIMIT %d", selectCols, strings.Join(conds, " AND "), topK)
+	results, err := surrealdb.Query[[]LedgerEntry](ctx, s.db, sql, vars)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: search: %w", err)
+	}
+	if results == nil || len(*results) == 0 {
+		return nil, nil
+	}
+	return (*results)[0].Result, nil
+}
+
+// Recall implements Store for SurrealStore. Returns the chain of rows
+// tagged recall_root:<rootID> plus the root row, ordered by CreatedAt
+// ASC.
+func (s *SurrealStore) Recall(ctx context.Context, rootID string, memberships []string) ([]LedgerEntry, error) {
+	if rootID == "" {
+		return nil, errors.New("ledger: recall requires root id")
+	}
+	if memberships != nil && len(memberships) == 0 {
+		return nil, nil
+	}
+	conds := []string{"(meta::id(id) = $root OR tags CONTAINS $tag)"}
+	vars := map[string]any{"root": rootID, "tag": "recall_root:" + rootID}
+	if memberships != nil {
+		conds = append(conds, "workspace_id IN $memberships")
+		vars["memberships"] = memberships
+	}
+	sql := fmt.Sprintf("SELECT %s FROM ledger WHERE %s ORDER BY created_at ASC", selectCols, strings.Join(conds, " AND "))
+	results, err := surrealdb.Query[[]LedgerEntry](ctx, s.db, sql, vars)
+	if err != nil {
+		return nil, fmt.Errorf("ledger: recall: %w", err)
+	}
+	if results == nil || len(*results) == 0 {
+		return nil, nil
+	}
+	return (*results)[0].Result, nil
+}
+
+// GetByID implements Store for SurrealStore.
+func (s *SurrealStore) GetByID(ctx context.Context, id string, memberships []string) (LedgerEntry, error) {
+	if memberships != nil && len(memberships) == 0 {
+		return LedgerEntry{}, ErrNotFound
+	}
+	conds := []string{"meta::id(id) = $id"}
+	vars := map[string]any{"id": id}
+	if memberships != nil {
+		conds = append(conds, "workspace_id IN $memberships")
+		vars["memberships"] = memberships
+	}
+	sql := fmt.Sprintf("SELECT %s FROM ledger WHERE %s LIMIT 1", selectCols, strings.Join(conds, " AND "))
+	results, err := surrealdb.Query[[]LedgerEntry](ctx, s.db, sql, vars)
+	if err != nil {
+		return LedgerEntry{}, fmt.Errorf("ledger: get: %w", err)
+	}
+	if results == nil || len(*results) == 0 || len((*results)[0].Result) == 0 {
+		return LedgerEntry{}, ErrNotFound
+	}
+	return (*results)[0].Result[0], nil
+}
+
+// Dereference implements Store for SurrealStore.
+func (s *SurrealStore) Dereference(ctx context.Context, id, reason, actor string, now time.Time, memberships []string) (LedgerEntry, error) {
+	target, err := s.GetByID(ctx, id, memberships)
+	if err != nil {
+		return LedgerEntry{}, err
+	}
+	auditEntry := LedgerEntry{
+		WorkspaceID: target.WorkspaceID,
+		ProjectID:   target.ProjectID,
+		StoryID:     target.StoryID,
+		ContractID:  target.ContractID,
+		Type:        TypeDecision,
+		Tags:        []string{"kind:dereference", "target:" + id},
+		Content:     reason,
+		CreatedBy:   actor,
+	}
+	written, err := s.Append(ctx, auditEntry, now)
+	if err != nil {
+		return LedgerEntry{}, fmt.Errorf("ledger: write audit row: %w", err)
+	}
+	updateSQL := "UPDATE $rid SET status = 'dereferenced'"
+	updateVars := map[string]any{"rid": surrealmodels.NewRecordID("ledger", id)}
+	if _, err := surrealdb.Query[any](ctx, s.db, updateSQL, updateVars); err != nil {
+		return LedgerEntry{}, fmt.Errorf("ledger: dereference target: %w", err)
+	}
+	return written, nil
 }
 
 // BackfillWorkspaceID implements Store for SurrealStore.

@@ -198,34 +198,70 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	if s.ledger != nil {
 		appendTool := mcpgo.NewTool("ledger_append",
 			mcpgo.WithDescription("Append an event row to the project's ledger. Caller must own the project."),
-			mcpgo.WithString("project_id",
-				mcpgo.Required(),
-				mcpgo.Description("Project scope (caller must own it, or it must be the system default)."),
-			),
-			mcpgo.WithString("type",
-				mcpgo.Required(),
-				mcpgo.Description("Event type, e.g. 'story.status_change'."),
-			),
-			mcpgo.WithString("content",
-				mcpgo.Description("Event content / free-form payload."),
-			),
+			mcpgo.WithString("project_id", mcpgo.Required(), mcpgo.Description("Project scope.")),
+			mcpgo.WithString("type", mcpgo.Required(), mcpgo.Description("Event type per architecture.md §6 enum (plan|action_claim|artifact|evidence|decision|close-request|verdict|workflow-claim|kv); other strings are wrapped as Type=decision with the original value preserved as a kind:<value> tag.")),
+			mcpgo.WithString("content", mcpgo.Description("Event content / free-form markdown.")),
+			mcpgo.WithString("story_id", mcpgo.Description("Optional story FK.")),
+			mcpgo.WithString("contract_id", mcpgo.Description("Optional contract FK.")),
+			mcpgo.WithArray("tags", mcpgo.Description("Free-form tags."), mcpgo.Items(map[string]any{"type": "string"})),
+			mcpgo.WithString("structured", mcpgo.Description("Type-specific JSON payload (raw JSON string).")),
+			mcpgo.WithString("durability", mcpgo.Description("ephemeral | pipeline | durable (default).")),
+			mcpgo.WithString("expires_at", mcpgo.Description("RFC3339 timestamp; required when durability=ephemeral.")),
+			mcpgo.WithString("source_type", mcpgo.Description("manifest | feedback | agent (default) | user | system | migration.")),
+			mcpgo.WithBoolean("sensitive", mcpgo.Description("Marks the row as sensitive — visible only to its author.")),
 		)
 		s.mcp.AddTool(appendTool, s.handleLedgerAppend)
 
 		listLedgerTool := mcpgo.NewTool("ledger_list",
-			mcpgo.WithDescription("List ledger entries for a project, newest-first. Caller must own the project."),
-			mcpgo.WithString("project_id",
-				mcpgo.Required(),
-				mcpgo.Description("Project scope."),
-			),
-			mcpgo.WithString("type",
-				mcpgo.Description("Optional type filter."),
-			),
-			mcpgo.WithNumber("limit",
-				mcpgo.Description("Max entries to return (default 100, max 500)."),
-			),
+			mcpgo.WithDescription("List ledger entries for a project, newest-first. Caller must own the project. Default excludes status=dereferenced unless overridden via status or include_dereferenced."),
+			mcpgo.WithString("project_id", mcpgo.Required(), mcpgo.Description("Project scope.")),
+			mcpgo.WithString("type", mcpgo.Description("Filter by type (architecture.md §6 enum).")),
+			mcpgo.WithString("story_id", mcpgo.Description("Filter by story FK.")),
+			mcpgo.WithString("contract_id", mcpgo.Description("Filter by contract FK.")),
+			mcpgo.WithArray("tags", mcpgo.Description("Filter by tags (any-of)."), mcpgo.Items(map[string]any{"type": "string"})),
+			mcpgo.WithString("durability", mcpgo.Description("Filter by durability.")),
+			mcpgo.WithString("source_type", mcpgo.Description("Filter by source_type.")),
+			mcpgo.WithString("status", mcpgo.Description("Filter by status (active | archived | dereferenced).")),
+			mcpgo.WithBoolean("sensitive", mcpgo.Description("Filter by sensitive flag.")),
+			mcpgo.WithBoolean("include_dereferenced", mcpgo.Description("Include dereferenced rows in the default-status branch.")),
+			mcpgo.WithNumber("limit", mcpgo.Description("Max entries to return (default 100, max 500).")),
 		)
 		s.mcp.AddTool(listLedgerTool, s.handleLedgerList)
+
+		getLedgerTool := mcpgo.NewTool("ledger_get",
+			mcpgo.WithDescription("Return a ledger row by id. Workspace-membership enforced."),
+			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Ledger entry id (ldg_<8hex>).")),
+		)
+		s.mcp.AddTool(getLedgerTool, s.handleLedgerGet)
+
+		searchLedgerTool := mcpgo.NewTool("ledger_search",
+			mcpgo.WithDescription("Search ledger rows. Combines structured filters with a case-insensitive substring match on content when query is supplied. Empty query + filter returns updated_at DESC."),
+			mcpgo.WithString("project_id", mcpgo.Required(), mcpgo.Description("Project scope.")),
+			mcpgo.WithString("query", mcpgo.Description("Free-text query.")),
+			mcpgo.WithString("type", mcpgo.Description("Filter by type.")),
+			mcpgo.WithString("story_id", mcpgo.Description("Filter by story FK.")),
+			mcpgo.WithString("contract_id", mcpgo.Description("Filter by contract FK.")),
+			mcpgo.WithArray("tags", mcpgo.Description("Filter by tags (any-of)."), mcpgo.Items(map[string]any{"type": "string"})),
+			mcpgo.WithString("durability", mcpgo.Description("Filter by durability.")),
+			mcpgo.WithString("source_type", mcpgo.Description("Filter by source_type.")),
+			mcpgo.WithString("status", mcpgo.Description("Filter by status.")),
+			mcpgo.WithBoolean("include_dereferenced", mcpgo.Description("Include dereferenced rows.")),
+			mcpgo.WithNumber("top_k", mcpgo.Description("Max rows (default 20, capped 100).")),
+		)
+		s.mcp.AddTool(searchLedgerTool, s.handleLedgerSearch)
+
+		recallLedgerTool := mcpgo.NewTool("ledger_recall",
+			mcpgo.WithDescription("Return the chain of ledger rows tagged recall_root:<root_id> plus the root row, ordered by created_at ASC. Used by contract claim/resume to load prior evidence."),
+			mcpgo.WithString("root_id", mcpgo.Required(), mcpgo.Description("Root ledger entry id.")),
+		)
+		s.mcp.AddTool(recallLedgerTool, s.handleLedgerRecall)
+
+		dereferenceLedgerTool := mcpgo.NewTool("ledger_dereference",
+			mcpgo.WithDescription("Soft-retire a ledger row by flipping its status to 'dereferenced' and writing a kind:dereference audit row. The original row stays in the chain for audit; default queries hide it. Hard delete is not exposed (pr_root_cause)."),
+			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Ledger entry id to dereference.")),
+			mcpgo.WithString("reason", mcpgo.Required(), mcpgo.Description("Why this row is being dereferenced. Recorded as the audit row's content.")),
+		)
+		s.mcp.AddTool(dereferenceLedgerTool, s.handleLedgerDereference)
 	}
 
 	if s.stories != nil {
@@ -853,15 +889,38 @@ func (s *Server) handleLedgerAppend(ctx context.Context, req mcpgo.CallToolReque
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	wsID := s.resolveProjectWorkspaceID(ctx, resolvedID)
-	entryType, tags := classifyLedgerEvent(eventType)
-	e, err := s.ledger.Append(ctx, ledger.LedgerEntry{
+	entryType, classifiedTags := classifyLedgerEvent(eventType)
+	tags := append([]string{}, classifiedTags...)
+	tags = append(tags, req.GetStringSlice("tags", nil)...)
+
+	entry := ledger.LedgerEntry{
 		WorkspaceID: wsID,
 		ProjectID:   resolvedID,
+		StoryID:     ledger.StringPtr(req.GetString("story_id", "")),
+		ContractID:  ledger.StringPtr(req.GetString("contract_id", "")),
 		Type:        entryType,
 		Tags:        tags,
 		Content:     content,
+		Durability:  req.GetString("durability", ""),
+		SourceType:  req.GetString("source_type", ""),
+		Sensitive:   req.GetBool("sensitive", false),
 		CreatedBy:   caller.UserID,
-	}, time.Now().UTC())
+	}
+	if structured := req.GetString("structured", ""); structured != "" {
+		if !json.Valid([]byte(structured)) {
+			return mcpgo.NewToolResultError("structured must be valid JSON"), nil
+		}
+		entry.Structured = []byte(structured)
+	}
+	if expires := req.GetString("expires_at", ""); expires != "" {
+		t, err := time.Parse(time.RFC3339, expires)
+		if err != nil {
+			return mcpgo.NewToolResultError("expires_at must be RFC3339"), nil
+		}
+		entry.ExpiresAt = &t
+	}
+
+	e, err := s.ledger.Append(ctx, entry, time.Now().UTC())
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -874,6 +933,111 @@ func (s *Server) handleLedgerAppend(ctx context.Context, req mcpgo.CallToolReque
 		Int64("duration_ms", time.Since(start).Milliseconds()).
 		Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+func (s *Server) handleLedgerGet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	start := time.Now()
+	caller, _ := UserFrom(ctx)
+	id, err := req.RequireString("id")
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	e, err := s.ledger.GetByID(ctx, id, memberships)
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	body, _ := json.Marshal(e)
+	s.logger.Info().Str("method", "tools/call").Str("tool", "ledger_get").Str("id", id).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+func (s *Server) handleLedgerSearch(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	start := time.Now()
+	caller, _ := UserFrom(ctx)
+	projectID, err := req.RequireString("project_id")
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	resolvedID, err := s.resolveProjectID(ctx, projectID, caller, memberships)
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	opts := ledger.SearchOptions{
+		ListOptions: buildLedgerListOptions(req),
+		Query:       req.GetString("query", ""),
+		TopK:        int(req.GetFloat("top_k", 0)),
+	}
+	rows, err := s.ledger.Search(ctx, resolvedID, opts, memberships)
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	body, _ := json.Marshal(rows)
+	s.logger.Info().Str("method", "tools/call").Str("tool", "ledger_search").Str("project_id", resolvedID).Str("query", opts.Query).Int("count", len(rows)).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+func (s *Server) handleLedgerRecall(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	start := time.Now()
+	caller, _ := UserFrom(ctx)
+	rootID, err := req.RequireString("root_id")
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	rows, err := s.ledger.Recall(ctx, rootID, memberships)
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	body, _ := json.Marshal(rows)
+	s.logger.Info().Str("method", "tools/call").Str("tool", "ledger_recall").Str("root_id", rootID).Int("count", len(rows)).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+func (s *Server) handleLedgerDereference(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	start := time.Now()
+	caller, _ := UserFrom(ctx)
+	id, err := req.RequireString("id")
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	reason, err := req.RequireString("reason")
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	audit, err := s.ledger.Dereference(ctx, id, reason, caller.UserID, time.Now().UTC(), memberships)
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	body, _ := json.Marshal(audit)
+	s.logger.Info().Str("method", "tools/call").Str("tool", "ledger_dereference").Str("id", id).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+// buildLedgerListOptions translates a CallToolRequest into ListOptions.
+// Shared by handleLedgerList and handleLedgerSearch so the filter
+// surface is identical.
+func buildLedgerListOptions(req mcpgo.CallToolRequest) ledger.ListOptions {
+	opts := ledger.ListOptions{
+		Type:          req.GetString("type", ""),
+		StoryID:       req.GetString("story_id", ""),
+		ContractID:    req.GetString("contract_id", ""),
+		Tags:          req.GetStringSlice("tags", nil),
+		Durability:    req.GetString("durability", ""),
+		SourceType:    req.GetString("source_type", ""),
+		Status:        req.GetString("status", ""),
+		IncludeDerefd: req.GetBool("include_dereferenced", false),
+		Limit:         int(req.GetFloat("limit", 0)),
+	}
+	args := req.GetArguments()
+	if v, ok := args["sensitive"]; ok {
+		if b, ok := v.(bool); ok {
+			opts.Sensitive = &b
+		}
+	}
+	return opts
 }
 
 func (s *Server) handleStoryCreate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -1341,10 +1505,7 @@ func (s *Server) handleLedgerList(ctx context.Context, req mcpgo.CallToolRequest
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	opts := ledger.ListOptions{
-		Type:  req.GetString("type", ""),
-		Limit: int(req.GetFloat("limit", 0)),
-	}
+	opts := buildLedgerListOptions(req)
 	entries, err := s.ledger.List(ctx, resolvedID, opts, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil

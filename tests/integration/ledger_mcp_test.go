@@ -217,4 +217,122 @@ func TestLedgerMCPRoundTrip(t *testing.T) {
 	if isErr, _ := bogusResult["isError"].(bool); !isErr {
 		t.Errorf("cross-project ledger_list should set isError; got %+v", bogusResult)
 	}
+
+	// === slice 7.2 verb extensions: append-with-rich-fields, get,
+	// search, recall, dereference. Run after the legacy assertions so
+	// they don't perturb the original counts. ===
+	expires := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+	richResp := rpcCall(t, ctx, mcpURL, "key_ledger", map[string]any{
+		"jsonrpc": "2.0", "id": 30, "method": "tools/call",
+		"params": map[string]any{
+			"name": "ledger_append",
+			"arguments": map[string]any{
+				"project_id":  projID,
+				"type":        ledger.TypeEvidence,
+				"content":     "rich-row",
+				"story_id":    "sty_synthetic",
+				"contract_id": "ci_synthetic",
+				"tags":        []any{"phase:plan", "kind:rich"},
+				"structured":  `{"score":0.9}`,
+				"durability":  "ephemeral",
+				"expires_at":  expires,
+				"source_type": "agent",
+				"sensitive":   false,
+			},
+		},
+	})
+	var rich map[string]any
+	if err := json.Unmarshal([]byte(extractToolText(t, richResp)), &rich); err != nil {
+		t.Fatalf("decode rich append: %v", err)
+	}
+	richID, _ := rich["id"].(string)
+	if richID == "" {
+		t.Fatalf("rich append missing id: %+v", rich)
+	}
+	if got, _ := rich["story_id"].(string); got != "sty_synthetic" {
+		t.Errorf("rich append story_id = %q, want sty_synthetic", got)
+	}
+
+	// ledger_get(id) round-trip.
+	getResp := rpcCall(t, ctx, mcpURL, "key_ledger", map[string]any{
+		"jsonrpc": "2.0", "id": 31, "method": "tools/call",
+		"params": map[string]any{
+			"name":      "ledger_get",
+			"arguments": map[string]any{"id": richID},
+		},
+	})
+	var getRow map[string]any
+	if err := json.Unmarshal([]byte(extractToolText(t, getResp)), &getRow); err != nil {
+		t.Fatalf("decode ledger_get: %v", err)
+	}
+	if getRow["id"] != richID {
+		t.Errorf("ledger_get returned id %v, want %q", getRow["id"], richID)
+	}
+
+	// ledger_search by query substring on content.
+	searchResp := rpcCall(t, ctx, mcpURL, "key_ledger", map[string]any{
+		"jsonrpc": "2.0", "id": 32, "method": "tools/call",
+		"params": map[string]any{
+			"name":      "ledger_search",
+			"arguments": map[string]any{"project_id": projID, "query": "rich-row"},
+		},
+	})
+	var searchHits []map[string]any
+	if err := json.Unmarshal([]byte(extractToolText(t, searchResp)), &searchHits); err != nil {
+		t.Fatalf("decode ledger_search: %v", err)
+	}
+	if len(searchHits) == 0 {
+		t.Errorf("ledger_search(query=rich-row) returned no hits")
+	}
+
+	// ledger_dereference flips the row's status; default ledger_list
+	// excludes it; explicit status filter returns it.
+	derefResp := rpcCall(t, ctx, mcpURL, "key_ledger", map[string]any{
+		"jsonrpc": "2.0", "id": 33, "method": "tools/call",
+		"params": map[string]any{
+			"name":      "ledger_dereference",
+			"arguments": map[string]any{"id": richID, "reason": "superseded"},
+		},
+	})
+	var audit map[string]any
+	if err := json.Unmarshal([]byte(extractToolText(t, derefResp)), &audit); err != nil {
+		t.Fatalf("decode ledger_dereference: %v", err)
+	}
+	if audit["type"] != ledger.TypeDecision {
+		t.Errorf("audit type = %v, want decision", audit["type"])
+	}
+
+	defaultListResp := rpcCall(t, ctx, mcpURL, "key_ledger", map[string]any{
+		"jsonrpc": "2.0", "id": 34, "method": "tools/call",
+		"params": map[string]any{
+			"name":      "ledger_list",
+			"arguments": map[string]any{"project_id": projID},
+		},
+	})
+	var defaultList []map[string]any
+	_ = json.Unmarshal([]byte(extractToolText(t, defaultListResp)), &defaultList)
+	for _, r := range defaultList {
+		if r["id"] == richID {
+			t.Errorf("default list still includes dereferenced row %q", richID)
+		}
+	}
+
+	derefdListResp := rpcCall(t, ctx, mcpURL, "key_ledger", map[string]any{
+		"jsonrpc": "2.0", "id": 35, "method": "tools/call",
+		"params": map[string]any{
+			"name":      "ledger_list",
+			"arguments": map[string]any{"project_id": projID, "status": "dereferenced"},
+		},
+	})
+	var derefdList []map[string]any
+	_ = json.Unmarshal([]byte(extractToolText(t, derefdListResp)), &derefdList)
+	found := false
+	for _, r := range derefdList {
+		if r["id"] == richID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("status=dereferenced filter did not return dereferenced row %q; got %+v", richID, derefdList)
+	}
 }

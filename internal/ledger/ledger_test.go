@@ -19,16 +19,19 @@ func TestNewID_Format(t *testing.T) {
 	}
 }
 
-// TestStoreInterface_AppendOnly pins the Store surface: a change that adds
-// Update/Delete/GetByID to the interface would fail this test (via the
-// reflect walk) and the compile-time `var _ Store = ...` assertion in
-// store.go / surreal.go.
+// TestStoreInterface_Surface pins the Store surface so a future addition
+// (e.g. a hard-delete verb) is forced to update this test and the
+// compile-time `var _ Store = ...` assertions in store.go / surreal.go.
 //
-// BackfillWorkspaceID is allow-listed — it only stamps workspace_id on
-// rows where it was empty and is scoped to the feature-order:2 migration.
-func TestStoreInterface_AppendOnly(t *testing.T) {
+// Append is the sole creation path; Dereference is the sole status
+// mutation (writes a new audit row + flips the target's Status). No
+// hard-delete or arbitrary-update verb exists.
+func TestStoreInterface_Surface(t *testing.T) {
 	t.Parallel()
-	want := map[string]bool{"Append": true, "List": true, "BackfillWorkspaceID": true}
+	want := map[string]bool{
+		"Append": true, "GetByID": true, "List": true, "Search": true,
+		"Recall": true, "Dereference": true, "BackfillWorkspaceID": true,
+	}
 	typ := reflect.TypeOf((*Store)(nil)).Elem()
 	if typ.NumMethod() != len(want) {
 		t.Fatalf("Store declares %d methods; want exactly %d (%v)", typ.NumMethod(), len(want), want)
@@ -36,7 +39,7 @@ func TestStoreInterface_AppendOnly(t *testing.T) {
 	for i := 0; i < typ.NumMethod(); i++ {
 		m := typ.Method(i).Name
 		if !want[m] {
-			t.Errorf("unexpected method on Store: %q (append-only interface: Append + List + BackfillWorkspaceID)", m)
+			t.Errorf("unexpected method on Store: %q", m)
 		}
 	}
 }
@@ -227,5 +230,138 @@ func TestMemoryStore_Append_RejectsInvalidEnum(t *testing.T) {
 	store := NewMemoryStore()
 	if _, err := store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: "garbage"}, time.Now()); err == nil {
 		t.Error("Append accepted bogus type; want rejection")
+	}
+}
+
+func TestMemoryStore_GetByID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryStore()
+	now := time.Now().UTC()
+	written, _ := store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: TypeDecision, CreatedBy: "u_1"}, now)
+	got, err := store.GetByID(ctx, written.ID, nil)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.ID != written.ID {
+		t.Errorf("got id %q, want %q", got.ID, written.ID)
+	}
+	if _, err := store.GetByID(ctx, "ldg_missing", nil); err == nil {
+		t.Error("GetByID(missing) accepted; want ErrNotFound")
+	}
+}
+
+func TestMemoryStore_FilterByStoryAndContractAndTags(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryStore()
+	now := time.Now().UTC()
+	storyA := "story_a"
+	contractZ := "ci_z"
+	_, _ = store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: TypeDecision, StoryID: &storyA, Tags: []string{"phase:plan"}}, now)
+	_, _ = store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: TypeDecision, ContractID: &contractZ, Tags: []string{"phase:develop"}}, now.Add(time.Second))
+	_, _ = store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: TypeDecision, Tags: []string{"phase:plan", "phase:develop"}}, now.Add(2*time.Second))
+
+	if got, _ := store.List(ctx, "proj_a", ListOptions{StoryID: storyA}, nil); len(got) != 1 {
+		t.Errorf("StoryID filter = %d, want 1", len(got))
+	}
+	if got, _ := store.List(ctx, "proj_a", ListOptions{ContractID: contractZ}, nil); len(got) != 1 {
+		t.Errorf("ContractID filter = %d, want 1", len(got))
+	}
+	if got, _ := store.List(ctx, "proj_a", ListOptions{Tags: []string{"phase:plan"}}, nil); len(got) != 2 {
+		t.Errorf("Tags filter = %d, want 2", len(got))
+	}
+}
+
+func TestMemoryStore_Search_QueryAndFilter(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryStore()
+	now := time.Now().UTC()
+	_, _ = store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: TypeDecision, Content: "plan-shipped"}, now)
+	_, _ = store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: TypeArtifact, Content: "PLAN-shipped"}, now.Add(time.Second))
+	_, _ = store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: TypeDecision, Content: "unrelated"}, now.Add(2*time.Second))
+
+	got, _ := store.Search(ctx, "proj_a", SearchOptions{
+		ListOptions: ListOptions{Type: TypeDecision},
+		Query:       "plan",
+	}, nil)
+	if len(got) != 1 || got[0].Content != "plan-shipped" {
+		t.Errorf("Search(type=decision, query=plan) = %+v", got)
+	}
+
+	// Empty query + filter: returns ordered by CreatedAt DESC.
+	allDecisions, _ := store.Search(ctx, "proj_a", SearchOptions{
+		ListOptions: ListOptions{Type: TypeDecision},
+	}, nil)
+	if len(allDecisions) != 2 {
+		t.Errorf("empty-query+filter = %d, want 2", len(allDecisions))
+	}
+}
+
+func TestMemoryStore_Recall(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryStore()
+	now := time.Now().UTC()
+	root, _ := store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: TypeDecision}, now)
+	_, _ = store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: TypeEvidence, Tags: []string{"recall_root:" + root.ID}}, now.Add(time.Second))
+	_, _ = store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: TypeArtifact, Tags: []string{"recall_root:" + root.ID}}, now.Add(2*time.Second))
+	_, _ = store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: TypeDecision, Tags: []string{"recall_root:other"}}, now.Add(3*time.Second))
+
+	chain, err := store.Recall(ctx, root.ID, nil)
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if len(chain) != 3 {
+		t.Errorf("chain length = %d, want 3", len(chain))
+	}
+	for i := 1; i < len(chain); i++ {
+		if !chain[i-1].CreatedAt.Before(chain[i].CreatedAt) && !chain[i-1].CreatedAt.Equal(chain[i].CreatedAt) {
+			t.Errorf("chain not CreatedAt ASC: %v", chain)
+		}
+	}
+}
+
+func TestMemoryStore_Dereference(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryStore()
+	now := time.Now().UTC()
+	target, _ := store.Append(ctx, LedgerEntry{ProjectID: "proj_a", Type: TypeDecision, Content: "old plan"}, now)
+
+	audit, err := store.Dereference(ctx, target.ID, "superseded by new plan", "u_alice", now.Add(time.Hour), nil)
+	if err != nil {
+		t.Fatalf("Dereference: %v", err)
+	}
+	if audit.Type != TypeDecision {
+		t.Errorf("audit type = %q, want decision", audit.Type)
+	}
+	if audit.Content != "superseded by new plan" {
+		t.Errorf("audit content = %q", audit.Content)
+	}
+	hasKindTag, hasTargetTag := false, false
+	for _, t := range audit.Tags {
+		if t == "kind:dereference" {
+			hasKindTag = true
+		}
+		if t == "target:"+target.ID {
+			hasTargetTag = true
+		}
+	}
+	if !hasKindTag || !hasTargetTag {
+		t.Errorf("audit tags missing kind:dereference or target: %v", audit.Tags)
+	}
+	// Target row is now status=dereferenced; default list excludes it.
+	listed, _ := store.List(ctx, "proj_a", ListOptions{}, nil)
+	for _, e := range listed {
+		if e.ID == target.ID {
+			t.Errorf("default list still includes dereferenced row %q", target.ID)
+		}
+	}
+	// Explicit status filter returns it.
+	derefd, _ := store.List(ctx, "proj_a", ListOptions{Status: StatusDereferenced}, nil)
+	if len(derefd) != 1 || derefd[0].ID != target.ID {
+		t.Errorf("explicit status filter = %+v, want target", derefd)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
 	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/config"
+	"github.com/bobmcallan/satellites/internal/contract"
 	"github.com/bobmcallan/satellites/internal/db"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/httpserver"
@@ -71,6 +72,7 @@ func main() {
 		ledgerStore      ledger.Store
 		storyStore       story.Store
 		wsStore          workspace.Store
+		contractStore    contract.Store
 		defaultProjectID string
 		dbPing           httpserver.HealthCheck
 	)
@@ -91,6 +93,7 @@ func main() {
 		ledgerStore = ledger.NewSurrealStore(conn)
 		storyStore = story.NewSurrealStore(conn, ledgerStore)
 		wsStore = workspace.NewSurrealStore(conn)
+		contractStore = contract.NewSurrealStore(conn, docStore, storyStore)
 		dbPing = func(hcCtx context.Context) error { return db.Ping(hcCtx, conn) }
 
 		// Seed the system user's default workspace so bootstrap writes
@@ -177,6 +180,7 @@ func main() {
 		LedgerStore:      ledgerStore,
 		StoryStore:       storyStore,
 		WorkspaceStore:   wsStore,
+		ContractStore:    contractStore,
 	})
 	mcpAuth := mcpserver.AuthMiddleware(mcpserver.AuthDeps{
 		Sessions: sessions,

@@ -16,6 +16,7 @@ import (
 	"github.com/ternarybob/arbor"
 
 	"github.com/bobmcallan/satellites/internal/config"
+	"github.com/bobmcallan/satellites/internal/contract"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/project"
@@ -38,6 +39,7 @@ type Server struct {
 	ledger           ledger.Store
 	stories          story.Store
 	workspaces       workspace.Store
+	contracts        contract.Store
 }
 
 // Deps bundles the optional per-tool dependencies passed through to
@@ -50,6 +52,7 @@ type Deps struct {
 	LedgerStore      ledger.Store
 	StoryStore       story.Store
 	WorkspaceStore   workspace.Store
+	ContractStore    contract.Store
 }
 
 // New constructs the MCP server with the satellites_info tool registered.
@@ -67,6 +70,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		ledger:           deps.LedgerStore,
 		stories:          deps.StoryStore,
 		workspaces:       deps.WorkspaceStore,
+		contracts:        deps.ContractStore,
 	}
 
 	s.mcp = mcpserver.NewMCPServer(
@@ -300,6 +304,36 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("status", mcpgo.Required(), mcpgo.Description("Target status: ready | in_progress | done | cancelled.")),
 		)
 		s.mcp.AddTool(updateStatusTool, s.handleStoryUpdateStatus)
+	}
+
+	if s.contracts != nil && s.stories != nil && s.ledger != nil && s.docs != nil && s.projects != nil {
+		specGetTool := mcpgo.NewTool("project_workflow_spec_get",
+			mcpgo.WithDescription("Return the project's workflow_spec (ordered list of contract_name slots with min/max counts). Returns the default spec when none has been set."),
+			mcpgo.WithString("project_id", mcpgo.Required(), mcpgo.Description("Project id.")),
+		)
+		s.mcp.AddTool(specGetTool, s.handleProjectWorkflowSpecGet)
+
+		specSetTool := mcpgo.NewTool("project_workflow_spec_set",
+			mcpgo.WithDescription("Persist a new workflow_spec for a project. Writes a kind:kv ledger row tagged key:workflow_spec; older rows remain in the audit chain (KVProjection reads the latest). Caller must own the project."),
+			mcpgo.WithString("project_id", mcpgo.Required(), mcpgo.Description("Project id.")),
+			mcpgo.WithString("slots", mcpgo.Required(), mcpgo.Description("JSON array of {contract_name, required, min_count, max_count, source} entries.")),
+		)
+		s.mcp.AddTool(specSetTool, s.handleProjectWorkflowSpecSet)
+
+		workflowClaimTool := mcpgo.NewTool("story_workflow_claim",
+			mcpgo.WithDescription("Lock a workflow shape for a story. Validates proposed_contracts against the project's workflow_spec, resolves each contract_name to a document{type=contract}, creates one contract_instance per slot (all status=ready), and writes a kind:workflow-claim ledger row. Idempotent: re-calling with an existing workflow returns the existing CIs."),
+			mcpgo.WithString("story_id", mcpgo.Required(), mcpgo.Description("Story id.")),
+			mcpgo.WithArray("proposed_contracts", mcpgo.Description("Ordered list of contract_name slots. When omitted, the project's workflow_spec is expanded using each required slot's min_count."),
+				mcpgo.Items(map[string]any{"type": "string"})),
+			mcpgo.WithString("claim_markdown", mcpgo.Description("Agent's workflow-shape rationale.")),
+		)
+		s.mcp.AddTool(workflowClaimTool, s.handleStoryWorkflowClaim)
+
+		contractNextTool := mcpgo.NewTool("story_contract_next",
+			mcpgo.WithDescription("Return the lowest-sequence contract_instance with status=ready for a story, plus any document{type=skill} rows whose contract_binding matches the contract's id. Read-only — does NOT claim."),
+			mcpgo.WithString("story_id", mcpgo.Required(), mcpgo.Description("Story id.")),
+		)
+		s.mcp.AddTool(contractNextTool, s.handleStoryContractNext)
 	}
 
 	if s.workspaces != nil {

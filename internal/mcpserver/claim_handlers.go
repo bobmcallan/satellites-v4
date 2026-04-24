@@ -85,6 +85,16 @@ func (s *Server) handleStoryContractClaim(ctx context.Context, req mcpgo.CallToo
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 
+	// Role-grant gate (story_85675c33). If the contract's structured
+	// payload names a required_role AND we have the grant/doc machinery
+	// wired, verify the caller's active orchestrator grant's role id
+	// matches. No required_role OR no wiring = fall through to the
+	// legacy session-only path.
+	grantID, gateErr := s.resolveRequiredRoleGrant(ctx, ci, caller.UserID, sessionID)
+	if gateErr != nil {
+		return mcpgo.NewToolResultError(gateErr.Error()), nil
+	}
+
 	// If amending, dereference prior action_claim + plan rows before
 	// writing fresh ones.
 	if amend {
@@ -140,6 +150,14 @@ func (s *Server) handleStoryContractClaim(ctx context.Context, req mcpgo.CallToo
 	if !amend {
 		if _, err := s.contracts.Claim(ctx, ci.ID, sessionID, now, memberships); err != nil {
 			return mcpgo.NewToolResultError(err.Error()), nil
+		}
+	}
+	if grantID != "" {
+		if _, err := s.contracts.SetClaimedViaGrant(ctx, ci.ID, grantID, now, memberships); err != nil {
+			// Non-fatal — the session_id path still authoritative.
+			if s.logger != nil {
+				s.logger.Warn().Str("ci_id", ci.ID).Str("grant_id", grantID).Str("error", err.Error()).Msg("claim: SetClaimedViaGrant failed; session_id path preserved")
+			}
 		}
 	}
 	if planRowID != "" {

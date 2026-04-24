@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -153,6 +154,18 @@ func main() {
 			logger.Warn().Str("error", err.Error()).Msg("orchestrator docs seed failed")
 		}
 
+		// Backfill required_role on pre-existing contract documents.
+		// Contracts without a required_role field in their structured
+		// payload receive role_orchestrator so the process-order gate's
+		// new grant check (story_85675c33) can hit a stable target.
+		// Idempotent: contracts that already carry required_role are
+		// untouched.
+		if n, err := stampRequiredRoleOnContracts(ctx, docStore, time.Now().UTC()); err != nil {
+			logger.Warn().Str("error", err.Error()).Msg("contract required_role backfill failed")
+		} else if n > 0 {
+			logger.Info().Int("rows", n).Msg("contract required_role backfill stamped")
+		}
+
 		if surrealLedger, ok := ledgerStore.(*ledger.SurrealStore); ok {
 			if n, err := surrealLedger.MigrateLegacyRows(ctx, time.Now().UTC()); err != nil {
 				logger.Warn().Str("error", err.Error()).Msg("ledger migrate legacy rows failed")
@@ -264,4 +277,58 @@ func seedOrchestratorDocs(ctx context.Context, docStore document.Store, workspac
 		return fmt.Errorf("seed agent_claude_orchestrator: %w", err)
 	}
 	return nil
+}
+
+// stampRequiredRoleOnContracts scans every active type=contract row and,
+// when the row's structured payload lacks a required_role field, writes
+// an updated payload with required_role=role_orchestrator. Returns the
+// number of rows stamped. Idempotent — a second call finds no rows
+// without required_role. Story_85675c33.
+func stampRequiredRoleOnContracts(ctx context.Context, docStore document.Store, now time.Time) (int, error) {
+	if docStore == nil {
+		return 0, nil
+	}
+	rows, err := docStore.List(ctx, document.ListOptions{Type: document.TypeContract}, nil)
+	if err != nil {
+		return 0, fmt.Errorf("list contracts: %w", err)
+	}
+	stamped := 0
+	for _, row := range rows {
+		updated, ok := addRequiredRoleIfMissing(row.Structured, "role_orchestrator")
+		if !ok {
+			continue
+		}
+		structuredVal := updated
+		if _, err := docStore.Update(ctx, row.ID, document.UpdateFields{Structured: &structuredVal}, "system", now, nil); err != nil {
+			return stamped, fmt.Errorf("update contract %s: %w", row.ID, err)
+		}
+		stamped++
+	}
+	return stamped, nil
+}
+
+// addRequiredRoleIfMissing inserts `required_role=roleName` into the
+// JSON payload if the key is absent. Returns (newPayload, true) when a
+// mutation is needed; (nil, false) when the key already exists or the
+// payload is not a JSON object. Malformed JSON (non-object, non-empty)
+// is left untouched — the caller logs via the return value.
+func addRequiredRoleIfMissing(raw []byte, roleName string) ([]byte, bool) {
+	if len(raw) == 0 {
+		// Synthesize a minimal payload so the claim gate can resolve it.
+		out, _ := json.Marshal(map[string]any{"required_role": roleName})
+		return out, true
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+		return nil, false
+	}
+	if _, exists := obj["required_role"]; exists {
+		return nil, false
+	}
+	obj["required_role"] = roleName
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
 }

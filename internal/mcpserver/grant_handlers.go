@@ -10,6 +10,7 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/bobmcallan/satellites/internal/contract"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/rolegrant"
@@ -365,6 +366,80 @@ func (s *Server) issueOrchestratorGrant(ctx context.Context, sess session.Sessio
 		}, now)
 	}
 	return updated, true
+}
+
+// contractPayload captures the subset of contract.structured the claim
+// gate reads.
+type contractPayload struct {
+	RequiredRole       string   `json:"required_role"`
+	AllowedToolsSubset []string `json:"allowed_tools_subset,omitempty"`
+}
+
+// resolveRequiredRoleGrant enforces the contract's `required_role`
+// invariant (story_85675c33) and returns the grant id to stamp on the
+// CI. Three possible outcomes:
+//
+//  1. Contract has no required_role, OR grant/doc wiring is absent —
+//     returns ("", nil). Caller falls through to the legacy session-only
+//     path.
+//  2. Contract has required_role AND caller's session carries an
+//     orchestrator grant whose role id matches — returns (grant_id, nil).
+//  3. Contract has required_role AND caller cannot produce a covering
+//     grant — returns ("", err) with a structured payload the caller
+//     surfaces verbatim.
+func (s *Server) resolveRequiredRoleGrant(ctx context.Context, ci contract.ContractInstance, userID, sessionID string) (string, error) {
+	if s.grants == nil || s.docs == nil || s.sessions == nil {
+		return "", nil
+	}
+	contractDoc, err := s.docs.GetByID(ctx, ci.ContractID, nil)
+	if err != nil {
+		return "", nil
+	}
+	cp, _ := decodeContractPayload(contractDoc.Structured)
+	if cp.RequiredRole == "" {
+		return "", nil
+	}
+	sess, err := s.sessions.Get(ctx, userID, sessionID)
+	if err != nil || sess.OrchestratorGrantID == "" {
+		body, _ := json.Marshal(map[string]any{
+			"error":         "grant_required",
+			"required_role": cp.RequiredRole,
+			"reason":        "session has no orchestrator grant",
+		})
+		return "", errors.New(string(body))
+	}
+	grant, err := s.grants.GetByID(ctx, sess.OrchestratorGrantID, nil)
+	if err != nil || grant.Status != rolegrant.StatusActive {
+		body, _ := json.Marshal(map[string]any{
+			"error":         "grant_required",
+			"required_role": cp.RequiredRole,
+			"reason":        "orchestrator grant not active",
+		})
+		return "", errors.New(string(body))
+	}
+	if grant.RoleID != cp.RequiredRole {
+		body, _ := json.Marshal(map[string]any{
+			"error":          "required_role_mismatch",
+			"required_role":  cp.RequiredRole,
+			"grant_role":     grant.RoleID,
+			"grant_id":       grant.ID,
+		})
+		return "", errors.New(string(body))
+	}
+	return grant.ID, nil
+}
+
+// decodeContractPayload extracts the grant-relevant fields from a
+// contract document's structured payload. Missing fields are zero-value.
+func decodeContractPayload(raw []byte) (contractPayload, error) {
+	if len(raw) == 0 {
+		return contractPayload{}, nil
+	}
+	var p contractPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return contractPayload{}, err
+	}
+	return p, nil
 }
 
 // resolveGrantEffectiveVerbs returns the effective verb allowlist for a

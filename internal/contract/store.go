@@ -73,6 +73,12 @@ type Store interface {
 	// BackfillWorkspaceID stamps workspace_id on rows matching projectID
 	// whose workspace_id is empty. Idempotent boot-time migration.
 	BackfillWorkspaceID(ctx context.Context, projectID, workspaceID string, now time.Time) (int, error)
+
+	// SetClaimedViaGrant stamps the grant id on a CI that has already
+	// been claimed. Called by the claim handler after it resolves the
+	// caller's orchestrator grant (story_85675c33). Returns ErrNotFound
+	// if the CI does not exist.
+	SetClaimedViaGrant(ctx context.Context, id, grantID string, now time.Time, memberships []string) (ContractInstance, error)
 }
 
 // MemoryStore is a concurrency-safe in-process Store used by unit tests.
@@ -263,6 +269,20 @@ func (m *MemoryStore) UpdateLedgerRefs(ctx context.Context, id string, plan, clo
 	if closeRef != nil {
 		ci.CloseLedgerID = *closeRef
 	}
+	ci.UpdatedAt = now
+	m.rows[id] = ci
+	return ci, nil
+}
+
+// SetClaimedViaGrant implements Store for MemoryStore.
+func (m *MemoryStore) SetClaimedViaGrant(ctx context.Context, id, grantID string, now time.Time, memberships []string) (ContractInstance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ci, ok := m.rows[id]
+	if !ok || !inMemberships(ci.WorkspaceID, memberships) {
+		return ContractInstance{}, ErrNotFound
+	}
+	ci.ClaimedViaGrantID = grantID
 	ci.UpdatedAt = now
 	m.rows[id] = ci
 	return ci, nil

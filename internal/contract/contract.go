@@ -18,6 +18,12 @@ import (
 // ContractInstance is one slot in a story's workflow. Fields match
 // docs/architecture.md §5 verbatim. WorkspaceID + ProjectID cascade from
 // the parent story at Create time per principle pr_0779e5af.
+//
+// ClaimedViaGrantID (story_85675c33) is populated when the caller's
+// session has an orchestrator grant and the contract specifies a
+// required_role. It coexists with ClaimedBySessionID during the
+// transitional period; the session_id field will be dropped in a
+// cleanup follow-up once every write path references the grant id.
 type ContractInstance struct {
 	ID                 string    `json:"id"`
 	WorkspaceID        string    `json:"workspace_id"`
@@ -29,6 +35,7 @@ type ContractInstance struct {
 	Sequence           int       `json:"sequence"`
 	Status             string    `json:"status"`
 	ClaimedBySessionID string    `json:"claimed_by_session_id,omitempty"`
+	ClaimedViaGrantID  string    `json:"claimed_via_grant_id,omitempty"`
 	ClaimedAt          time.Time `json:"claimed_at,omitempty"`
 	PlanLedgerID       string    `json:"plan_ledger_id,omitempty"`
 	CloseLedgerID      string    `json:"close_ledger_id,omitempty"`

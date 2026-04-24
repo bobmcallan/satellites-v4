@@ -41,7 +41,7 @@ func NewSurrealStore(db *surrealdb.DB, docs document.Store, stories story.Store)
 }
 
 // selectCols preserves the string form of id (see document/surreal.go).
-const selectCols = "meta::id(id) AS id, workspace_id, project_id, story_id, contract_id, contract_name, phase, sequence, status, claimed_by_session_id, claimed_at, plan_ledger_id, close_ledger_id, required_for_close, created_at, updated_at"
+const selectCols = "meta::id(id) AS id, workspace_id, project_id, story_id, contract_id, contract_name, phase, sequence, status, claimed_by_session_id, claimed_via_grant_id, claimed_at, plan_ledger_id, close_ledger_id, required_for_close, created_at, updated_at"
 
 // Create implements Store for SurrealStore.
 func (s *SurrealStore) Create(ctx context.Context, ci ContractInstance, now time.Time) (ContractInstance, error) {
@@ -208,6 +208,20 @@ func (s *SurrealStore) UpdateLedgerRefs(ctx context.Context, id string, plan, cl
 	if closeRef != nil {
 		ci.CloseLedgerID = *closeRef
 	}
+	ci.UpdatedAt = now
+	if err := s.write(ctx, ci); err != nil {
+		return ContractInstance{}, err
+	}
+	return ci, nil
+}
+
+// SetClaimedViaGrant implements Store for SurrealStore.
+func (s *SurrealStore) SetClaimedViaGrant(ctx context.Context, id, grantID string, now time.Time, memberships []string) (ContractInstance, error) {
+	ci, err := s.GetByID(ctx, id, memberships)
+	if err != nil {
+		return ContractInstance{}, err
+	}
+	ci.ClaimedViaGrantID = grantID
 	ci.UpdatedAt = now
 	if err := s.write(ctx, ci); err != nil {
 		return ContractInstance{}, err

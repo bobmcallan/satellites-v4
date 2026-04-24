@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satellites/internal/document"
+	"github.com/bobmcallan/satellites/internal/hubemit"
 	"github.com/bobmcallan/satellites/internal/story"
 )
 
@@ -85,11 +86,15 @@ type Store interface {
 // It depends on a document.Store for FK resolution and a story.Store for
 // parent-row lookup on Create.
 type MemoryStore struct {
-	mu      sync.Mutex
-	rows    map[string]ContractInstance
-	docs    document.Store
-	stories story.Store
+	mu        sync.Mutex
+	rows      map[string]ContractInstance
+	docs      document.Store
+	stories   story.Store
+	publisher hubemit.Publisher
 }
+
+// SetPublisher installs the hub emit sink for subsequent mutations.
+func (m *MemoryStore) SetPublisher(p hubemit.Publisher) { m.publisher = p }
 
 // NewMemoryStore returns an empty MemoryStore. docs and stories are
 // required — Create needs both to resolve FKs and cascade
@@ -190,29 +195,34 @@ func (m *MemoryStore) UpdateStatus(ctx context.Context, id, newStatus, actor str
 		return ContractInstance{}, fmt.Errorf("contract: unknown status %q", newStatus)
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	ci, ok := m.rows[id]
 	if !ok || !inMemberships(ci.WorkspaceID, memberships) {
+		m.mu.Unlock()
 		return ContractInstance{}, ErrNotFound
 	}
 	if !ValidTransition(ci.Status, newStatus) {
+		m.mu.Unlock()
 		return ContractInstance{}, fmt.Errorf("%w: %s → %s", ErrInvalidTransition, ci.Status, newStatus)
 	}
 	ci.Status = newStatus
 	ci.UpdatedAt = now
 	m.rows[id] = ci
+	pub := m.publisher
+	m.mu.Unlock()
+	emitStatus(ctx, pub, ci)
 	return ci, nil
 }
 
 // Claim implements Store for MemoryStore.
 func (m *MemoryStore) Claim(ctx context.Context, id, grantID string, now time.Time, memberships []string) (ContractInstance, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	ci, ok := m.rows[id]
 	if !ok || !inMemberships(ci.WorkspaceID, memberships) {
+		m.mu.Unlock()
 		return ContractInstance{}, ErrNotFound
 	}
 	if !ValidTransition(ci.Status, StatusClaimed) {
+		m.mu.Unlock()
 		return ContractInstance{}, fmt.Errorf("%w: %s → %s", ErrInvalidTransition, ci.Status, StatusClaimed)
 	}
 	ci.Status = StatusClaimed
@@ -220,6 +230,9 @@ func (m *MemoryStore) Claim(ctx context.Context, id, grantID string, now time.Ti
 	ci.ClaimedAt = now
 	ci.UpdatedAt = now
 	m.rows[id] = ci
+	pub := m.publisher
+	m.mu.Unlock()
+	emitStatus(ctx, pub, ci)
 	return ci, nil
 }
 
@@ -240,9 +253,9 @@ func (m *MemoryStore) RebindGrant(ctx context.Context, id, grantID string, now t
 // ClearClaim implements Store for MemoryStore.
 func (m *MemoryStore) ClearClaim(ctx context.Context, id string, now time.Time, memberships []string) (ContractInstance, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	ci, ok := m.rows[id]
 	if !ok || !inMemberships(ci.WorkspaceID, memberships) {
+		m.mu.Unlock()
 		return ContractInstance{}, ErrNotFound
 	}
 	ci.Status = StatusReady
@@ -252,6 +265,9 @@ func (m *MemoryStore) ClearClaim(ctx context.Context, id string, now time.Time, 
 	ci.CloseLedgerID = ""
 	ci.UpdatedAt = now
 	m.rows[id] = ci
+	pub := m.publisher
+	m.mu.Unlock()
+	emitStatus(ctx, pub, ci)
 	return ci, nil
 }
 

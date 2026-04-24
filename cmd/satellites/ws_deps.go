@@ -1,5 +1,6 @@
 // Deps wiring for the websocket surface: session → user resolution for
-// wshandler, and a ledger-backed mismatch audit for hub.AuthHub.
+// wshandler, a ledger-backed mismatch audit for hub.AuthHub, and the
+// hubPublisher that stores call on every mutation (slice 10.3).
 package main
 
 import (
@@ -12,8 +13,46 @@ import (
 
 	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/hub"
+	"github.com/bobmcallan/satellites/internal/hubemit"
 	"github.com/bobmcallan/satellites/internal/ledger"
 )
+
+// publisherAttacher is satisfied by every store that owns an emit hook
+// (ledger, task, contract, story). cmd/satellites calls SetPublisher on
+// each store at boot.
+type publisherAttacher interface {
+	SetPublisher(p hubemit.Publisher)
+}
+
+// attachPublisher installs p on store when store implements the setter.
+// Unknown store types (plain test doubles, nil) are silently skipped.
+func attachPublisher(store any, p hubemit.Publisher) {
+	if store == nil {
+		return
+	}
+	if a, ok := store.(publisherAttacher); ok {
+		a.SetPublisher(p)
+	}
+}
+
+// hubPublisher adapts *hub.AuthHub to the hubemit.Publisher contract the
+// stores import. Running store-emitted events through AuthHub keeps the
+// publish-time topic-suffix guard in the path for defence in depth.
+type hubPublisher struct {
+	authHub *hub.AuthHub
+}
+
+// Publish implements hubemit.Publisher.
+func (h *hubPublisher) Publish(ctx context.Context, topic, kind, workspaceID string, data any) {
+	if h == nil || h.authHub == nil {
+		return
+	}
+	h.authHub.Publish(ctx, topic, hub.Event{
+		Kind:        kind,
+		WorkspaceID: workspaceID,
+		Data:        data,
+	})
+}
 
 // sessionResolverAdapter fans the wshandler.SessionResolver call out to
 // the existing session + user stores.

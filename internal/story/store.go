@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bobmcallan/satellites/internal/hubemit"
 	"github.com/bobmcallan/satellites/internal/ledger"
 )
 
@@ -74,10 +75,14 @@ type transitionPayload struct {
 // It emits a ledger row on every successful UpdateStatus; if the ledger
 // append fails, the in-memory status change is reverted.
 type MemoryStore struct {
-	mu     sync.Mutex
-	rows   map[string]Story
-	ledger ledger.Store
+	mu        sync.Mutex
+	rows      map[string]Story
+	ledger    ledger.Store
+	publisher hubemit.Publisher
 }
+
+// SetPublisher installs the hub emit sink for subsequent mutations.
+func (m *MemoryStore) SetPublisher(p hubemit.Publisher) { m.publisher = p }
 
 // NewMemoryStore returns an empty MemoryStore backed by the supplied
 // ledger.Store. A nil ledger is rejected — status transitions MUST emit
@@ -207,6 +212,7 @@ func (m *MemoryStore) UpdateStatus(ctx context.Context, id, newStatus, actor str
 		m.rows[id] = s
 		return Story{}, fmt.Errorf("story: ledger emission failed (status reverted): %w", err)
 	}
+	emitStatus(ctx, m.publisher, s)
 	return s, nil
 }
 

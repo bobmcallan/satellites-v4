@@ -9,13 +9,19 @@ import (
 
 	"github.com/surrealdb/surrealdb.go"
 	surrealmodels "github.com/surrealdb/surrealdb.go/pkg/models"
+
+	"github.com/bobmcallan/satellites/internal/hubemit"
 )
 
 // SurrealStore is a SurrealDB-backed Store. The caller must have already
 // authenticated and selected ns/db on the supplied *surrealdb.DB.
 type SurrealStore struct {
-	db *surrealdb.DB
+	db        *surrealdb.DB
+	publisher hubemit.Publisher
 }
+
+// SetPublisher installs the hub emit sink for subsequent mutations.
+func (s *SurrealStore) SetPublisher(p hubemit.Publisher) { s.publisher = p }
 
 // NewSurrealStore wraps db as a Store. Defines the `ledger` table
 // schemaless so first-time SELECTs don't error on a missing table; also
@@ -50,6 +56,7 @@ func (s *SurrealStore) Append(ctx context.Context, entry LedgerEntry, now time.T
 	if _, err := surrealdb.Query[[]LedgerEntry](ctx, s.db, sql, vars); err != nil {
 		return LedgerEntry{}, fmt.Errorf("ledger: append: %w", err)
 	}
+	emitAppended(ctx, s.publisher, entry)
 	return entry, nil
 }
 
@@ -229,6 +236,7 @@ func (s *SurrealStore) Dereference(ctx context.Context, id, reason, actor string
 	if _, err := surrealdb.Query[any](ctx, s.db, updateSQL, updateVars); err != nil {
 		return LedgerEntry{}, fmt.Errorf("ledger: dereference target: %w", err)
 	}
+	emitDereferenced(ctx, s.publisher, target.WorkspaceID, id, reason)
 	return written, nil
 }
 

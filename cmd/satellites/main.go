@@ -224,9 +224,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Websocket hub (slice 10.1) + workspace-aware AuthHub (slice 10.2).
-	// The hub is shared across the process; emit hooks (slice 10.3) will
-	// attach publishers to the same instance at the store layer.
+	// Websocket hub (slice 10.1) + workspace-aware AuthHub (slice 10.2) +
+	// store-layer emit hooks (slice 10.3). One hub instance per process.
 	sharedHub := hub.New()
 	var authHub *hub.AuthHub
 	var wsHandlers *wshandler.Handler
@@ -242,6 +241,14 @@ func main() {
 			Sessions: &sessionResolverAdapter{sessions: sessions, users: users},
 			Logger:   logger,
 		})
+
+		// Attach the store-layer publisher so ledger / task / contract /
+		// story mutations fan to the hub on every write.
+		publisher := &hubPublisher{authHub: authHub}
+		attachPublisher(ledgerStore, publisher)
+		attachPublisher(taskStore, publisher)
+		attachPublisher(contractStore, publisher)
+		attachPublisher(storyStore, publisher)
 	}
 
 	registrars := []httpserver.RouteRegistrar{authHandlers, portalHandlers}

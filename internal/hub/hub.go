@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const (
@@ -25,11 +26,14 @@ const (
 // string comparison matches insertion order. WorkspaceID is populated by
 // publishers that originate a workspace-scoped mutation; the AuthHub
 // wrapper (slice 10.2) validates it against the topic's workspace suffix.
+// CreatedAt is stamped by the hub at Publish time when the caller leaves
+// it zero (slice 10.3). The format is RFC3339 when serialised via JSON.
 type Event struct {
 	ID          string
 	Topic       string
 	Kind        string
 	WorkspaceID string
+	CreatedAt   time.Time
 	Data        any
 }
 
@@ -192,6 +196,9 @@ func (h *Hub) Publish(topic string, event Event) {
 func (h *Hub) publishLocked(topic string, event Event) []string {
 	event.ID = h.nextID()
 	event.Topic = topic
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
 
 	r, ok := h.rings[topic]
 	if !ok {

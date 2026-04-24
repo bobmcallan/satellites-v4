@@ -8,14 +8,20 @@ import (
 
 	"github.com/surrealdb/surrealdb.go"
 	surrealmodels "github.com/surrealdb/surrealdb.go/pkg/models"
+
+	"github.com/bobmcallan/satellites/internal/hubemit"
 )
 
 // SurrealStore is a SurrealDB-backed Store. Atomic Claim uses a single
 // UPDATE query with ORDER BY + LIMIT 1 so two workers cannot double-claim
 // the same row.
 type SurrealStore struct {
-	db *surrealdb.DB
+	db        *surrealdb.DB
+	publisher hubemit.Publisher
 }
+
+// SetPublisher installs the hub emit sink for subsequent mutations.
+func (s *SurrealStore) SetPublisher(p hubemit.Publisher) { s.publisher = p }
 
 // NewSurrealStore wraps db as a Store and defines the `tasks` table +
 // the three indexes the dispatcher + worker heartbeat queries rely on.
@@ -51,6 +57,7 @@ func (s *SurrealStore) Enqueue(ctx context.Context, t Task, now time.Time) (Task
 	if err := s.write(ctx, t); err != nil {
 		return Task{}, err
 	}
+	emitStatus(ctx, s.publisher, t)
 	return t, nil
 }
 
@@ -183,7 +190,9 @@ func (s *SurrealStore) Claim(ctx context.Context, workerID string, workspaceIDs 
 		// Lost the race; caller retries.
 		return Task{}, ErrNoTaskAvailable
 	}
-	return (*updateRes)[0].Result[0], nil
+	claimed := (*updateRes)[0].Result[0]
+	emitStatus(ctx, s.publisher, claimed)
+	return claimed, nil
 }
 
 // Close implements Store for SurrealStore.
@@ -205,6 +214,7 @@ func (s *SurrealStore) Close(ctx context.Context, id, outcome string, now time.T
 	if err := s.write(ctx, t); err != nil {
 		return Task{}, err
 	}
+	emitStatus(ctx, s.publisher, t)
 	return t, nil
 }
 
@@ -224,6 +234,7 @@ func (s *SurrealStore) Reclaim(ctx context.Context, id, reason string, now time.
 	if err := s.write(ctx, t); err != nil {
 		return Task{}, err
 	}
+	emitStatus(ctx, s.publisher, t)
 	return t, nil
 }
 

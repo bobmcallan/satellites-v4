@@ -9,6 +9,7 @@ import (
 	"github.com/surrealdb/surrealdb.go"
 	surrealmodels "github.com/surrealdb/surrealdb.go/pkg/models"
 
+	"github.com/bobmcallan/satellites/internal/hubemit"
 	"github.com/bobmcallan/satellites/internal/ledger"
 )
 
@@ -18,9 +19,13 @@ import (
 // transaction but satisfies the v4-baseline invariant: "failed ledger
 // emission must not leave the status advanced" (pr_20440c77).
 type SurrealStore struct {
-	db     *surrealdb.DB
-	ledger ledger.Store
+	db        *surrealdb.DB
+	ledger    ledger.Store
+	publisher hubemit.Publisher
 }
+
+// SetPublisher installs the hub emit sink for subsequent mutations.
+func (s *SurrealStore) SetPublisher(p hubemit.Publisher) { s.publisher = p }
 
 // NewSurrealStore wraps db as a Store. Defines the `stories` table
 // schemaless and panics if led is nil.
@@ -158,6 +163,7 @@ func (s *SurrealStore) UpdateStatus(ctx context.Context, id, newStatus, actor st
 		}
 		return Story{}, fmt.Errorf("story: ledger emission failed (status reverted): %w", err)
 	}
+	emitStatus(ctx, s.publisher, current)
 	return current, nil
 }
 

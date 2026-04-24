@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/bobmcallan/satellites/internal/hubemit"
 )
 
 // DefaultListLimit is applied when ListOptions.Limit <= 0.
@@ -21,16 +23,16 @@ const MaxListLimit = 500
 // MaxListLimit. Status defaults to active+archived (excluding
 // dereferenced); supply Status explicitly to opt in.
 type ListOptions struct {
-	Type            string
-	StoryID         string
-	ContractID      string
-	Tags            []string
-	Durability      string
-	SourceType      string
-	Status          string
-	Sensitive       *bool
-	IncludeDerefd   bool
-	Limit           int
+	Type          string
+	StoryID       string
+	ContractID    string
+	Tags          []string
+	Durability    string
+	SourceType    string
+	Status        string
+	Sensitive     *bool
+	IncludeDerefd bool
+	Limit         int
 }
 
 // SearchOptions extend ListOptions with a free-text Query and an upper
@@ -78,14 +80,19 @@ type Store interface {
 
 // MemoryStore is a concurrency-safe in-process Store used by unit tests.
 type MemoryStore struct {
-	mu   sync.Mutex
-	rows []LedgerEntry
+	mu        sync.Mutex
+	rows      []LedgerEntry
+	publisher hubemit.Publisher
 }
 
 // NewMemoryStore returns an empty MemoryStore.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{rows: make([]LedgerEntry, 0)}
 }
+
+// SetPublisher installs the hub emit sink for subsequent mutations.
+// A nil value disables publishes — the default state.
+func (m *MemoryStore) SetPublisher(p hubemit.Publisher) { m.publisher = p }
 
 // Append implements Store for MemoryStore.
 func (m *MemoryStore) Append(ctx context.Context, entry LedgerEntry, now time.Time) (LedgerEntry, error) {
@@ -94,10 +101,12 @@ func (m *MemoryStore) Append(ctx context.Context, entry LedgerEntry, now time.Ti
 		return LedgerEntry{}, err
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	entry.ID = NewID()
 	entry.CreatedAt = now
 	m.rows = append(m.rows, entry)
+	pub := m.publisher
+	m.mu.Unlock()
+	emitAppended(ctx, pub, entry)
 	return entry, nil
 }
 
@@ -301,7 +310,9 @@ func (m *MemoryStore) Dereference(ctx context.Context, id, reason, actor string,
 			break
 		}
 	}
+	pub := m.publisher
 	m.mu.Unlock()
+	emitDereferenced(ctx, pub, target.WorkspaceID, id, reason)
 	return written, nil
 }
 

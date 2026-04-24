@@ -12,6 +12,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestHub_CreatedAtStamped covers AC6 (slice 10.3): every Publish stamps
+// event.CreatedAt when the caller leaves it zero. event.ID is monotonic
+// and non-empty — both fields are load-bearing for the emit-hook contract.
+func TestHub_CreatedAtStamped(t *testing.T) {
+	h := New()
+	before := time.Now().UTC().Add(-time.Second)
+	h.Publish(testTopic, Event{Kind: "k"})
+	after := time.Now().UTC().Add(time.Second)
+
+	buf := h.ReplayBuffer(testTopic, "")
+	require.Len(t, buf, 1)
+	got := buf[0]
+	assert.NotEmpty(t, got.ID, "hub stamps a monotonic id")
+	assert.False(t, got.CreatedAt.IsZero(), "hub stamps CreatedAt")
+	assert.True(t, got.CreatedAt.After(before), "CreatedAt >= before")
+	assert.True(t, got.CreatedAt.Before(after), "CreatedAt <= after")
+}
+
 const testTopic = "ws:wksp_A"
 
 // TestPubSubFanout_10Subscribers covers AC1 + AC2: a single Publish on a

@@ -7,6 +7,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/bobmcallan/satellites/internal/hubemit"
 )
 
 // ErrNotFound is returned when a task lookup misses.
@@ -78,14 +80,18 @@ type Store interface {
 
 // MemoryStore is a concurrency-safe in-process Store used by unit tests.
 type MemoryStore struct {
-	mu   sync.Mutex
-	rows map[string]Task
+	mu        sync.Mutex
+	rows      map[string]Task
+	publisher hubemit.Publisher
 }
 
 // NewMemoryStore returns an empty MemoryStore.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{rows: make(map[string]Task)}
 }
+
+// SetPublisher installs the hub emit sink for subsequent mutations.
+func (m *MemoryStore) SetPublisher(p hubemit.Publisher) { m.publisher = p }
 
 // Enqueue implements Store for MemoryStore.
 func (m *MemoryStore) Enqueue(ctx context.Context, t Task, now time.Time) (Task, error) {
@@ -102,15 +108,18 @@ func (m *MemoryStore) Enqueue(ctx context.Context, t Task, now time.Time) (Task,
 		return Task{}, fmt.Errorf("task: Enqueue requires status=enqueued, got %q", t.Status)
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if t.ID == "" {
 		t.ID = NewID()
 	}
 	if _, exists := m.rows[t.ID]; exists {
+		m.mu.Unlock()
 		return Task{}, fmt.Errorf("task: id %q already exists", t.ID)
 	}
 	t.CreatedAt = now
 	m.rows[t.ID] = t
+	pub := m.publisher
+	m.mu.Unlock()
+	emitStatus(ctx, pub, t)
 	return t, nil
 }
 
@@ -174,7 +183,6 @@ func (m *MemoryStore) Claim(ctx context.Context, workerID string, workspaceIDs [
 		allowed[w] = struct{}{}
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	candidates := make([]Task, 0)
 	for _, t := range m.rows {
 		if t.Status != StatusEnqueued {
@@ -186,6 +194,7 @@ func (m *MemoryStore) Claim(ctx context.Context, workerID string, workspaceIDs [
 		candidates = append(candidates, t)
 	}
 	if len(candidates) == 0 {
+		m.mu.Unlock()
 		return Task{}, ErrNoTaskAvailable
 	}
 	sortByPriorityThenCreated(candidates)
@@ -195,6 +204,9 @@ func (m *MemoryStore) Claim(ctx context.Context, workerID string, workspaceIDs [
 	claimedAt := now
 	picked.ClaimedAt = &claimedAt
 	m.rows[picked.ID] = picked
+	pub := m.publisher
+	m.mu.Unlock()
+	emitStatus(ctx, pub, picked)
 	return picked, nil
 }
 
@@ -204,12 +216,13 @@ func (m *MemoryStore) Close(ctx context.Context, id, outcome string, now time.Ti
 		return Task{}, fmt.Errorf("task: invalid outcome %q", outcome)
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	t, ok := m.rows[id]
 	if !ok || !workspaceVisible(t.WorkspaceID, memberships) {
+		m.mu.Unlock()
 		return Task{}, ErrNotFound
 	}
 	if !ValidTransition(t.Status, StatusClosed) {
+		m.mu.Unlock()
 		return Task{}, fmt.Errorf("%w: %s → %s", ErrInvalidTransition, t.Status, StatusClosed)
 	}
 	t.Status = StatusClosed
@@ -217,18 +230,22 @@ func (m *MemoryStore) Close(ctx context.Context, id, outcome string, now time.Ti
 	completed := now
 	t.CompletedAt = &completed
 	m.rows[id] = t
+	pub := m.publisher
+	m.mu.Unlock()
+	emitStatus(ctx, pub, t)
 	return t, nil
 }
 
 // Reclaim implements Store for MemoryStore.
 func (m *MemoryStore) Reclaim(ctx context.Context, id, reason string, now time.Time, memberships []string) (Task, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	t, ok := m.rows[id]
 	if !ok || !workspaceVisible(t.WorkspaceID, memberships) {
+		m.mu.Unlock()
 		return Task{}, ErrNotFound
 	}
 	if !ValidTransition(t.Status, StatusEnqueued) {
+		m.mu.Unlock()
 		return Task{}, fmt.Errorf("%w: %s → %s", ErrInvalidTransition, t.Status, StatusEnqueued)
 	}
 	t.Status = StatusEnqueued
@@ -236,6 +253,9 @@ func (m *MemoryStore) Reclaim(ctx context.Context, id, reason string, now time.T
 	t.ClaimedAt = nil
 	t.ReclaimCount++
 	m.rows[id] = t
+	pub := m.publisher
+	m.mu.Unlock()
+	emitStatus(ctx, pub, t)
 	return t, nil
 }
 

@@ -10,16 +10,21 @@ import (
 	surrealmodels "github.com/surrealdb/surrealdb.go/pkg/models"
 
 	"github.com/bobmcallan/satellites/internal/document"
+	"github.com/bobmcallan/satellites/internal/hubemit"
 	"github.com/bobmcallan/satellites/internal/story"
 )
 
 // SurrealStore is a SurrealDB-backed Store. docs resolves the
 // ContractID FK; stories cascades workspace + project on Create.
 type SurrealStore struct {
-	db      *surrealdb.DB
-	docs    document.Store
-	stories story.Store
+	db        *surrealdb.DB
+	docs      document.Store
+	stories   story.Store
+	publisher hubemit.Publisher
 }
+
+// SetPublisher installs the hub emit sink for subsequent mutations.
+func (s *SurrealStore) SetPublisher(p hubemit.Publisher) { s.publisher = p }
 
 // NewSurrealStore wraps db as a Store. Defines the
 // `contract_instances` table schemaless and the two indexes required
@@ -142,6 +147,7 @@ func (s *SurrealStore) UpdateStatus(ctx context.Context, id, newStatus, actor st
 	if err := s.write(ctx, ci); err != nil {
 		return ContractInstance{}, err
 	}
+	emitStatus(ctx, s.publisher, ci)
 	return ci, nil
 }
 
@@ -161,6 +167,7 @@ func (s *SurrealStore) Claim(ctx context.Context, id, grantID string, now time.T
 	if err := s.write(ctx, ci); err != nil {
 		return ContractInstance{}, err
 	}
+	emitStatus(ctx, s.publisher, ci)
 	return ci, nil
 }
 
@@ -193,6 +200,7 @@ func (s *SurrealStore) ClearClaim(ctx context.Context, id string, now time.Time,
 	if err := s.write(ctx, ci); err != nil {
 		return ContractInstance{}, err
 	}
+	emitStatus(ctx, s.publisher, ci)
 	return ci, nil
 }
 

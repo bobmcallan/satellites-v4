@@ -299,6 +299,55 @@ a:hover {
     letter-spacing: 0.15em;
 }
 
+/* Hamburger menu (story_e7e8b455). Replaces the inline logout form. */
+.nav-hamburger-wrap { position: relative; margin-left: 0.5rem; }
+.nav-hamburger {
+    background: transparent;
+    color: var(--color-fg);
+    border: 1px solid var(--color-border);
+    padding: 0.2rem 0.6rem;
+    font-family: inherit;
+    font-size: 1rem;
+    cursor: pointer;
+}
+.nav-hamburger:hover { background: var(--color-fg); color: var(--color-bg); }
+.nav-dropdown {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    margin-top: 0.25rem;
+    min-width: 14rem;
+    padding: 0.5rem;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.nav-dropdown-user {
+    font-size: 0.75rem;
+    color: var(--color-muted);
+    border-bottom: 1px solid var(--color-muted);
+    padding-bottom: 0.4rem;
+}
+.nav-dropdown-section { display: flex; flex-direction: column; }
+.nav-dropdown-form { margin: 0; }
+.nav-dropdown-logout {
+    width: 100%;
+    background: var(--color-bg-inverse);
+    color: var(--color-fg-inverse);
+    border: none;
+    padding: 0.5rem;
+    font-family: inherit;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+.nav-dropdown-logout:hover { opacity: 0.85; }
+
 
 /* ============================================================
    LAYOUT

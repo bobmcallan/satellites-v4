@@ -225,6 +225,8 @@ type landingData struct {
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
 	DevMode         bool
+	ThemeMode       string
+	ThemePickerNext string
 	WSConfig        WSConfig
 }
 
@@ -254,6 +256,8 @@ type projectsListData struct {
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
 	DevMode         bool
+	ThemeMode       string
+	ThemePickerNext string
 	WSConfig        WSConfig
 }
 
@@ -267,6 +271,8 @@ type projectDetailData struct {
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
 	DevMode         bool
+	ThemeMode       string
+	ThemePickerNext string
 	WSConfig        WSConfig
 }
 
@@ -303,6 +309,8 @@ func (p *Portal) handleLanding(w http.ResponseWriter, r *http.Request) {
 		Workspaces:      chips,
 		ActiveWorkspace: active,
 		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
+		ThemeMode:       themeFromRequest(r),
+		ThemePickerNext: r.URL.RequestURI(),
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
@@ -366,6 +374,8 @@ func (p *Portal) handleProjectsList(w http.ResponseWriter, r *http.Request) {
 		Workspaces:      chips,
 		ActiveWorkspace: active,
 		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
+		ThemeMode:       themeFromRequest(r),
+		ThemePickerNext: r.URL.RequestURI(),
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if p.projects == nil {
@@ -418,6 +428,8 @@ func (p *Portal) handleProjectDetail(w http.ResponseWriter, r *http.Request) {
 		Workspaces:      chips,
 		ActiveWorkspace: active,
 		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
+		ThemeMode:       themeFromRequest(r),
+		ThemePickerNext: r.URL.RequestURI(),
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "project_detail.html", data); err != nil {
@@ -437,6 +449,8 @@ type projectLedgerData struct {
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
 	DevMode         bool
+	ThemeMode       string
+	ThemePickerNext string
 	WSConfig        WSConfig
 }
 
@@ -471,6 +485,8 @@ func (p *Portal) handleProjectLedger(w http.ResponseWriter, r *http.Request) {
 		Workspaces:      chips,
 		ActiveWorkspace: active,
 		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
+		ThemeMode:       themeFromRequest(r),
+		ThemePickerNext: r.URL.RequestURI(),
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if p.ledger == nil {
@@ -545,6 +561,8 @@ type storiesListData struct {
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
 	DevMode         bool
+	ThemeMode       string
+	ThemePickerNext string
 	WSConfig        WSConfig
 }
 
@@ -560,6 +578,8 @@ type storyDetailData struct {
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
 	DevMode         bool
+	ThemeMode       string
+	ThemePickerNext string
 	WSConfig        WSConfig
 }
 
@@ -620,6 +640,8 @@ func (p *Portal) handleStoriesList(w http.ResponseWriter, r *http.Request) {
 		Workspaces:      chips,
 		ActiveWorkspace: active,
 		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
+		ThemeMode:       themeFromRequest(r),
+		ThemePickerNext: r.URL.RequestURI(),
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if p.stories == nil {
@@ -700,6 +722,8 @@ func (p *Portal) handleStoryDetail(w http.ResponseWriter, r *http.Request) {
 		Workspaces:      chips,
 		ActiveWorkspace: active,
 		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
+		ThemeMode:       themeFromRequest(r),
+		ThemePickerNext: r.URL.RequestURI(),
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "story_detail.html", data); err != nil {
@@ -757,6 +781,8 @@ type tasksPageData struct {
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
 	DevMode         bool
+	ThemeMode       string
+	ThemePickerNext string
 	WSConfig        WSConfig
 }
 
@@ -781,6 +807,8 @@ func (p *Portal) handleTasks(w http.ResponseWriter, r *http.Request) {
 		Workspaces:      chips,
 		ActiveWorkspace: active,
 		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
+		ThemeMode:       themeFromRequest(r),
+		ThemePickerNext: r.URL.RequestURI(),
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "tasks.html", data); err != nil {
@@ -825,6 +853,8 @@ type documentsListData struct {
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
 	DevMode         bool
+	ThemeMode       string
+	ThemePickerNext string
 	WSConfig        WSConfig
 }
 
@@ -838,6 +868,8 @@ type documentDetailData struct {
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
 	DevMode         bool
+	ThemeMode       string
+	ThemePickerNext string
 	WSConfig        WSConfig
 }
 
@@ -860,6 +892,8 @@ func (p *Portal) handleDocumentsList(w http.ResponseWriter, r *http.Request) {
 		Workspaces:      chips,
 		ActiveWorkspace: active,
 		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
+		ThemeMode:       themeFromRequest(r),
+		ThemePickerNext: r.URL.RequestURI(),
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "documents_list.html", data); err != nil {
@@ -915,6 +949,8 @@ func (p *Portal) handleDocumentDetail(w http.ResponseWriter, r *http.Request) {
 		Workspaces:      chips,
 		ActiveWorkspace: active,
 		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
+		ThemeMode:       themeFromRequest(r),
+		ThemePickerNext: r.URL.RequestURI(),
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "document_detail.html", data); err != nil {
@@ -934,6 +970,8 @@ type documentVersionDetailData struct {
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
 	DevMode         bool
+	ThemeMode       string
+	ThemePickerNext string
 	WSConfig        WSConfig
 }
 
@@ -996,6 +1034,8 @@ func (p *Portal) handleDocumentVersionDetail(w http.ResponseWriter, r *http.Requ
 		Workspaces:      chips,
 		ActiveWorkspace: active,
 		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
+		ThemeMode:       themeFromRequest(r),
+		ThemePickerNext: r.URL.RequestURI(),
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "document_version_detail.html", data); err != nil {
@@ -1013,6 +1053,8 @@ type repoViewData struct {
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
 	DevMode         bool
+	ThemeMode       string
+	ThemePickerNext string
 	WSConfig        WSConfig
 }
 
@@ -1043,6 +1085,8 @@ func (p *Portal) handleRepoView(w http.ResponseWriter, r *http.Request) {
 		Workspaces:      chips,
 		ActiveWorkspace: active,
 		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
+		ThemeMode:       themeFromRequest(r),
+		ThemePickerNext: r.URL.RequestURI(),
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "repo.html", data); err != nil {
@@ -1198,6 +1242,8 @@ type rolesPageData struct {
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
 	DevMode         bool
+	ThemeMode       string
+	ThemePickerNext string
 	WSConfig        WSConfig
 }
 
@@ -1210,6 +1256,8 @@ type agentsPageData struct {
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
 	DevMode         bool
+	ThemeMode       string
+	ThemePickerNext string
 	WSConfig        WSConfig
 }
 
@@ -1222,6 +1270,8 @@ type grantsPageData struct {
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
 	DevMode         bool
+	ThemeMode       string
+	ThemePickerNext string
 	WSConfig        WSConfig
 }
 
@@ -1243,6 +1293,8 @@ func (p *Portal) handleRoles(w http.ResponseWriter, r *http.Request) {
 		Workspaces:      chips,
 		ActiveWorkspace: active,
 		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
+		ThemeMode:       themeFromRequest(r),
+		ThemePickerNext: r.URL.RequestURI(),
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "roles.html", data); err != nil {
@@ -1268,6 +1320,8 @@ func (p *Portal) handleAgents(w http.ResponseWriter, r *http.Request) {
 		Workspaces:      chips,
 		ActiveWorkspace: active,
 		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
+		ThemeMode:       themeFromRequest(r),
+		ThemePickerNext: r.URL.RequestURI(),
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "agents.html", data); err != nil {
@@ -1294,6 +1348,8 @@ func (p *Portal) handleGrants(w http.ResponseWriter, r *http.Request) {
 		Workspaces:      chips,
 		ActiveWorkspace: active,
 		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
+		ThemeMode:       themeFromRequest(r),
+		ThemePickerNext: r.URL.RequestURI(),
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "grants.html", data); err != nil {

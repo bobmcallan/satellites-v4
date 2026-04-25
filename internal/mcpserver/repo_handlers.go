@@ -349,11 +349,12 @@ func (s *Server) enqueueReindex(ctx context.Context, r repo.Repo, trigger, actor
 	}
 	body, _ := json.Marshal(payload)
 	t, err := s.tasks.Enqueue(ctx, task.Task{
-		WorkspaceID: r.WorkspaceID,
-		ProjectID:   r.ProjectID,
-		Origin:      task.OriginEvent,
-		Payload:     body,
-		Priority:    task.PriorityMedium,
+		WorkspaceID:      r.WorkspaceID,
+		ProjectID:        r.ProjectID,
+		Origin:           task.OriginEvent,
+		Payload:          body,
+		Priority:         task.PriorityMedium,
+		ExpectedDuration: 5 * time.Minute,
 	}, now)
 	if err != nil {
 		s.logger.Warn().Str("repo_id", r.ID).Err(err).Msg("repo: reindex enqueue failed")

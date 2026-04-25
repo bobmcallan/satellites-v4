@@ -1,0 +1,78 @@
+{{define "document_detail.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  {{template "head.html" .}}
+</head>
+<body>
+  {{template "nav.html" .}}
+  <main class="portal-main">
+    <section class="panel-headed" data-testid="document-detail-header">
+      <header class="panel-header">
+        <h1>{{.Detail.Document.Name}}</h1>
+        <span class="panel-header-meta">
+          <code class="type-pill">{{.Detail.Document.Type}}</code>
+          <code class="scope-pill">{{.Detail.Document.Scope}}</code>
+          <code class="version-pill">v{{.Detail.Document.Version}}</code>
+        </span>
+      </header>
+      <div class="panel-body">
+        <p class="muted"><a href="/documents">&larr; back to documents</a></p>
+        <dl class="kv-list">
+          <dt>id</dt><dd><code>{{.Detail.Document.ID}}</code></dd>
+          <dt>status</dt><dd><code>{{.Detail.Document.Status}}</code></dd>
+          <dt>updated</dt><dd><code>{{.Detail.Document.UpdatedAt}}</code></dd>
+          <dt>tags</dt><dd>{{range .Detail.Document.Tags}}<code class="tag-chip">{{.}}</code> {{end}}</dd>
+        </dl>
+      </div>
+    </section>
+
+    <div class="document-layout">
+
+      <section class="panel-headed document-body-panel" data-testid="document-body-panel">
+        <header class="panel-header"><h2>body</h2></header>
+        <div class="panel-body">
+          <pre class="story-prose">{{.Detail.Body}}</pre>
+        </div>
+      </section>
+
+      <aside class="panel-headed document-sidebar" data-testid="document-sidebar">
+        <header class="panel-header"><h2>structured</h2></header>
+        <div class="panel-body">
+          {{if .Detail.Structured}}
+            <pre class="story-prose">{{.Detail.Structured}}</pre>
+          {{else}}
+            <p class="muted" data-testid="structured-empty">No structured payload.</p>
+          {{end}}
+        </div>
+        <header class="panel-header"><h2>linked stories</h2></header>
+        <div class="panel-body">
+          {{if not .Detail.LinkedStories}}
+            <p class="muted" data-testid="linked-empty">No stories cite this document.</p>
+          {{else}}
+            <ul class="linked-stories">
+              {{range .Detail.LinkedStories}}
+              <li><a href="/projects/{{$.Project.ID}}/stories/{{.ID}}"><code>{{.ID}}</code> {{.Title}}</a></li>
+              {{end}}
+            </ul>
+          {{end}}
+        </div>
+        <header class="panel-header"><h2>version history</h2></header>
+        <div class="panel-body">
+          {{if not .Detail.VersionHistory}}
+            <p class="muted" data-testid="version-empty">No prior versions yet — body has not changed since this row was first written.</p>
+          {{else}}
+            <ul class="version-history" data-testid="version-history">
+              {{range .Detail.VersionHistory}}
+              <li><a href="{{.DiffHref}}"><code>v{{.Version}}</code></a> <span class="muted">{{.UpdatedAt}}</span> <code class="muted">{{.UpdatedBy}}</code></li>
+              {{end}}
+            </ul>
+          {{end}}
+        </div>
+      </aside>
+
+    </div>
+  </main>
+</body>
+</html>
+{{end}}

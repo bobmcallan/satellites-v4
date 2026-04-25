@@ -4,6 +4,7 @@
 package portal
 
 import (
+	"context"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -15,10 +16,16 @@ import (
 	"encoding/json"
 
 	"github.com/bobmcallan/satellites/internal/auth"
+	"github.com/bobmcallan/satellites/internal/codeindex"
 	"github.com/bobmcallan/satellites/internal/config"
+	"github.com/bobmcallan/satellites/internal/contract"
+	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/project"
+	"github.com/bobmcallan/satellites/internal/repo"
+	"github.com/bobmcallan/satellites/internal/rolegrant"
 	"github.com/bobmcallan/satellites/internal/story"
+	"github.com/bobmcallan/satellites/internal/task"
 	"github.com/bobmcallan/satellites/internal/workspace"
 	"github.com/bobmcallan/satellites/pages"
 )
@@ -34,6 +41,12 @@ type Portal struct {
 	projects   project.Store
 	ledger     ledger.Store
 	stories    story.Store
+	contracts  contract.Store
+	tasks      task.Store
+	documents  document.Store
+	repos      repo.Store
+	indexer    codeindex.Indexer
+	grants     rolegrant.Store
 	workspaces workspace.Store
 	startedAt  time.Time
 }
@@ -42,8 +55,13 @@ type Portal struct {
 // immediately so main() can exit with a clear message. Nil store args
 // disable the corresponding page group (the handlers render a "disabled"
 // panel or 404). A nil workspaces store keeps the pre-tenant behaviour
-// (membership scoping disabled) — used by tests that don't need it.
-func New(cfg *config.Config, logger arbor.ILogger, sessions auth.SessionStore, users auth.UserStoreByID, projects project.Store, ledgerStore ledger.Store, stories story.Store, workspaces workspace.Store, startedAt time.Time) (*Portal, error) {
+// (membership scoping disabled) — used by tests that don't need it. A
+// nil contracts store renders the story-view CI timeline as empty
+// (slice 11.1: contract instances panel needs the store; absence means
+// no panel content rather than a 500). A nil tasks store keeps the
+// /tasks page reachable but renders empty columns (slice 11.2 same
+// degradation pattern).
+func New(cfg *config.Config, logger arbor.ILogger, sessions auth.SessionStore, users auth.UserStoreByID, projects project.Store, ledgerStore ledger.Store, stories story.Store, contracts contract.Store, tasks task.Store, documents document.Store, repos repo.Store, indexer codeindex.Indexer, grants rolegrant.Store, workspaces workspace.Store, startedAt time.Time) (*Portal, error) {
 	tmpl, err := pages.Templates()
 	if err != nil {
 		return nil, err
@@ -57,6 +75,12 @@ func New(cfg *config.Config, logger arbor.ILogger, sessions auth.SessionStore, u
 		projects:   projects,
 		ledger:     ledgerStore,
 		stories:    stories,
+		contracts:  contracts,
+		tasks:      tasks,
+		documents:  documents,
+		repos:      repos,
+		indexer:    indexer,
+		grants:     grants,
 		workspaces: workspaces,
 		startedAt:  startedAt,
 	}, nil
@@ -165,6 +189,21 @@ func (p *Portal) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /projects/{id}/ledger", p.handleProjectLedger)
 	mux.HandleFunc("GET /projects/{id}/stories", p.handleStoriesList)
 	mux.HandleFunc("GET /projects/{id}/stories/{story_id}", p.handleStoryDetail)
+	mux.HandleFunc("GET /api/stories/{story_id}/composite", p.handleStoryComposite)
+	mux.HandleFunc("GET /tasks", p.handleTasks)
+	mux.HandleFunc("GET /api/tasks/{task_id}", p.handleTaskDrawer)
+	mux.HandleFunc("GET /ledger", p.handleLedgerRedirect)
+	mux.HandleFunc("GET /projects/{id}/api/ledger", p.handleProjectLedgerJSON)
+	mux.HandleFunc("GET /documents", p.handleDocumentsList)
+	mux.HandleFunc("GET /documents/{id}", p.handleDocumentDetail)
+	mux.HandleFunc("GET /documents/{id}/versions/{version}", p.handleDocumentVersionDetail)
+	mux.HandleFunc("GET /repo", p.handleRepoView)
+	mux.HandleFunc("GET /api/repos/{id}/symbols", p.handleRepoSymbols)
+	mux.HandleFunc("GET /api/repos/{id}/symbols/{symbol_id}", p.handleRepoSymbolSource)
+	mux.HandleFunc("GET /roles", p.handleRoles)
+	mux.HandleFunc("GET /agents", p.handleAgents)
+	mux.HandleFunc("GET /grants", p.handleGrants)
+	mux.HandleFunc("POST /api/grants/{id}/release", p.handleGrantRelease)
 	mux.HandleFunc("GET /workspaces/select", p.handleWorkspaceSelect)
 	static, err := pages.Static()
 	if err == nil {
@@ -355,26 +394,17 @@ type projectLedgerData struct {
 	Commit          string
 	User            auth.User
 	Project         projectRow
-	Entries         []ledgerRow
-	Limit           int
+	Composite       ledgerComposite
 	Disabled        bool
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
 	WSConfig        WSConfig
 }
 
-// ledgerRow pre-formats ledger fields for the template.
-type ledgerRow struct {
-	ID        string
-	Type      string
-	Actor     string
-	Content   string
-	CreatedAt string
-}
-
-// handleProjectLedger renders a read-only tail of the project's ledger,
-// newest-first. Owner-scoped; cross-owner returns 404. ?limit= clamps via
-// the Store's normalisation (default 100, max 500).
+// handleProjectLedger renders the upgraded ledger inspection view per
+// docs/ui-design.md §2.4 (story_a9f8be3c). Default newest 50 rows;
+// search + filter sidebar from query string; tailing toggle + N-new
+// pill driven client-side. Owner-scoped; cross-owner returns 404.
 func (p *Portal) handleProjectLedger(w http.ResponseWriter, r *http.Request) {
 	user, ok := p.resolveUser(r)
 	if !ok {
@@ -392,6 +422,7 @@ func (p *Portal) handleProjectLedger(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	filters := parseLedgerFilters(r)
 	data := projectLedgerData{
 		Title:           proj.Name + " · ledger",
 		Version:         config.Version,
@@ -405,35 +436,61 @@ func (p *Portal) handleProjectLedger(w http.ResponseWriter, r *http.Request) {
 	if p.ledger == nil {
 		data.Disabled = true
 	} else {
-		limit := 0
-		if s := r.URL.Query().Get("limit"); s != "" {
-			if n, err := strconv.Atoi(s); err == nil {
-				limit = n
-			}
-		}
-		entries, err := p.ledger.List(r.Context(), proj.ID, ledger.ListOptions{Limit: limit}, memberships)
-		if err != nil {
-			p.logger.Error().Str("error", err.Error()).Msg("ledger list failed")
-			http.Error(w, "list failed", http.StatusInternalServerError)
-			return
-		}
-		rows := make([]ledgerRow, 0, len(entries))
-		for _, e := range entries {
-			rows = append(rows, ledgerRow{
-				ID:        e.ID,
-				Type:      e.Type,
-				Actor:     e.CreatedBy,
-				Content:   e.Content,
-				CreatedAt: e.CreatedAt.UTC().Format(time.RFC3339),
-			})
-		}
-		data.Entries = rows
-		data.Limit = len(rows)
+		data.Composite = buildLedgerComposite(r.Context(), p.ledger, proj.ID, filters, memberships)
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "project_ledger.html", data); err != nil {
 		p.logger.Error().Str("template", "project_ledger.html").Str("error", err.Error()).Msg("template render failed")
 		http.Error(w, "render failed", http.StatusInternalServerError)
 	}
+}
+
+// handleProjectLedgerJSON returns the ledger composite as JSON for the
+// Alpine ledger_view.js factory's reload + filter-change path.
+func (p *Portal) handleProjectLedgerJSON(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if p.projects == nil || p.ledger == nil {
+		http.NotFound(w, r)
+		return
+	}
+	id := r.PathValue("id")
+	_, _, memberships := p.activeWorkspace(r, user)
+	proj, err := p.projects.GetByID(r.Context(), id, memberships)
+	if err != nil || proj.OwnerUserID != user.ID {
+		http.NotFound(w, r)
+		return
+	}
+	composite := buildLedgerComposite(r.Context(), p.ledger, proj.ID, parseLedgerFilters(r), memberships)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := json.NewEncoder(w).Encode(composite); err != nil {
+		p.logger.Error().Str("error", err.Error()).Msg("ledger json encode failed")
+	}
+}
+
+// handleLedgerRedirect resolves /ledger to the user's current project's
+// ledger page — picks the first project in the active workspace. When
+// no project exists, sends to /projects so the user can create one.
+func (p *Portal) handleLedgerRedirect(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		p.redirectToLogin(w, r)
+		return
+	}
+	if p.projects == nil {
+		http.Redirect(w, r, "/projects", http.StatusSeeOther)
+		return
+	}
+	_, _, memberships := p.activeWorkspace(r, user)
+	list, err := p.projects.ListByOwner(r.Context(), user.ID, memberships)
+	if err != nil || len(list) == 0 {
+		http.Redirect(w, r, "/projects", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/projects/"+list[0].ID+"/ledger", http.StatusSeeOther)
 }
 
 type storiesListData struct {
@@ -457,7 +514,7 @@ type storyDetailData struct {
 	User            auth.User
 	Project         projectRow
 	Story           storyRow
-	History         []historyRow
+	Composite       storyComposite
 	Disabled        bool
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
@@ -475,13 +532,6 @@ type storyRow struct {
 	Tags               []string
 	CreatedAt          string
 	UpdatedAt          string
-}
-
-type historyRow struct {
-	CreatedAt string
-	From      string
-	To        string
-	Actor     string
 }
 
 func viewStoryRow(s story.Story) storyRow {
@@ -559,8 +609,12 @@ func (p *Portal) handleStoriesList(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleStoryDetail renders a single story with its status-change history
-// drawn from the ledger. Owner-scoped via project; cross-owner → 404.
+// handleStoryDetail renders the upgraded five-panel story view per
+// docs/ui-design.md §2.2 (story_3b450d9e). Owner-scoped via project;
+// cross-owner → 404. The composite (CIs + verdicts + commits + ledger
+// excerpts + delivery strip) is built once via buildStoryComposite so
+// the SSR template and the JSON composite endpoint render the same
+// shape.
 func (p *Portal) handleStoryDetail(w http.ResponseWriter, r *http.Request) {
 	user, ok := p.resolveUser(r)
 	if !ok {
@@ -579,6 +633,14 @@ func (p *Portal) handleStoryDetail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	composite, err := buildStoryComposite(r.Context(), p.stories, p.contracts, p.ledger, storyID, memberships)
+	if err != nil || composite.Story.ID == "" || composite.Story.ID != storyID {
+		http.NotFound(w, r)
+		return
+	}
+	// Cross-project guard: composite.Story.ProjectID must match the
+	// route's project — protects against story_id smuggled across
+	// projects within the same membership set.
 	s, err := p.stories.GetByID(r.Context(), storyID, memberships)
 	if err != nil || s.ProjectID != proj.ID {
 		http.NotFound(w, r)
@@ -590,48 +652,563 @@ func (p *Portal) handleStoryDetail(w http.ResponseWriter, r *http.Request) {
 		Commit:          config.GitCommit,
 		User:            user,
 		Project:         viewRow(proj),
-		Story:           viewStoryRow(s),
+		Story:           composite.Story,
+		Composite:       composite,
 		Workspaces:      chips,
 		ActiveWorkspace: active,
 		WSConfig:        buildWSConfig(active, r),
-	}
-	if p.ledger != nil {
-		entries, err := p.ledger.List(r.Context(), proj.ID, ledger.ListOptions{Type: ledger.TypeDecision, Limit: 200}, memberships)
-		if err != nil {
-			p.logger.Error().Str("error", err.Error()).Msg("ledger list failed")
-			http.Error(w, "list failed", http.StatusInternalServerError)
-			return
-		}
-		rows := make([]historyRow, 0)
-		for _, e := range entries {
-			if !hasTag(e.Tags, "kind:"+story.LedgerEntryType) {
-				continue
-			}
-			var payload struct {
-				StoryID string `json:"story_id"`
-				From    string `json:"from"`
-				To      string `json:"to"`
-				Actor   string `json:"actor"`
-			}
-			if err := json.Unmarshal([]byte(e.Content), &payload); err != nil {
-				continue
-			}
-			if payload.StoryID != s.ID {
-				continue
-			}
-			rows = append(rows, historyRow{
-				CreatedAt: e.CreatedAt.UTC().Format(time.RFC3339),
-				From:      payload.From,
-				To:        payload.To,
-				Actor:     payload.Actor,
-			})
-		}
-		data.History = rows
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "story_detail.html", data); err != nil {
 		p.logger.Error().Str("template", "story_detail.html").Str("error", err.Error()).Msg("template render failed")
 		http.Error(w, "render failed", http.StatusInternalServerError)
 	}
+}
+
+// handleStoryComposite serves the story-view composite as JSON for the
+// reconnect-refetch path (per docs/ui-design.md §3 reconnect policy).
+// Workspace-scoped via memberships; cross-workspace → 404. Cross-owner
+// project check is mirrored from handleStoryDetail.
+func (p *Portal) handleStoryComposite(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if p.stories == nil {
+		http.NotFound(w, r)
+		return
+	}
+	storyID := r.PathValue("story_id")
+	_, _, memberships := p.activeWorkspace(r, user)
+	s, err := p.stories.GetByID(r.Context(), storyID, memberships)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if p.projects != nil {
+		proj, err := p.projects.GetByID(r.Context(), s.ProjectID, memberships)
+		if err != nil || proj.OwnerUserID != user.ID {
+			http.NotFound(w, r)
+			return
+		}
+	}
+	composite, err := buildStoryComposite(r.Context(), p.stories, p.contracts, p.ledger, storyID, memberships)
+	if err != nil || composite.Story.ID == "" || composite.Story.ID != storyID {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := json.NewEncoder(w).Encode(composite); err != nil {
+		p.logger.Error().Str("error", err.Error()).Msg("composite encode failed")
+	}
+}
+
+type tasksPageData struct {
+	Title           string
+	Version         string
+	Commit          string
+	User            auth.User
+	Composite       tasksComposite
+	Workspaces      []wsChip
+	ActiveWorkspace wsChip
+	WSConfig        WSConfig
+}
+
+// handleTasks renders the workspace-scoped task queue per ui-design
+// §2.3 (story_f2d71c27). Three columns: in_flight / enqueued /
+// recently closed. Live updates come from the workspace websocket.
+// Unauth → /login. Empty memberships → empty composite (no leakage).
+func (p *Portal) handleTasks(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		p.redirectToLogin(w, r)
+		return
+	}
+	active, chips, memberships := p.activeWorkspace(r, user)
+	composite := buildTasksComposite(r.Context(), p.tasks, memberships)
+	data := tasksPageData{
+		Title:           "tasks",
+		Version:         config.Version,
+		Commit:          config.GitCommit,
+		User:            user,
+		Composite:       composite,
+		Workspaces:      chips,
+		ActiveWorkspace: active,
+		WSConfig:        buildWSConfig(active, r),
+	}
+	if err := p.tmpl.ExecuteTemplate(w, "tasks.html", data); err != nil {
+		p.logger.Error().Str("template", "tasks.html").Str("error", err.Error()).Msg("template render failed")
+		http.Error(w, "render failed", http.StatusInternalServerError)
+	}
+}
+
+// handleTaskDrawer serves the per-task drawer payload as JSON for the
+// click-to-open detail panel. Workspace-scoped via memberships;
+// missing task or cross-workspace request → 404.
+func (p *Portal) handleTaskDrawer(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if p.tasks == nil {
+		http.NotFound(w, r)
+		return
+	}
+	taskID := r.PathValue("task_id")
+	_, _, memberships := p.activeWorkspace(r, user)
+	d, err := buildTaskDrawer(r.Context(), p.tasks, p.ledger, "", taskID, memberships)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := json.NewEncoder(w).Encode(d); err != nil {
+		p.logger.Error().Str("error", err.Error()).Msg("task drawer encode failed")
+	}
+}
+
+type documentsListData struct {
+	Title           string
+	Version         string
+	Commit          string
+	User            auth.User
+	Composite       documentsComposite
+	Workspaces      []wsChip
+	ActiveWorkspace wsChip
+	WSConfig        WSConfig
+}
+
+type documentDetailData struct {
+	Title           string
+	Version         string
+	Commit          string
+	User            auth.User
+	Project         projectRow
+	Detail          documentDetailComposite
+	Workspaces      []wsChip
+	ActiveWorkspace wsChip
+	WSConfig        WSConfig
+}
+
+// handleDocumentsList renders the documents browser at /documents per
+// docs/ui-design.md §2.5 (story_5bc06738). Type tabs + search + sort
+// in the querystring; cards rendered SSR with Alpine hydration.
+func (p *Portal) handleDocumentsList(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		p.redirectToLogin(w, r)
+		return
+	}
+	active, chips, memberships := p.activeWorkspace(r, user)
+	data := documentsListData{
+		Title:           "documents",
+		Version:         config.Version,
+		Commit:          config.GitCommit,
+		User:            user,
+		Composite:       buildDocumentsComposite(r.Context(), p.documents, parseDocumentFilters(r), memberships),
+		Workspaces:      chips,
+		ActiveWorkspace: active,
+		WSConfig:        buildWSConfig(active, r),
+	}
+	if err := p.tmpl.ExecuteTemplate(w, "documents_list.html", data); err != nil {
+		p.logger.Error().Str("template", "documents_list.html").Str("error", err.Error()).Msg("template render failed")
+		http.Error(w, "render failed", http.StatusInternalServerError)
+	}
+}
+
+// handleDocumentDetail renders the per-document detail page with body,
+// structured payload, linked stories, and version history.
+func (p *Portal) handleDocumentDetail(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		p.redirectToLogin(w, r)
+		return
+	}
+	if p.documents == nil {
+		http.NotFound(w, r)
+		return
+	}
+	id := r.PathValue("id")
+	active, chips, memberships := p.activeWorkspace(r, user)
+	// Project for the linked-stories scan: pull from the document's
+	// own project_id when set; otherwise pass empty (system-scope
+	// docs aren't expected to have story citations).
+	doc, err := p.documents.GetByID(r.Context(), id, memberships)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	projectID := ""
+	var projRow projectRow
+	if doc.ProjectID != nil {
+		projectID = *doc.ProjectID
+		if p.projects != nil {
+			if proj, perr := p.projects.GetByID(r.Context(), projectID, memberships); perr == nil {
+				projRow = viewRow(proj)
+			}
+		}
+	}
+	detail, err := buildDocumentDetail(r.Context(), p.documents, p.stories, projectID, id, memberships)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	data := documentDetailData{
+		Title:           detail.Document.Name,
+		Version:         config.Version,
+		Commit:          config.GitCommit,
+		User:            user,
+		Project:         projRow,
+		Detail:          detail,
+		Workspaces:      chips,
+		ActiveWorkspace: active,
+		WSConfig:        buildWSConfig(active, r),
+	}
+	if err := p.tmpl.ExecuteTemplate(w, "document_detail.html", data); err != nil {
+		p.logger.Error().Str("template", "document_detail.html").Str("error", err.Error()).Msg("template render failed")
+		http.Error(w, "render failed", http.StatusInternalServerError)
+	}
+}
+
+type documentVersionDetailData struct {
+	Title           string
+	Version         string
+	Commit          string
+	User            auth.User
+	Project         projectRow
+	Document        documentCard
+	VersionRow      versionDetailView
+	Workspaces      []wsChip
+	ActiveWorkspace wsChip
+	WSConfig        WSConfig
+}
+
+// handleDocumentVersionDetail renders a single historical body of a
+// document at /documents/{id}/versions/{version}. The user can compare
+// against the live document by opening /documents/{id} in another tab.
+func (p *Portal) handleDocumentVersionDetail(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		p.redirectToLogin(w, r)
+		return
+	}
+	if p.documents == nil {
+		http.NotFound(w, r)
+		return
+	}
+	id := r.PathValue("id")
+	versionStr := r.PathValue("version")
+	versionInt, err := strconv.Atoi(versionStr)
+	if err != nil || versionInt <= 0 {
+		http.NotFound(w, r)
+		return
+	}
+	active, chips, memberships := p.activeWorkspace(r, user)
+	doc, err := p.documents.GetByID(r.Context(), id, memberships)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	versions, err := p.documents.ListVersions(r.Context(), id, memberships)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	var match *document.DocumentVersion
+	for i := range versions {
+		if versions[i].Version == versionInt {
+			match = &versions[i]
+			break
+		}
+	}
+	if match == nil {
+		http.NotFound(w, r)
+		return
+	}
+	var projRow projectRow
+	if doc.ProjectID != nil && p.projects != nil {
+		if proj, perr := p.projects.GetByID(r.Context(), *doc.ProjectID, memberships); perr == nil {
+			projRow = viewRow(proj)
+		}
+	}
+	data := documentVersionDetailData{
+		Title:           doc.Name,
+		Version:         config.Version,
+		Commit:          config.GitCommit,
+		User:            user,
+		Project:         projRow,
+		Document:        documentCardFor(doc),
+		VersionRow:      versionDetailFromRow(*match),
+		Workspaces:      chips,
+		ActiveWorkspace: active,
+		WSConfig:        buildWSConfig(active, r),
+	}
+	if err := p.tmpl.ExecuteTemplate(w, "document_version_detail.html", data); err != nil {
+		p.logger.Error().Str("template", "document_version_detail.html").Str("error", err.Error()).Msg("template render failed")
+		http.Error(w, "render failed", http.StatusInternalServerError)
+	}
+}
+
+type repoViewData struct {
+	Title           string
+	Version         string
+	Commit          string
+	User            auth.User
+	Composite       repoComposite
+	Workspaces      []wsChip
+	ActiveWorkspace wsChip
+	WSConfig        WSConfig
+}
+
+// handleRepoView renders the /repo page per ui-design §2.6
+// (story_d4685302). When no project or no repo registered, renders the
+// empty-state. Picks the user's first project's repo (first one in the
+// project's repo list).
+func (p *Portal) handleRepoView(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		p.redirectToLogin(w, r)
+		return
+	}
+	active, chips, memberships := p.activeWorkspace(r, user)
+	projectID := ""
+	if p.projects != nil {
+		list, err := p.projects.ListByOwner(r.Context(), user.ID, memberships)
+		if err == nil && len(list) > 0 {
+			projectID = list[0].ID
+		}
+	}
+	data := repoViewData{
+		Title:           "repo",
+		Version:         config.Version,
+		Commit:          config.GitCommit,
+		User:            user,
+		Composite:       buildRepoComposite(r.Context(), p.repos, projectID, memberships),
+		Workspaces:      chips,
+		ActiveWorkspace: active,
+		WSConfig:        buildWSConfig(active, r),
+	}
+	if err := p.tmpl.ExecuteTemplate(w, "repo.html", data); err != nil {
+		p.logger.Error().Str("template", "repo.html").Str("error", err.Error()).Msg("template render failed")
+		http.Error(w, "render failed", http.StatusInternalServerError)
+	}
+}
+
+// handleRepoSymbols proxies to codeindex.SearchSymbols. The RepoID
+// from the path resolves to a Repo row; we use the repo's GitRemote
+// as the codeindex key (matches what the production indexer uses
+// when boot-loading repos).
+func (p *Portal) handleRepoSymbols(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if p.repos == nil || p.indexer == nil {
+		http.NotFound(w, r)
+		return
+	}
+	repoID := r.PathValue("id")
+	_, _, memberships := p.activeWorkspace(r, user)
+	row, err := p.repos.GetByID(r.Context(), repoID, memberships)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	q := r.URL.Query()
+	body, err := p.indexer.SearchSymbols(r.Context(), row.GitRemote, q.Get("q"), q.Get("kind"), q.Get("language"))
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"index_unavailable","symbols":[]}`))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(body)
+}
+
+// handleRepoSymbolSource proxies to codeindex.GetSymbolSource for the
+// drawer view.
+func (p *Portal) handleRepoSymbolSource(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if p.repos == nil || p.indexer == nil {
+		http.NotFound(w, r)
+		return
+	}
+	repoID := r.PathValue("id")
+	symbolID := r.PathValue("symbol_id")
+	_, _, memberships := p.activeWorkspace(r, user)
+	row, err := p.repos.GetByID(r.Context(), repoID, memberships)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	body, err := p.indexer.GetSymbolSource(r.Context(), row.GitRemote, symbolID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"index_unavailable"}`))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(body)
+}
+
+type rolesPageData struct {
+	Title           string
+	Version         string
+	Commit          string
+	User            auth.User
+	Composite       rolesComposite
+	Workspaces      []wsChip
+	ActiveWorkspace wsChip
+	WSConfig        WSConfig
+}
+
+type agentsPageData struct {
+	Title           string
+	Version         string
+	Commit          string
+	User            auth.User
+	Composite       agentsComposite
+	Workspaces      []wsChip
+	ActiveWorkspace wsChip
+	WSConfig        WSConfig
+}
+
+type grantsPageData struct {
+	Title           string
+	Version         string
+	Commit          string
+	User            auth.User
+	Composite       grantsComposite
+	Workspaces      []wsChip
+	ActiveWorkspace wsChip
+	WSConfig        WSConfig
+}
+
+// handleRoles renders the /roles page per ui-design#roles
+// (story_5cc349a9). Lists role documents with active-grant counts.
+func (p *Portal) handleRoles(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		p.redirectToLogin(w, r)
+		return
+	}
+	active, chips, memberships := p.activeWorkspace(r, user)
+	data := rolesPageData{
+		Title:           "roles",
+		Version:         config.Version,
+		Commit:          config.GitCommit,
+		User:            user,
+		Composite:       buildRolesComposite(r.Context(), p.documents, p.grants, memberships),
+		Workspaces:      chips,
+		ActiveWorkspace: active,
+		WSConfig:        buildWSConfig(active, r),
+	}
+	if err := p.tmpl.ExecuteTemplate(w, "roles.html", data); err != nil {
+		p.logger.Error().Str("template", "roles.html").Str("error", err.Error()).Msg("template render failed")
+		http.Error(w, "render failed", http.StatusInternalServerError)
+	}
+}
+
+// handleAgents renders the /agents page.
+func (p *Portal) handleAgents(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		p.redirectToLogin(w, r)
+		return
+	}
+	active, chips, memberships := p.activeWorkspace(r, user)
+	data := agentsPageData{
+		Title:           "agents",
+		Version:         config.Version,
+		Commit:          config.GitCommit,
+		User:            user,
+		Composite:       buildAgentsComposite(r.Context(), p.documents, memberships),
+		Workspaces:      chips,
+		ActiveWorkspace: active,
+		WSConfig:        buildWSConfig(active, r),
+	}
+	if err := p.tmpl.ExecuteTemplate(w, "agents.html", data); err != nil {
+		p.logger.Error().Str("template", "agents.html").Str("error", err.Error()).Msg("template render failed")
+		http.Error(w, "render failed", http.StatusInternalServerError)
+	}
+}
+
+// handleGrants renders the /grants live panel. The IsAdmin flag drives
+// the visibility of the Revoke button.
+func (p *Portal) handleGrants(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		p.redirectToLogin(w, r)
+		return
+	}
+	active, chips, memberships := p.activeWorkspace(r, user)
+	data := grantsPageData{
+		Title:           "grants",
+		Version:         config.Version,
+		Commit:          config.GitCommit,
+		User:            user,
+		Composite:       buildGrantsComposite(r.Context(), p.grants, p.documents, memberships, p.isWorkspaceAdmin(r.Context(), active.ID, user.ID)),
+		Workspaces:      chips,
+		ActiveWorkspace: active,
+		WSConfig:        buildWSConfig(active, r),
+	}
+	if err := p.tmpl.ExecuteTemplate(w, "grants.html", data); err != nil {
+		p.logger.Error().Str("template", "grants.html").Str("error", err.Error()).Msg("template render failed")
+		http.Error(w, "render failed", http.StatusInternalServerError)
+	}
+}
+
+// handleGrantRelease releases a role-grant on behalf of an admin
+// caller. Non-admins receive 403; missing grants return 404.
+func (p *Portal) handleGrantRelease(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if p.grants == nil {
+		http.NotFound(w, r)
+		return
+	}
+	active, _, memberships := p.activeWorkspace(r, user)
+	if !p.isWorkspaceAdmin(r.Context(), active.ID, user.ID) {
+		http.Error(w, "admin only", http.StatusForbidden)
+		return
+	}
+	id := r.PathValue("id")
+	if _, err := p.grants.Release(r.Context(), id, "revoked via portal", time.Now().UTC(), memberships); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"ok":true}`))
+}
+
+// isWorkspaceAdmin returns true when the user holds RoleAdmin in
+// workspaceID. False for unauthenticated, non-member, or when the
+// workspaces store is absent (pre-tenant tests).
+func (p *Portal) isWorkspaceAdmin(ctx context.Context, workspaceID, userID string) bool {
+	if p.workspaces == nil || workspaceID == "" || userID == "" {
+		return false
+	}
+	role, err := p.workspaces.GetRole(ctx, workspaceID, userID)
+	if err != nil {
+		return false
+	}
+	return role == workspace.RoleAdmin
 }
 
 // handleWorkspaceSelect persists the chosen workspace on the session and
@@ -672,15 +1249,6 @@ func (p *Portal) handleWorkspaceSelect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, next, http.StatusSeeOther)
-}
-
-func hasTag(tags []string, want string) bool {
-	for _, t := range tags {
-		if t == want {
-			return true
-		}
-	}
-	return false
 }
 
 func viewRow(p project.Project) projectRow {

@@ -129,6 +129,36 @@ func (d Document) Validate() error {
 	return nil
 }
 
+// DocumentVersion captures a single prior body of a document. Rows are
+// appended on every body-changing Update or Upsert; identical-body
+// re-saves dedup via BodyHash and append no row. ListVersions returns
+// these in Version DESC order. The live document.Document holds the
+// current version; DocumentVersion holds historical snapshots.
+type DocumentVersion struct {
+	DocumentID string    `json:"document_id"`
+	Version    int       `json:"version"`
+	BodyHash   string    `json:"body_hash"`
+	Body       string    `json:"body"`
+	Structured []byte    `json:"structured,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	UpdatedBy  string    `json:"updated_by,omitempty"`
+}
+
+// versionFromDocument freezes a document's current state into a
+// DocumentVersion suitable for append. Callers invoke this *before*
+// mutating the live row so the returned version is the "prior" state.
+func versionFromDocument(d Document) DocumentVersion {
+	return DocumentVersion{
+		DocumentID: d.ID,
+		Version:    d.Version,
+		BodyHash:   d.BodyHash,
+		Body:       d.Body,
+		Structured: d.Structured,
+		UpdatedAt:  d.UpdatedAt,
+		UpdatedBy:  d.UpdatedBy,
+	}
+}
+
 // HashBody returns a sha256 content hash prefixed with "sha256:"; used as
 // the equality test for Upsert's idempotence check.
 func HashBody(body []byte) string {

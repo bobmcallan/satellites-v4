@@ -37,6 +37,7 @@ func NewSurrealStore(db *surrealdb.DB) *SurrealStore {
 	s := &SurrealStore{db: db}
 	_, _ = surrealdb.Query[any](context.Background(), db, "DEFINE TABLE IF NOT EXISTS documents SCHEMALESS", nil)
 	_, _ = surrealdb.Query[any](context.Background(), db, "DEFINE TABLE IF NOT EXISTS document_chunks SCHEMALESS", nil)
+	_, _ = surrealdb.Query[any](context.Background(), db, "DEFINE TABLE IF NOT EXISTS document_versions SCHEMALESS", nil)
 	return s
 }
 
@@ -188,6 +189,9 @@ func (s *SurrealStore) Upsert(ctx context.Context, in UpsertInput, now time.Time
 		if existing.BodyHash == hash {
 			return UpsertResult{Document: existing}, nil
 		}
+		if verr := s.writeVersion(ctx, versionFromDocument(existing)); verr != nil {
+			return UpsertResult{}, verr
+		}
 		updated := existing
 		updated.Body = string(in.Body)
 		updated.BodyHash = hash
@@ -250,9 +254,15 @@ func (s *SurrealStore) Update(ctx context.Context, id string, fields UpdateField
 		return Document{}, err
 	}
 	if fields.Body != nil {
-		doc.Body = *fields.Body
-		doc.BodyHash = HashBody([]byte(doc.Body))
-		doc.Version++
+		newHash := HashBody([]byte(*fields.Body))
+		if newHash != doc.BodyHash {
+			if verr := s.writeVersion(ctx, versionFromDocument(doc)); verr != nil {
+				return Document{}, verr
+			}
+			doc.Body = *fields.Body
+			doc.BodyHash = newHash
+			doc.Version++
+		}
 	}
 	if fields.Structured != nil {
 		doc.Structured = *fields.Structured
@@ -534,6 +544,49 @@ func (s *SurrealStore) write(ctx context.Context, doc Document) error {
 		return fmt.Errorf("document: write: %w", err)
 	}
 	return nil
+}
+
+// writeVersion upserts a frozen DocumentVersion. Idempotent: the row id
+// is `<documentID>_v<version>`, so re-writing the same version replaces
+// in place rather than duplicating.
+func (s *SurrealStore) writeVersion(ctx context.Context, v DocumentVersion) error {
+	if v.Version == 0 || v.DocumentID == "" {
+		return nil
+	}
+	rowID := fmt.Sprintf("%s_v%d", v.DocumentID, v.Version)
+	sql := "UPSERT $rid CONTENT $v"
+	vars := map[string]any{
+		"rid": surrealmodels.NewRecordID("document_versions", rowID),
+		"v":   v,
+	}
+	if _, err := surrealdb.Query[[]DocumentVersion](ctx, s.db, sql, vars); err != nil {
+		return fmt.Errorf("document: write version: %w", err)
+	}
+	return nil
+}
+
+// ListVersions implements Store for SurrealStore.
+func (s *SurrealStore) ListVersions(ctx context.Context, documentID string, memberships []string) ([]DocumentVersion, error) {
+	if memberships != nil && len(memberships) == 0 {
+		return nil, ErrNotFound
+	}
+	if _, err := s.GetByID(ctx, documentID, memberships); err != nil {
+		return nil, err
+	}
+	sql := "SELECT document_id, version, body_hash, body, structured, updated_at, updated_by FROM document_versions WHERE document_id = $id ORDER BY version DESC"
+	vars := map[string]any{"id": documentID}
+	results, err := surrealdb.Query[[]DocumentVersion](ctx, s.db, sql, vars)
+	if err != nil {
+		return nil, fmt.Errorf("document: list versions: %w", err)
+	}
+	if results == nil || len(*results) == 0 {
+		return []DocumentVersion{}, nil
+	}
+	rows := (*results)[0].Result
+	if rows == nil {
+		return []DocumentVersion{}, nil
+	}
+	return rows, nil
 }
 
 // GetByID implements Store for SurrealStore.

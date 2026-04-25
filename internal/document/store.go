@@ -150,21 +150,29 @@ type Store interface {
 	// BackfillWorkspaceID stamps workspaceID on documents with the given
 	// projectID whose workspace_id is empty. Idempotent.
 	BackfillWorkspaceID(ctx context.Context, projectID, workspaceID string, now time.Time) (int, error)
+
+	// ListVersions returns prior versions of the document with id
+	// documentID, in DESC version order. The live document.Document
+	// itself is not included in the result. Workspace scoping reuses
+	// the same memberships predicate as the other read paths via
+	// GetByID; an empty memberships slice denies all.
+	ListVersions(ctx context.Context, documentID string, memberships []string) ([]DocumentVersion, error)
 }
 
 // MemoryStore is a concurrency-safe in-process Store used by unit tests.
 type MemoryStore struct {
 	mu       sync.Mutex
-	rows     map[string]Document // key = id
-	embedder embeddings.Embedder // optional; nil disables SearchSemantic
-	chunks   ChunkStore          // optional; nil disables SearchSemantic
+	rows     map[string]Document          // key = id
+	versions map[string][]DocumentVersion // key = id; ordered DESC
+	embedder embeddings.Embedder          // optional; nil disables SearchSemantic
+	chunks   ChunkStore                   // optional; nil disables SearchSemantic
 }
 
 // NewMemoryStore returns an empty MemoryStore without semantic search.
 // SearchSemantic returns ErrSemanticUnavailable. Use NewMemoryStoreWithEmbeddings
 // to opt in.
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{rows: make(map[string]Document)}
+	return &MemoryStore{rows: make(map[string]Document), versions: make(map[string][]DocumentVersion)}
 }
 
 // NewMemoryStoreWithEmbeddings is the SearchSemantic-capable constructor.
@@ -174,9 +182,22 @@ func NewMemoryStore() *MemoryStore {
 func NewMemoryStoreWithEmbeddings(embedder embeddings.Embedder, chunks ChunkStore) *MemoryStore {
 	return &MemoryStore{
 		rows:     make(map[string]Document),
+		versions: make(map[string][]DocumentVersion),
 		embedder: embedder,
 		chunks:   chunks,
 	}
+}
+
+// appendVersionLocked freezes the prior state of doc into the versions
+// map, prepending so the slice stays in DESC version order. Caller must
+// hold m.mu. Skips when prior.Version is zero (Create has not happened
+// yet).
+func (m *MemoryStore) appendVersionLocked(prior Document) {
+	if prior.Version == 0 {
+		return
+	}
+	v := versionFromDocument(prior)
+	m.versions[prior.ID] = append([]DocumentVersion{v}, m.versions[prior.ID]...)
 }
 
 // findByName scans for the active row matching (projectID, name). Caller
@@ -244,6 +265,7 @@ func (m *MemoryStore) Upsert(ctx context.Context, in UpsertInput, now time.Time)
 		if existing.BodyHash == hash {
 			return UpsertResult{Document: existing}, nil
 		}
+		m.appendVersionLocked(existing)
 		updated := existing
 		updated.Body = string(in.Body)
 		updated.BodyHash = hash
@@ -307,9 +329,13 @@ func (m *MemoryStore) Update(ctx context.Context, id string, fields UpdateFields
 		return Document{}, ErrNotFound
 	}
 	if fields.Body != nil {
-		doc.Body = *fields.Body
-		doc.BodyHash = HashBody([]byte(doc.Body))
-		doc.Version++
+		newHash := HashBody([]byte(*fields.Body))
+		if newHash != doc.BodyHash {
+			m.appendVersionLocked(doc)
+			doc.Body = *fields.Body
+			doc.BodyHash = newHash
+			doc.Version++
+		}
 	}
 	if fields.Structured != nil {
 		doc.Structured = *fields.Structured
@@ -577,6 +603,23 @@ func inDocMemberships(wsID string, memberships []string) bool {
 // identically.
 func NewID() string {
 	return fmt.Sprintf("doc_%s", uuid.NewString()[:8])
+}
+
+// ListVersions implements Store for MemoryStore.
+func (m *MemoryStore) ListVersions(ctx context.Context, documentID string, memberships []string) ([]DocumentVersion, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	doc, ok := m.rows[documentID]
+	if !ok || !inDocMemberships(doc.WorkspaceID, memberships) {
+		return nil, ErrNotFound
+	}
+	src := m.versions[documentID]
+	if len(src) == 0 {
+		return []DocumentVersion{}, nil
+	}
+	out := make([]DocumentVersion, len(src))
+	copy(out, src)
+	return out, nil
 }
 
 // BackfillWorkspaceID implements Store for MemoryStore.

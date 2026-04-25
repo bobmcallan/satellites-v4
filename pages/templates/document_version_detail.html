@@ -1,0 +1,53 @@
+{{define "document_version_detail.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  {{template "head.html" .}}
+</head>
+<body>
+  {{template "nav.html" .}}
+  <main class="portal-main">
+    <section class="panel-headed" data-testid="document-version-header">
+      <header class="panel-header">
+        <h1>{{.Document.Name}} <span class="muted">v{{.VersionRow.Version}}</span></h1>
+        <span class="panel-header-meta">
+          <code class="type-pill">{{.Document.Type}}</code>
+          <code class="scope-pill">{{.Document.Scope}}</code>
+          <code class="version-pill">historical</code>
+        </span>
+      </header>
+      <div class="panel-body">
+        <p class="muted"><a href="/documents/{{.Document.ID}}">&larr; back to live document (v{{.Document.Version}})</a></p>
+        <dl class="kv-list">
+          <dt>id</dt><dd><code>{{.Document.ID}}</code></dd>
+          <dt>version</dt><dd><code>v{{.VersionRow.Version}}</code></dd>
+          <dt>updated</dt><dd><code>{{.VersionRow.UpdatedAt}}</code></dd>
+          <dt>updated_by</dt><dd><code>{{.VersionRow.UpdatedBy}}</code></dd>
+          <dt>body_hash</dt><dd><code>{{.VersionRow.BodyHash}}</code></dd>
+        </dl>
+      </div>
+    </section>
+
+    <div class="document-layout">
+      <section class="panel-headed document-body-panel" data-testid="document-version-body-panel">
+        <header class="panel-header"><h2>body (historical)</h2></header>
+        <div class="panel-body">
+          <pre class="story-prose" data-testid="version-body">{{.VersionRow.Body}}</pre>
+        </div>
+      </section>
+
+      <aside class="panel-headed document-sidebar" data-testid="document-version-sidebar">
+        <header class="panel-header"><h2>structured (historical)</h2></header>
+        <div class="panel-body">
+          {{if .VersionRow.Structured}}
+            <pre class="story-prose">{{.VersionRow.Structured}}</pre>
+          {{else}}
+            <p class="muted">No structured payload at this version.</p>
+          {{end}}
+        </div>
+      </aside>
+    </div>
+  </main>
+</body>
+</html>
+{{end}}

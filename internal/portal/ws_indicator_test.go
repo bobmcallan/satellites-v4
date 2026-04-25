@@ -130,14 +130,20 @@ func TestPortal_WSJSAsset(t *testing.T) {
 	for _, state := range []string{"idle", "connecting", "live", "reconnecting", "disconnected"} {
 		assert.Contains(t, body, `'`+state+`'`, "state constant %q present", state)
 	}
-	// AC2 — backoff constants.
-	assert.Contains(t, body, "BACKOFF_BASE_MS = 1000", "base backoff constant")
-	assert.Contains(t, body, "BACKOFF_MAX_MS = 30000", "max backoff cap")
+	// AC2 — backoff constants. The production values appear after the
+	// `__SATELLITES_WS_FAST` test gate (story_0e5328cd) — the regex pins
+	// the production fallback value, ignoring the test-mode override.
+	assert.Regexp(t, regexp.MustCompile(`BACKOFF_BASE_MS\s*=\s*(?:__FAST\s*\?\s*\d+\s*:\s*)?1000\b`), body,
+		"base backoff constant (production value)")
+	assert.Regexp(t, regexp.MustCompile(`BACKOFF_MAX_MS\s*=\s*(?:__FAST\s*\?\s*\d+\s*:\s*)?30000\b`), body,
+		"max backoff cap (production value)")
 	// AC3 — since_id wired into reconnect subscribe payload.
 	assert.Regexp(t, regexp.MustCompile(`since_id\s*=\s*this\.lastEventID`), body,
 		"since_id set from lastEventID on reconnect")
-	// AC7 — zero-flicker guard constant.
-	assert.Contains(t, body, "ZERO_FLICKER_MS = 500", "zero-flicker threshold constant")
+	// AC7 — zero-flicker guard constant (production fallback after the
+	// __SATELLITES_WS_FAST gate).
+	assert.Regexp(t, regexp.MustCompile(`ZERO_FLICKER_MS\s*=\s*(?:__FAST\s*\?\s*\d+\s*:\s*)?500\b`), body,
+		"zero-flicker threshold constant (production value)")
 	// transition dispatcher exists.
 	assert.Contains(t, body, "transition(next)", "central transition dispatcher")
 	// Alpine component factory exposed.

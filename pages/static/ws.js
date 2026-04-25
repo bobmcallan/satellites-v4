@@ -21,9 +21,17 @@
 
 // Backoff constants — exported on the class so tests can assert them
 // without executing the state machine.
-const BACKOFF_BASE_MS = 1000;
-const BACKOFF_MAX_MS = 30000;
-const ZERO_FLICKER_MS = 500;
+//
+// __SATELLITES_WS_FAST: when set to true on `window` BEFORE this script
+// loads, the indicator runs with compressed timings so chromedp E2E tests
+// (tests/portalui) can observe state transitions in seconds. Production
+// behaviour is unchanged when the flag is absent or false. The flag is
+// strictly === true to prevent accidental truthy values from speeding up
+// real users.
+const __FAST = (typeof window !== 'undefined' && window.__SATELLITES_WS_FAST === true);
+const BACKOFF_BASE_MS = __FAST ? 50 : 1000;
+const BACKOFF_MAX_MS = __FAST ? 200 : 30000;
+const ZERO_FLICKER_MS = __FAST ? 30 : 500;
 const MAX_CAP_RETRIES = 3;
 const DEBUG_BUFFER_CAP = 10;
 

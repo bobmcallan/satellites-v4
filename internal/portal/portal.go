@@ -275,13 +275,15 @@ type projectRow struct {
 	UpdatedAt   string
 }
 
-// handleLanding gates GET / on a valid session. Unauth redirects to /login
-// preserving the original URL via ?next=. The mux pattern `GET /{$}` ensures
-// only the exact "/" path reaches this handler.
+// handleLanding gates GET / on a valid session. Authenticated users get
+// the index.html dashboard; unauthenticated visitors get the landing page
+// (story_92210e4a) — a merged hero + signin surface — instead of being
+// redirected to /login. The mux pattern `GET /{$}` ensures only the exact
+// "/" path reaches this handler.
 func (p *Portal) handleLanding(w http.ResponseWriter, r *http.Request) {
 	user, ok := p.resolveUser(r)
 	if !ok {
-		p.redirectToLogin(w, r)
+		p.renderLanding(w, r)
 		return
 	}
 	active, chips, _ := p.activeWorkspace(r, user)
@@ -302,10 +304,13 @@ func (p *Portal) handleLanding(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleLogin renders /login with provider buttons derived from cfg.
-func (p *Portal) handleLogin(w http.ResponseWriter, r *http.Request) {
+// renderLanding emits the public landing page (story_92210e4a). Wordmark,
+// subhead, OAuth buttons (gated by cfg), email/password form, 01/02/03
+// grid, theme picker. Used by handleLanding when unauthenticated and by
+// handleLogin (redirects to /).
+func (p *Portal) renderLanding(w http.ResponseWriter, r *http.Request) {
 	data := loginData{
-		Title:           "sign in",
+		Title:           "satellites",
 		Version:         config.Version,
 		Commit:          config.GitCommit,
 		Next:            r.URL.Query().Get("next"),
@@ -313,12 +318,24 @@ func (p *Portal) handleLogin(w http.ResponseWriter, r *http.Request) {
 		GithubEnabled:   p.cfg.GithubClientID != "" && p.cfg.GithubClientSecret != "",
 		DevModeEnabled:  p.cfg.Env != "prod" && p.cfg.DevMode,
 		ThemeMode:       themeFromRequest(r),
-		ThemePickerNext: r.URL.RequestURI(),
+		ThemePickerNext: "/",
 	}
-	if err := p.tmpl.ExecuteTemplate(w, "login.html", data); err != nil {
-		p.logger.Error().Str("template", "login.html").Str("error", err.Error()).Msg("template render failed")
+	if err := p.tmpl.ExecuteTemplate(w, "landing.html", data); err != nil {
+		p.logger.Error().Str("template", "landing.html").Str("error", err.Error()).Msg("template render failed")
 		http.Error(w, "render failed", http.StatusInternalServerError)
 	}
+}
+
+// handleLogin redirects /login → / so the landing page is the single
+// canonical signin surface (story_92210e4a). The redirect preserves any
+// `next` query param so the post-signin handler can land the user back on
+// their target page.
+func (p *Portal) handleLogin(w http.ResponseWriter, r *http.Request) {
+	target := "/"
+	if next := r.URL.Query().Get("next"); next != "" {
+		target = "/?next=" + url.QueryEscape(next)
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
 // handleProjectsList renders the caller's projects, newest-first. A nil

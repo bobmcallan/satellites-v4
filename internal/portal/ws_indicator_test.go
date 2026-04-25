@@ -152,22 +152,22 @@ func TestPortal_WSJSAsset(t *testing.T) {
 	assert.Contains(t, body, "window.SatellitesWS", "SatellitesWS globally exposed")
 }
 
-// TestPortal_Login_NoWidget confirms the widget is absent on the
-// unauthenticated login page (no workspace context).
-func TestPortal_Login_NoWidget(t *testing.T) {
+// TestPortal_Landing_NoWidget confirms the widget is absent on the
+// unauthenticated landing page (no workspace context).
+func TestPortal_Landing_NoWidget(t *testing.T) {
 	t.Parallel()
 	p, _, _, _ := newPortalWithWorkspace(t, &config.Config{Env: "dev"})
 	mux := http.NewServeMux()
 	p.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	body := rec.Body.String()
-	assert.NotContains(t, body, "window.SATELLITES_WS", "no bootstrap on login page")
-	assert.NotContains(t, body, `class="ws-indicator"`, "no widget on login page")
+	assert.NotContains(t, body, "window.SATELLITES_WS", "no bootstrap on landing page")
+	assert.NotContains(t, body, `class="ws-indicator"`, "no widget on landing page")
 }
 
 // Sanity: ensure the embed.FS exposes ws.js — the static handler mount

@@ -86,7 +86,7 @@ func newTestPortalWithTasks(t *testing.T, cfg *config.Config) (*Portal, *auth.Me
 	return p, users, sessions, projects, ledgerStore, stories, tasks
 }
 
-func TestLanding_UnauthRedirects(t *testing.T) {
+func TestLanding_UnauthRendersLanding(t *testing.T) {
 	t.Parallel()
 	p, _, _, _, _, _ := newTestPortal(t, &config.Config{Env: "dev"})
 	mux := http.NewServeMux()
@@ -96,12 +96,23 @@ func TestLanding_UnauthRedirects(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("status = %d, want 303", rec.Code)
+	// story_92210e4a: unauth at / now renders landing.html inline, not a
+	// redirect to /login.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	loc := rec.Header().Get("Location")
-	if !strings.HasPrefix(loc, "/login") {
-		t.Errorf("Location = %q, want /login prefix", loc)
+	body := rec.Body.String()
+	for _, want := range []string{
+		"SATELLITES",
+		"Agentic software engineering via MCP.",
+		"[01] CONFIGURE",
+		"[02] MCP SERVER",
+		"[03] EXECUTE",
+		`action="/auth/login"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("landing body missing %q", want)
+		}
 	}
 }
 
@@ -135,14 +146,39 @@ func TestLanding_AuthRenders(t *testing.T) {
 	}
 }
 
-func TestLogin_RendersBasicForm(t *testing.T) {
+func TestLogin_RedirectsToLanding(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Env: "dev", DevMode: true}
 	p, _, _, _, _, _ := newTestPortal(t, cfg)
 	mux := http.NewServeMux()
 	p.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	// story_92210e4a: /login is now a 303 to / so the landing page is the
+	// single canonical signin surface. Test that the redirect happens AND
+	// preserves any next= query param.
+	req := httptest.NewRequest(http.MethodGet, "/login?next=/projects", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/") {
+		t.Errorf("Location = %q, want / prefix", loc)
+	}
+	if !strings.Contains(loc, "next=") {
+		t.Errorf("Location = %q, want preserved next=", loc)
+	}
+}
+
+func TestLanding_RendersForm(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Env: "dev", DevMode: true}
+	p, _, _, _, _, _ := newTestPortal(t, cfg)
+	mux := http.NewServeMux()
+	p.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -156,12 +192,12 @@ func TestLogin_RendersBasicForm(t *testing.T) {
 		`DevMode login`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("login body missing %q", want)
+			t.Errorf("landing body missing %q", want)
 		}
 	}
 }
 
-func TestLogin_ShowsOAuthWhenConfigured(t *testing.T) {
+func TestLanding_ShowsOAuthWhenConfigured(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{
 		Env: "dev", DevMode: true,
@@ -172,7 +208,7 @@ func TestLogin_ShowsOAuthWhenConfigured(t *testing.T) {
 	mux := http.NewServeMux()
 	p.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -184,19 +220,19 @@ func TestLogin_ShowsOAuthWhenConfigured(t *testing.T) {
 		`Sign in with GitHub`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("login body missing %q", want)
+			t.Errorf("landing body missing %q", want)
 		}
 	}
 }
 
-func TestLogin_HidesDevModeInProd(t *testing.T) {
+func TestLanding_HidesDevModeInProd(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Env: "prod", DevMode: true, DBDSN: "x"}
 	p, _, _, _, _, _ := newTestPortal(t, cfg)
 	mux := http.NewServeMux()
 	p.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -728,7 +764,7 @@ func TestHead_HasBlockingThemeScript(t *testing.T) {
 	mux := http.NewServeMux()
 	p.Register(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

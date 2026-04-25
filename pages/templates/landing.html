@@ -1,0 +1,70 @@
+{{define "landing.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  {{template "head.html" .}}
+</head>
+<body>
+  <main class="portal-main landing-screen">
+    <div class="landing-hero">
+      <h1 class="landing-wordmark">SATELLITES</h1>
+      <p class="landing-subhead">Agentic software engineering via MCP.</p>
+    </div>
+
+    {{if or .GoogleEnabled .GithubEnabled}}
+    <div class="landing-providers">
+      {{if .GoogleEnabled}}
+      <a class="btn-provider btn-provider-primary" href="/auth/google/start">Sign in with Google</a>
+      {{end}}
+      {{if .GithubEnabled}}
+      <a class="btn-provider btn-provider-secondary" href="/auth/github/start">Sign in with GitHub</a>
+      {{end}}
+    </div>
+    <div class="landing-divider"><span>or</span></div>
+    {{end}}
+
+    <form method="post" action="/auth/login" class="landing-form login-form">
+      {{with .Next}}<input type="hidden" name="next" value="{{.}}">{{end}}
+      <label>
+        <span>username</span>
+        <input type="text" name="username" autocomplete="username" autofocus required>
+      </label>
+      <label>
+        <span>password</span>
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit" class="btn-primary landing-submit">sign in</button>
+    </form>
+
+    {{if .DevModeEnabled}}
+    <details class="devmode-help">
+      <summary>DevMode login</summary>
+      <p>
+        In dev mode the fixed credential <code>DEV_USERNAME</code> /
+        <code>DEV_PASSWORD</code> is accepted through the form above.
+      </p>
+    </details>
+    {{end}}
+
+    <section class="landing-grid" aria-label="how it works">
+      <div class="landing-panel">
+        <p class="landing-panel-title">[01] CONFIGURE</p>
+        <p class="landing-panel-body">Set up your repositories and blueprints. Your code, your rules.</p>
+      </div>
+      <div class="landing-panel">
+        <p class="landing-panel-title">[02] MCP SERVER</p>
+        <p class="landing-panel-body">Connect Claude Code or Claude Desktop to your dedicated MCP endpoint.</p>
+      </div>
+      <div class="landing-panel">
+        <p class="landing-panel-title">[03] EXECUTE</p>
+        <p class="landing-panel-body">Run blueprints to evolve, review, and improve your codebases.</p>
+      </div>
+    </section>
+
+    <div class="landing-footer">
+      {{template "theme_picker.html" .}}
+    </div>
+  </main>
+</body>
+</html>
+{{end}}

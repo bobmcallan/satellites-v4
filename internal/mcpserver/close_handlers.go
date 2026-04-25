@@ -68,7 +68,7 @@ func (s *Server) handleStoryContractClose(ctx context.Context, req mcpgo.CallToo
 		return mcpgo.NewToolResultError(string(body)), nil
 	}
 
-	now := time.Now().UTC()
+	now := s.nowUTC()
 
 	// Preplan proposed_workflow validation — if supplied, must satisfy
 	// the project's workflow_spec. Mirrors story_workflow_claim.
@@ -288,7 +288,7 @@ func (s *Server) handleStoryContractRespond(ctx context.Context, req mcpgo.CallT
 		Tags:        tags,
 		Content:     response,
 		CreatedBy:   caller.UserID,
-	}, time.Now().UTC())
+	}, s.nowUTC())
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -327,7 +327,7 @@ func (s *Server) handleStoryContractResume(ctx context.Context, req mcpgo.CallTo
 		body, _ := json.Marshal(map[string]any{"error": "ci_not_found"})
 		return mcpgo.NewToolResultError(string(body)), nil
 	}
-	if err := s.verifyCallerSession(ctx, caller.UserID, sessionID, time.Now().UTC()); err != nil {
+	if err := s.verifyCallerSession(ctx, caller.UserID, sessionID, s.nowUTC()); err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 
@@ -355,7 +355,7 @@ func (s *Server) handleStoryContractResume(ctx context.Context, req mcpgo.CallTo
 		return mcpgo.NewToolResultError(string(body)), nil
 	}
 
-	now := time.Now().UTC()
+	now := s.nowUTC()
 	rolledBack := []string{}
 	reopen := ci.Status == contract.StatusPassed
 

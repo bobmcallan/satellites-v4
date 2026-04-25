@@ -130,6 +130,7 @@ func newReviewerFixture(t *testing.T, mode string, checks []reviewer.Check, stub
 		ContractStore:    contractStore,
 		SessionStore:     sessionStore,
 		Reviewer:         rev,
+		NowFunc:          func() time.Time { return now },
 	})
 	sessionID := "session-reviewer-test"
 	if _, err := sessionStore.Register(ctx, "user_alice", sessionID, session.SourceSessionStart, now); err != nil {

@@ -57,7 +57,7 @@ func (s *Server) handleStoryContractClaim(ctx context.Context, req mcpgo.CallToo
 	// Session registry: must be registered + not stale. Gate runs
 	// before grant resolution so a stale/missing session short-circuits
 	// before we touch the grant store.
-	if err := s.verifyCallerSession(ctx, caller.UserID, sessionID, time.Now().UTC()); err != nil {
+	if err := s.verifyCallerSession(ctx, caller.UserID, sessionID, s.nowUTC()); err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 
@@ -103,17 +103,17 @@ func (s *Server) handleStoryContractClaim(ctx context.Context, req mcpgo.CallToo
 	// writing fresh ones.
 	if amend {
 		if ci.PlanLedgerID != "" {
-			_, _ = s.ledger.Dereference(ctx, ci.PlanLedgerID, "amended", caller.UserID, time.Now().UTC(), memberships)
+			_, _ = s.ledger.Dereference(ctx, ci.PlanLedgerID, "amended", caller.UserID, s.nowUTC(), memberships)
 		}
 		// The action_claim row shares the CI scope but isn't tracked on
 		// the CI directly — find the latest active action_claim row for
 		// this CI and dereference it.
 		if priorAC := s.findLatestActionClaim(ctx, ci, memberships); priorAC != "" {
-			_, _ = s.ledger.Dereference(ctx, priorAC, "amended", caller.UserID, time.Now().UTC(), memberships)
+			_, _ = s.ledger.Dereference(ctx, priorAC, "amended", caller.UserID, s.nowUTC(), memberships)
 		}
 	}
 
-	now := time.Now().UTC()
+	now := s.nowUTC()
 	acStructured, _ := json.Marshal(map[string]any{
 		"permissions_claim": permissionsClaim,
 		"skills_used":       skillsUsed,
@@ -235,7 +235,7 @@ func (s *Server) handleSessionRegister(ctx context.Context, req mcpgo.CallToolRe
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	source := req.GetString("source", session.SourceSessionStart)
-	now := time.Now().UTC()
+	now := s.nowUTC()
 	sess, err := s.sessions.Register(ctx, caller.UserID, sessionID, source, now)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil

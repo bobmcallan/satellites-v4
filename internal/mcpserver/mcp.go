@@ -52,6 +52,7 @@ type Server struct {
 	tasks            task.Store
 	repos            repo.Store
 	jcodemunch       jcodemunch.Client
+	nowFunc          func() time.Time
 }
 
 // Deps bundles the optional per-tool dependencies passed through to
@@ -82,6 +83,11 @@ type Deps struct {
 	// "jcodemunch_unavailable" error for every call. Production wires a
 	// real HTTP/MCP adapter.
 	JcodemunchClient jcodemunch.Client
+	// NowFunc is the optional clock source for handlers. Tests inject a
+	// frozen clock so session-staleness fixtures stay deterministic
+	// (story_3ae6621b). Production callers leave it nil and the server
+	// falls back to time.Now().UTC().
+	NowFunc func() time.Time
 }
 
 // New constructs the MCP server with the satellites_info tool registered.
@@ -106,6 +112,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		tasks:            deps.TaskStore,
 		repos:            deps.RepoStore,
 		jcodemunch:       deps.JcodemunchClient,
+		nowFunc:          deps.NowFunc,
 	}
 	if s.reviewer == nil {
 		s.reviewer = reviewer.AcceptAll{}
@@ -668,6 +675,17 @@ func (s *Server) handleInfo(ctx context.Context, req mcpgo.CallToolRequest) (*mc
 		Int64("duration_ms", time.Since(start).Milliseconds()).
 		Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+// nowUTC returns the server's clock reading. Production calls fall
+// through to time.Now().UTC(); tests inject Deps.NowFunc to freeze the
+// clock at a fixture timestamp so session-staleness checks remain
+// deterministic (story_3ae6621b).
+func (s *Server) nowUTC() time.Time {
+	if s.nowFunc != nil {
+		return s.nowFunc()
+	}
+	return time.Now().UTC()
 }
 
 // resolveProjectID picks the document-operation project scope for the

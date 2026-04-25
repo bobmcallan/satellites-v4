@@ -139,6 +139,7 @@ func newClaimFixture(t *testing.T) *claimFixture {
 		ContractStore:    contractStore,
 		SessionStore:     sessionStore,
 		RoleGrantStore:   grantStore,
+		NowFunc:          func() time.Time { return now },
 	})
 
 	sessionID := "7d4e28d5-ded3-4bd4-a3ea-b4ed899ab0dc"
@@ -289,11 +290,13 @@ func TestClaim_SessionNotRegistered(t *testing.T) {
 func TestClaim_SessionStale(t *testing.T) {
 	t.Parallel()
 	f := newClaimFixture(t)
-	// Override the session's last_seen_at to a time comfortably in the
-	// past relative to the real wall clock (the claim handler resolves
-	// "now" via time.Now().UTC()).
+	// Override the session's last_seen_at to a time comfortably older
+	// than the staleness window relative to the fixture clock. Story
+	// 3ae6621b made the handler clock injectable; tests now advance the
+	// session backwards from the frozen "now" rather than relying on
+	// real wall-clock drift.
 	mem := f.server.sessions.(*session.MemoryStore)
-	ancient := time.Now().UTC().Add(-2 * session.StalenessDefault)
+	ancient := f.now.Add(-2 * session.StalenessDefault)
 	if _, err := mem.Touch(f.ctx, "user_alice", f.sessionID, ancient); err != nil {
 		t.Fatalf("touch: %v", err)
 	}

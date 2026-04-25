@@ -226,6 +226,217 @@ func TestOAuth_CallbackFull(t *testing.T) {
 	}
 }
 
+// TestOAuth_StartRedirect_Google verifies AC1: /auth/google/start mints a
+// state token and 303s the caller to accounts.google.com with the
+// configured client_id, scope, and state. Uses a real (live) AuthURL
+// since the redirect Location is just a URL — we never follow it.
+func TestOAuth_StartRedirect_Google(t *testing.T) {
+	t.Parallel()
+	users := NewMemoryUserStore()
+	sessions := NewMemorySessionStore()
+	states := NewStateStore(time.Minute)
+	providers := &ProviderSet{
+		Google: &Provider{
+			Name: "google",
+			OAuth2: &oauth2.Config{
+				ClientID:     "the-client-id",
+				ClientSecret: "the-secret",
+				RedirectURL:  "http://localhost:8080/auth/google/callback",
+				Scopes:       []string{"openid", "email", "profile"},
+				Endpoint: oauth2.Endpoint{
+					AuthURL:  "https://accounts.google.com/o/oauth2/v2/auth",
+					TokenURL: "https://oauth2.googleapis.com/token",
+				},
+			},
+		},
+	}
+	h := &Handlers{
+		Users:     users,
+		Sessions:  sessions,
+		Logger:    satarbor.New("info"),
+		Cfg:       &config.Config{Env: "dev"},
+		Providers: providers,
+		States:    states,
+	}
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/auth/google/start", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "https://accounts.google.com/o/oauth2/v2/auth?") {
+		t.Fatalf("Location = %q, want google auth url prefix", loc)
+	}
+	for _, want := range []string{
+		"client_id=the-client-id",
+		"response_type=code",
+		"redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fauth%2Fgoogle%2Fcallback",
+		"scope=openid+email+profile",
+		"state=",
+	} {
+		if !strings.Contains(loc, want) {
+			t.Errorf("Location = %q, missing %q", loc, want)
+		}
+	}
+}
+
+// TestOAuth_StartRedirect_Github mirrors AC3 for GitHub.
+func TestOAuth_StartRedirect_Github(t *testing.T) {
+	t.Parallel()
+	users := NewMemoryUserStore()
+	sessions := NewMemorySessionStore()
+	states := NewStateStore(time.Minute)
+	providers := &ProviderSet{
+		GitHub: &Provider{
+			Name: "github",
+			OAuth2: &oauth2.Config{
+				ClientID:     "gh-id",
+				ClientSecret: "gh-secret",
+				RedirectURL:  "http://localhost:8080/auth/github/callback",
+				Scopes:       []string{"user:email"},
+				Endpoint: oauth2.Endpoint{
+					AuthURL:  "https://github.com/login/oauth/authorize",
+					TokenURL: "https://github.com/login/oauth/access_token",
+				},
+			},
+		},
+	}
+	h := &Handlers{
+		Users:     users,
+		Sessions:  sessions,
+		Logger:    satarbor.New("info"),
+		Cfg:       &config.Config{Env: "dev"},
+		Providers: providers,
+		States:    states,
+	}
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/auth/github/start", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "https://github.com/login/oauth/authorize?") {
+		t.Fatalf("Location = %q, want github auth url prefix", loc)
+	}
+	for _, want := range []string{"client_id=gh-id", "scope=user%3Aemail", "state="} {
+		if !strings.Contains(loc, want) {
+			t.Errorf("Location = %q, missing %q", loc, want)
+		}
+	}
+}
+
+// TestOAuth_CallbackFull_Github exercises the GitHub callback E2E with
+// stubbed user + emails endpoints. Mirrors TestOAuth_CallbackFull (Google).
+func TestOAuth_CallbackFull_Github(t *testing.T) {
+	t.Parallel()
+
+	var fake *httptest.Server
+	fake = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "gh_tkn",
+				"token_type":   "Bearer",
+			})
+		case "/user":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"name":  "Bob McUser",
+				"login": "bob",
+			})
+		case "/emails":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"email": "bob@example.com", "primary": true, "verified": true},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(fake.Close)
+
+	// Swap GitHub URLs to the fake server for the duration of this test.
+	prevUser, prevEmails := githubUserURL, githubEmailsURL
+	githubUserURL = fake.URL + "/user"
+	githubEmailsURL = fake.URL + "/emails"
+	t.Cleanup(func() {
+		githubUserURL = prevUser
+		githubEmailsURL = prevEmails
+	})
+
+	users := NewMemoryUserStore()
+	sessions := NewMemorySessionStore()
+	states := NewStateStore(time.Minute)
+	providers := &ProviderSet{
+		GitHub: &Provider{
+			Name: "github",
+			OAuth2: &oauth2.Config{
+				ClientID:     "gh-id",
+				ClientSecret: "gh-secret",
+				RedirectURL:  "http://localhost/auth/github/callback",
+				Scopes:       []string{"user:email"},
+				Endpoint: oauth2.Endpoint{
+					AuthURL:  fake.URL + "/auth",
+					TokenURL: fake.URL + "/token",
+				},
+			},
+			FetchInfo: fetchGitHubUserInfo,
+		},
+	}
+	h := &Handlers{
+		Users:     users,
+		Sessions:  sessions,
+		Logger:    satarbor.New("info"),
+		Cfg:       &config.Config{Env: "dev"},
+		Providers: providers,
+		States:    states,
+	}
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	state, err := states.Mint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/auth/github/callback?state="+state+"&code=thecode", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", rec.Code, rec.Body.String())
+	}
+	var cookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == CookieName {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatal("missing session cookie")
+	}
+	u, err := users.GetByEmail("github:bob@example.com")
+	if err != nil {
+		t.Fatalf("expected user row; got %v", err)
+	}
+	if u.Provider != "github" {
+		t.Errorf("user.Provider = %q, want github", u.Provider)
+	}
+	if u.DisplayName != "Bob McUser" {
+		t.Errorf("user.DisplayName = %q, want Bob McUser", u.DisplayName)
+	}
+}
+
 func TestOAuth_Callback_RejectsBadState(t *testing.T) {
 	t.Parallel()
 	users := NewMemoryUserStore()

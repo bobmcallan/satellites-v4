@@ -60,6 +60,11 @@ type Harness struct {
 	UserID      string
 	WorkspaceID string
 
+	// AuthHandlers is the live auth handler set, exposed so OAuth tests can
+	// inject a ProviderSet pointing at a stub provider before the test
+	// drives chromedp.
+	AuthHandlers *auth.Handlers
+
 	// SessionCookieValue is the pre-baked session id; tests inject it via
 	// chromedp's network.SetCookie under auth.CookieName so the indicator
 	// widget renders without driving the login form.
@@ -145,6 +150,7 @@ func StartHarness(t *testing.T) *Harness {
 		Sessions: sessions,
 		Logger:   logger,
 		Cfg:      cfg,
+		States:   auth.NewStateStore(10 * time.Minute),
 	}
 
 	sharedHub := hub.New()
@@ -172,18 +178,19 @@ func StartHarness(t *testing.T) *Harness {
 	portalHandlers.Register(mux)
 
 	h := &Harness{
-		AuthHub:     authHub,
-		UserID:      user.ID,
-		WorkspaceID: ws.ID,
-		Projects:    projectStore,
-		Stories:     storyStore,
-		Ledger:      ledgerStore,
-		Contracts:   contractStore,
-		Tasks:       taskStore,
-		Documents:   docStore,
-		Repos:       repoStore,
-		Grants:      grantStore,
-		tracker:     newConnTracker(),
+		AuthHub:      authHub,
+		AuthHandlers: authHandlers,
+		UserID:       user.ID,
+		WorkspaceID:  ws.ID,
+		Projects:     projectStore,
+		Stories:      storyStore,
+		Ledger:       ledgerStore,
+		Contracts:    contractStore,
+		Tasks:        taskStore,
+		Documents:    docStore,
+		Repos:        repoStore,
+		Grants:       grantStore,
+		tracker:      newConnTracker(),
 	}
 	h.wsEnabled.Store(true)
 

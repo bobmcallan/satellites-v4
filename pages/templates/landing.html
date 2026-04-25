@@ -37,11 +37,18 @@
     </form>
 
     {{if .DevModeEnabled}}
+    <form method="post" action="/auth/login" class="landing-form landing-devmode-form" data-testid="dev-signin">
+      <input type="hidden" name="username" value="{{.DevUsername}}">
+      <input type="hidden" name="password" value="{{.DevPassword}}">
+      {{with .Next}}<input type="hidden" name="next" value="{{.}}">{{end}}
+      <button type="submit" class="btn-primary landing-submit landing-devmode-btn">Sign in (dev)</button>
+    </form>
     <details class="devmode-help">
-      <summary>DevMode login</summary>
+      <summary>DevMode credentials</summary>
       <p>
         In dev mode the fixed credential <code>DEV_USERNAME</code> /
-        <code>DEV_PASSWORD</code> is accepted through the form above.
+        <code>DEV_PASSWORD</code> is accepted through the form above. The
+        button above signs in directly with the seeded values.
       </p>
     </details>
     {{end}}

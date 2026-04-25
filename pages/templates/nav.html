@@ -1,6 +1,7 @@
 {{define "nav.html"}}
 <header class="portal-nav">
   <div class="nav-brand"><a href="/">satellites</a></div>
+  {{if .DevMode}}<span class="nav-dev-chip" data-testid="dev-chip">DEV</span>{{end}}
   {{if .User.Email}}
   <nav class="nav-links">
     <a href="/projects">projects</a>

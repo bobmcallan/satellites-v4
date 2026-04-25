@@ -224,6 +224,7 @@ type landingData struct {
 	User            auth.User
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
+	DevMode         bool
 	WSConfig        WSConfig
 }
 
@@ -235,6 +236,9 @@ type loginData struct {
 	GoogleEnabled   bool
 	GithubEnabled   bool
 	DevModeEnabled  bool
+	DevUsername     string
+	DevPassword     string
+	DevMode         bool
 	ThemeMode       string
 	ThemePickerNext string
 	WSConfig        WSConfig
@@ -249,6 +253,7 @@ type projectsListData struct {
 	Disabled        bool
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
+	DevMode         bool
 	WSConfig        WSConfig
 }
 
@@ -261,6 +266,7 @@ type projectDetailData struct {
 	OwnerYou        bool
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
+	DevMode         bool
 	WSConfig        WSConfig
 }
 
@@ -296,6 +302,7 @@ func (p *Portal) handleLanding(w http.ResponseWriter, r *http.Request) {
 		User:            user,
 		Workspaces:      chips,
 		ActiveWorkspace: active,
+		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
@@ -309,6 +316,7 @@ func (p *Portal) handleLanding(w http.ResponseWriter, r *http.Request) {
 // grid, theme picker. Used by handleLanding when unauthenticated and by
 // handleLogin (redirects to /).
 func (p *Portal) renderLanding(w http.ResponseWriter, r *http.Request) {
+	devEnabled := p.cfg.Env != "prod" && p.cfg.DevMode
 	data := loginData{
 		Title:           "satellites",
 		Version:         config.Version,
@@ -316,7 +324,10 @@ func (p *Portal) renderLanding(w http.ResponseWriter, r *http.Request) {
 		Next:            r.URL.Query().Get("next"),
 		GoogleEnabled:   p.cfg.GoogleClientID != "" && p.cfg.GoogleClientSecret != "",
 		GithubEnabled:   p.cfg.GithubClientID != "" && p.cfg.GithubClientSecret != "",
-		DevModeEnabled:  p.cfg.Env != "prod" && p.cfg.DevMode,
+		DevModeEnabled:  devEnabled,
+		DevMode:         devEnabled,
+		DevUsername:     p.cfg.DevUsername,
+		DevPassword:     p.cfg.DevPassword,
 		ThemeMode:       themeFromRequest(r),
 		ThemePickerNext: "/",
 	}
@@ -354,6 +365,7 @@ func (p *Portal) handleProjectsList(w http.ResponseWriter, r *http.Request) {
 		User:            user,
 		Workspaces:      chips,
 		ActiveWorkspace: active,
+		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if p.projects == nil {
@@ -405,6 +417,7 @@ func (p *Portal) handleProjectDetail(w http.ResponseWriter, r *http.Request) {
 		OwnerYou:        true,
 		Workspaces:      chips,
 		ActiveWorkspace: active,
+		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "project_detail.html", data); err != nil {
@@ -423,6 +436,7 @@ type projectLedgerData struct {
 	Disabled        bool
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
+	DevMode         bool
 	WSConfig        WSConfig
 }
 
@@ -456,6 +470,7 @@ func (p *Portal) handleProjectLedger(w http.ResponseWriter, r *http.Request) {
 		Project:         viewRow(proj),
 		Workspaces:      chips,
 		ActiveWorkspace: active,
+		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if p.ledger == nil {
@@ -529,6 +544,7 @@ type storiesListData struct {
 	Disabled        bool
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
+	DevMode         bool
 	WSConfig        WSConfig
 }
 
@@ -543,6 +559,7 @@ type storyDetailData struct {
 	Disabled        bool
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
+	DevMode         bool
 	WSConfig        WSConfig
 }
 
@@ -602,6 +619,7 @@ func (p *Portal) handleStoriesList(w http.ResponseWriter, r *http.Request) {
 		Project:         viewRow(proj),
 		Workspaces:      chips,
 		ActiveWorkspace: active,
+		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if p.stories == nil {
@@ -681,6 +699,7 @@ func (p *Portal) handleStoryDetail(w http.ResponseWriter, r *http.Request) {
 		Composite:       composite,
 		Workspaces:      chips,
 		ActiveWorkspace: active,
+		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "story_detail.html", data); err != nil {
@@ -737,6 +756,7 @@ type tasksPageData struct {
 	Composite       tasksComposite
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
+	DevMode         bool
 	WSConfig        WSConfig
 }
 
@@ -760,6 +780,7 @@ func (p *Portal) handleTasks(w http.ResponseWriter, r *http.Request) {
 		Composite:       composite,
 		Workspaces:      chips,
 		ActiveWorkspace: active,
+		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "tasks.html", data); err != nil {
@@ -803,6 +824,7 @@ type documentsListData struct {
 	Composite       documentsComposite
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
+	DevMode         bool
 	WSConfig        WSConfig
 }
 
@@ -815,6 +837,7 @@ type documentDetailData struct {
 	Detail          documentDetailComposite
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
+	DevMode         bool
 	WSConfig        WSConfig
 }
 
@@ -836,6 +859,7 @@ func (p *Portal) handleDocumentsList(w http.ResponseWriter, r *http.Request) {
 		Composite:       buildDocumentsComposite(r.Context(), p.documents, parseDocumentFilters(r), memberships),
 		Workspaces:      chips,
 		ActiveWorkspace: active,
+		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "documents_list.html", data); err != nil {
@@ -890,6 +914,7 @@ func (p *Portal) handleDocumentDetail(w http.ResponseWriter, r *http.Request) {
 		Detail:          detail,
 		Workspaces:      chips,
 		ActiveWorkspace: active,
+		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "document_detail.html", data); err != nil {
@@ -908,6 +933,7 @@ type documentVersionDetailData struct {
 	VersionRow      versionDetailView
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
+	DevMode         bool
 	WSConfig        WSConfig
 }
 
@@ -969,6 +995,7 @@ func (p *Portal) handleDocumentVersionDetail(w http.ResponseWriter, r *http.Requ
 		VersionRow:      versionDetailFromRow(*match),
 		Workspaces:      chips,
 		ActiveWorkspace: active,
+		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "document_version_detail.html", data); err != nil {
@@ -985,6 +1012,7 @@ type repoViewData struct {
 	Composite       repoComposite
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
+	DevMode         bool
 	WSConfig        WSConfig
 }
 
@@ -1014,6 +1042,7 @@ func (p *Portal) handleRepoView(w http.ResponseWriter, r *http.Request) {
 		Composite:       buildRepoComposite(r.Context(), p.repos, projectID, memberships, p.isWorkspaceAdmin(r.Context(), active.ID, user.ID)),
 		Workspaces:      chips,
 		ActiveWorkspace: active,
+		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "repo.html", data); err != nil {
@@ -1168,6 +1197,7 @@ type rolesPageData struct {
 	Composite       rolesComposite
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
+	DevMode         bool
 	WSConfig        WSConfig
 }
 
@@ -1179,6 +1209,7 @@ type agentsPageData struct {
 	Composite       agentsComposite
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
+	DevMode         bool
 	WSConfig        WSConfig
 }
 
@@ -1190,6 +1221,7 @@ type grantsPageData struct {
 	Composite       grantsComposite
 	Workspaces      []wsChip
 	ActiveWorkspace wsChip
+	DevMode         bool
 	WSConfig        WSConfig
 }
 
@@ -1210,6 +1242,7 @@ func (p *Portal) handleRoles(w http.ResponseWriter, r *http.Request) {
 		Composite:       buildRolesComposite(r.Context(), p.documents, p.grants, memberships),
 		Workspaces:      chips,
 		ActiveWorkspace: active,
+		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "roles.html", data); err != nil {
@@ -1234,6 +1267,7 @@ func (p *Portal) handleAgents(w http.ResponseWriter, r *http.Request) {
 		Composite:       buildAgentsComposite(r.Context(), p.documents, memberships),
 		Workspaces:      chips,
 		ActiveWorkspace: active,
+		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "agents.html", data); err != nil {
@@ -1259,6 +1293,7 @@ func (p *Portal) handleGrants(w http.ResponseWriter, r *http.Request) {
 		Composite:       buildGrantsComposite(r.Context(), p.grants, p.documents, memberships, p.isWorkspaceAdmin(r.Context(), active.ID, user.ID)),
 		Workspaces:      chips,
 		ActiveWorkspace: active,
+		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
 		WSConfig:        buildWSConfig(active, r),
 	}
 	if err := p.tmpl.ExecuteTemplate(w, "grants.html", data); err != nil {

@@ -280,6 +280,25 @@ a:hover {
 }
 .landing-footer .theme-picker { width: 12rem; }
 
+/* Dev-mode quick-signin button + DEV chip (story_7105204f). */
+.landing-devmode-form { margin-top: 0.5rem; }
+.landing-devmode-btn {
+    background: var(--color-bg);
+    color: var(--color-fg);
+    border: 1px dashed var(--color-border);
+}
+.nav-dev-chip {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    margin-left: 0.5rem;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-inverse);
+    color: var(--color-fg-inverse);
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+}
+
 
 /* ============================================================
    LAYOUT

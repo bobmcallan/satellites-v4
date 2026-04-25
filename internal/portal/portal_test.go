@@ -189,7 +189,8 @@ func TestLanding_RendersForm(t *testing.T) {
 		`action="/auth/login"`,
 		`name="username"`,
 		`name="password"`,
-		`DevMode login`,
+		`Sign in (dev)`,
+		`DevMode credentials`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("landing body missing %q", want)
@@ -237,9 +238,66 @@ func TestLanding_HidesDevModeInProd(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 
 	body := rec.Body.String()
-	if strings.Contains(body, "DevMode login") {
-		t.Errorf("prod body must not show DevMode affordance")
+	for _, banned := range []string{
+		`Sign in (dev)`,
+		`DevMode credentials`,
+		`data-testid="dev-signin"`,
+	} {
+		if strings.Contains(body, banned) {
+			t.Errorf("prod body must not show %q (dev-mode leak)", banned)
+		}
 	}
+}
+
+// TestNav_DevChip_GatedByDevMode verifies the DEV chip in nav.html is
+// rendered iff cfg.DevMode AND cfg.Env != "prod" — story_7105204f AC3 /
+// AC6.
+func TestNav_DevChip_GatedByDevMode(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		cfg     *config.Config
+		wantHas bool
+	}{
+		{"dev mode on", &config.Config{Env: "dev", DevMode: true}, true},
+		{"dev mode off", &config.Config{Env: "dev", DevMode: false}, false},
+		{"prod overrides", &config.Config{Env: "prod", DevMode: true, DBDSN: "x"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, users, sessions, _, _, _ := newTestPortal(t, tc.cfg)
+			mux := http.NewServeMux()
+			p.Register(mux)
+
+			user := auth.User{ID: "u_1", Email: "alice@local"}
+			users.Add(user)
+			sess, _ := sessions.Create(user.ID, auth.DefaultSessionTTL)
+
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: sess.ID})
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			body := rec.Body.String()
+			has := strings.Contains(body, `data-testid="dev-chip"`)
+			if has != tc.wantHas {
+				t.Errorf("dev-chip present = %v, want %v\nbody snippet:\n%s", has, tc.wantHas, snippet(body, "nav-brand", 200))
+			}
+		})
+	}
+}
+
+func snippet(s, marker string, n int) string {
+	idx := strings.Index(s, marker)
+	if idx < 0 {
+		return ""
+	}
+	end := idx + n
+	if end > len(s) {
+		end = len(s)
+	}
+	return s[idx:end]
 }
 
 func TestProjectsList_UnauthRedirects(t *testing.T) {

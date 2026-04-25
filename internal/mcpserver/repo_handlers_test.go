@@ -10,8 +10,8 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
+	"github.com/bobmcallan/satellites/internal/codeindex"
 	"github.com/bobmcallan/satellites/internal/config"
-	"github.com/bobmcallan/satellites/internal/jcodemunch"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/project"
 	"github.com/bobmcallan/satellites/internal/repo"
@@ -264,8 +264,8 @@ func TestRepoSearch_AuditRow(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("expected isError from stub; got %s", firstText(res))
 	}
-	if !strings.Contains(firstText(res), "jcodemunch_unavailable") {
-		t.Errorf("error result missing 'jcodemunch_unavailable': %s", firstText(res))
+	if !strings.Contains(firstText(res), "code_index_unavailable") {
+		t.Errorf("error result missing 'code_index_unavailable': %s", firstText(res))
 	}
 
 	rows, _ := f.ledger.List(f.ctx, "", ledger.ListOptions{}, nil)
@@ -309,8 +309,8 @@ func TestRepoGetFile_ForwardsAndUnavailable(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("expected isError from stub; got %s", firstText(res))
 	}
-	if !strings.Contains(firstText(res), "jcodemunch_unavailable") {
-		t.Errorf("error result missing 'jcodemunch_unavailable': %s", firstText(res))
+	if !strings.Contains(firstText(res), "code_index_unavailable") {
+		t.Errorf("error result missing 'code_index_unavailable': %s", firstText(res))
 	}
 }
 
@@ -322,14 +322,14 @@ func TestRepoSearch_ProxyKeyIsGitRemote(t *testing.T) {
 	}))
 	repoID := decodeMap(t, add)["repo_id"].(string)
 
-	rec := &recordingClient{}
-	f.server.jcodemunch = rec
+	rec := &recordingIndexer{}
+	f.server.indexer = rec
 	_, _ = f.server.handleRepoSearch(f.callerCtx(), newCallToolReq("repo_search", map[string]any{
 		"repo_id": repoID,
 		"query":   "x",
 	}))
 	if rec.lastSearchKey != "git@github.com:example/key.git" {
-		t.Errorf("proxy key passed to jcodemunch = %q, want git remote (NOT repo_id)", rec.lastSearchKey)
+		t.Errorf("proxy key passed to indexer = %q, want git remote (NOT repo_id)", rec.lastSearchKey)
 	}
 	if strings.HasPrefix(rec.lastSearchKey, "repo_") {
 		t.Errorf("proxy key leaks satellites repo_id prefix: %q", rec.lastSearchKey)
@@ -357,16 +357,16 @@ func TestRepoSearch_NotFoundCrossWorkspace(t *testing.T) {
 	}
 }
 
-// recordingClient intercepts the jcodemunch surface so tests can assert
+// recordingIndexer intercepts the codeindex surface so tests can assert
 // the proxy key passed in.
-type recordingClient struct {
-	jcodemunch.Stub
+type recordingIndexer struct {
+	codeindex.Stub
 	lastSearchKey string
 }
 
-func (r *recordingClient) SearchSymbols(ctx context.Context, repoKey, query, kind, language string) (json.RawMessage, error) {
+func (r *recordingIndexer) SearchSymbols(ctx context.Context, repoKey, query, kind, language string) (json.RawMessage, error) {
 	r.lastSearchKey = repoKey
-	return nil, &jcodemunch.UnavailableError{Op: "search_symbols"}
+	return nil, &codeindex.UnavailableError{Op: "search_symbols"}
 }
 
 // Helpers ---------------------------------------------------------------

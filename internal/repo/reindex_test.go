@@ -9,23 +9,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bobmcallan/satellites/internal/jcodemunch"
+	"github.com/bobmcallan/satellites/internal/codeindex"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/task"
 )
 
-// recordingClient lets tests assert IndexRepo arguments and inject
+// recordingIndexer lets tests assert IndexRepo arguments and inject
 // canned IndexResult / errors.
-type recordingClient struct {
-	jcodemunch.Stub
+type recordingIndexer struct {
+	codeindex.Stub
 	indexCalls  int
 	lastRemote  string
 	lastBranch  string
-	indexResult jcodemunch.IndexResult
+	indexResult codeindex.IndexResult
 	indexErr    error
 }
 
-func (r *recordingClient) IndexRepo(ctx context.Context, gitRemote, defaultBranch string) (jcodemunch.IndexResult, error) {
+func (r *recordingIndexer) IndexRepo(ctx context.Context, gitRemote, defaultBranch string) (codeindex.IndexResult, error) {
 	r.indexCalls++
 	r.lastRemote = gitRemote
 	r.lastBranch = defaultBranch
@@ -107,15 +107,15 @@ func newReindexFixture(t *testing.T) (Deps, Repo, task.Task) {
 func TestHandleReindex_HappyPath(t *testing.T) {
 	t.Parallel()
 	deps, r, tk := newReindexFixture(t)
-	rec := &recordingClient{
-		indexResult: jcodemunch.IndexResult{
+	rec := &recordingIndexer{
+		indexResult: codeindex.IndexResult{
 			HeadSHA:     "deadbeef",
 			SymbolCount: 1234,
 			FileCount:   56,
 		},
 	}
 	pub := &recordingPublisher{}
-	deps.Jcodemunch = rec
+	deps.Indexer = rec
 	deps.Publisher = pub
 
 	outcome, err := HandleReindex(context.Background(), deps, tk)
@@ -165,18 +165,18 @@ func TestHandleReindex_HappyPath(t *testing.T) {
 func TestHandleReindex_JcodemunchUnavailable(t *testing.T) {
 	t.Parallel()
 	deps, r, tk := newReindexFixture(t)
-	rec := &recordingClient{
-		indexErr: &jcodemunch.UnavailableError{Op: "index_repo"},
+	rec := &recordingIndexer{
+		indexErr: &codeindex.UnavailableError{Op: "index_repo"},
 	}
 	pub := &recordingPublisher{}
-	deps.Jcodemunch = rec
+	deps.Indexer = rec
 	deps.Publisher = pub
 
 	outcome, err := HandleReindex(context.Background(), deps, tk)
 	if err == nil {
-		t.Fatalf("expected error from jcodemunch failure; got nil")
+		t.Fatalf("expected error from indexer failure; got nil")
 	}
-	if !errors.Is(err, jcodemunch.ErrUnavailable) {
+	if !errors.Is(err, codeindex.ErrUnavailable) {
 		t.Fatalf("error chain missing ErrUnavailable: %v", err)
 	}
 	if outcome != OutcomeFailure {
@@ -209,8 +209,8 @@ func TestHandleReindex_JcodemunchUnavailable(t *testing.T) {
 func TestHandleReindex_RepoNotFound(t *testing.T) {
 	t.Parallel()
 	deps, _, _ := newReindexFixture(t)
-	rec := &recordingClient{}
-	deps.Jcodemunch = rec
+	rec := &recordingIndexer{}
+	deps.Indexer = rec
 
 	payload := ReindexPayload{
 		Handler:   ReindexHandlerName,
@@ -247,9 +247,9 @@ func TestHandleReindex_RepoNotFound(t *testing.T) {
 func TestHandleReindex_ConcurrencyGuard(t *testing.T) {
 	t.Parallel()
 	deps, r, tk := newReindexFixture(t)
-	rec := &recordingClient{}
+	rec := &recordingIndexer{}
 	pub := &recordingPublisher{}
-	deps.Jcodemunch = rec
+	deps.Indexer = rec
 	deps.Publisher = pub
 
 	// Pre-seed another reindex task targeting the same repo, and flip
@@ -305,8 +305,8 @@ func TestHandleReindex_ConcurrencyGuard(t *testing.T) {
 func TestHandleReindex_MalformedPayload(t *testing.T) {
 	t.Parallel()
 	deps, _, _ := newReindexFixture(t)
-	rec := &recordingClient{}
-	deps.Jcodemunch = rec
+	rec := &recordingIndexer{}
+	deps.Indexer = rec
 
 	bogus := task.Task{
 		ID:          "task_bogus",

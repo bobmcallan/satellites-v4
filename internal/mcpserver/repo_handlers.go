@@ -9,7 +9,7 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/bobmcallan/satellites/internal/jcodemunch"
+	"github.com/bobmcallan/satellites/internal/codeindex"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/repo"
 	"github.com/bobmcallan/satellites/internal/task"
@@ -204,9 +204,9 @@ func (s *Server) handleRepoSearch(ctx context.Context, req mcpgo.CallToolRequest
 		"language": language,
 	}, now, "action:search")
 
-	raw, err := s.jcodemunch.SearchSymbols(ctx, r.GitRemote, query, kind, language)
+	raw, err := s.indexer.SearchSymbols(ctx, r.GitRemote, query, kind, language)
 	if err != nil {
-		return jcodemunchErrorResult("search", err), nil
+		return indexerErrorResult("search", err), nil
 	}
 	return mcpgo.NewToolResultText(string(raw)), nil
 }
@@ -232,9 +232,9 @@ func (s *Server) handleRepoSearchText(ctx context.Context, req mcpgo.CallToolReq
 		"file_pattern": filePattern,
 	}, now, "action:search_text")
 
-	raw, err := s.jcodemunch.SearchText(ctx, r.GitRemote, query, filePattern)
+	raw, err := s.indexer.SearchText(ctx, r.GitRemote, query, filePattern)
 	if err != nil {
-		return jcodemunchErrorResult("search_text", err), nil
+		return indexerErrorResult("search_text", err), nil
 	}
 	return mcpgo.NewToolResultText(string(raw)), nil
 }
@@ -257,9 +257,9 @@ func (s *Server) handleRepoGetSymbolSource(ctx context.Context, req mcpgo.CallTo
 		"symbol_id": symbolID,
 	}, now, "action:get_symbol_source")
 
-	raw, err := s.jcodemunch.GetSymbolSource(ctx, r.GitRemote, symbolID)
+	raw, err := s.indexer.GetSymbolSource(ctx, r.GitRemote, symbolID)
 	if err != nil {
-		return jcodemunchErrorResult("get_symbol_source", err), nil
+		return indexerErrorResult("get_symbol_source", err), nil
 	}
 	return mcpgo.NewToolResultText(string(raw)), nil
 }
@@ -282,9 +282,9 @@ func (s *Server) handleRepoGetFile(ctx context.Context, req mcpgo.CallToolReques
 		"path":   path,
 	}, now, "action:get_file")
 
-	raw, err := s.jcodemunch.GetFileContent(ctx, r.GitRemote, path)
+	raw, err := s.indexer.GetFileContent(ctx, r.GitRemote, path)
 	if err != nil {
-		return jcodemunchErrorResult("get_file", err), nil
+		return indexerErrorResult("get_file", err), nil
 	}
 	return mcpgo.NewToolResultText(string(raw)), nil
 }
@@ -307,9 +307,9 @@ func (s *Server) handleRepoGetOutline(ctx context.Context, req mcpgo.CallToolReq
 		"path":   path,
 	}, now, "action:get_outline")
 
-	raw, err := s.jcodemunch.GetFileOutline(ctx, r.GitRemote, path)
+	raw, err := s.indexer.GetFileOutline(ctx, r.GitRemote, path)
 	if err != nil {
-		return jcodemunchErrorResult("get_outline", err), nil
+		return indexerErrorResult("get_outline", err), nil
 	}
 	return mcpgo.NewToolResultText(string(raw)), nil
 }
@@ -439,14 +439,15 @@ func (s *Server) appendRepoAuditRow(ctx context.Context, r repo.Repo, kind, acto
 	}, now)
 }
 
-// jcodemunchErrorResult translates a jcodemunch failure into a
-// structured MCP error result. errors.Is(err, jcodemunch.ErrUnavailable)
-// produces the documented `jcodemunch_unavailable` envelope; anything
-// else is wrapped as a plain error string.
-func jcodemunchErrorResult(op string, err error) *mcpgo.CallToolResult {
-	if errors.Is(err, jcodemunch.ErrUnavailable) {
+// indexerErrorResult translates a code-index failure into a structured
+// MCP error result. errors.Is(err, codeindex.ErrUnavailable) produces
+// the documented `code_index_unavailable` envelope; anything else is
+// wrapped as a plain error string. Story_75a371c7 replaced the prior
+// jcodemunch shape.
+func indexerErrorResult(op string, err error) *mcpgo.CallToolResult {
+	if errors.Is(err, codeindex.ErrUnavailable) {
 		body, _ := json.Marshal(map[string]any{
-			"error":  "jcodemunch_unavailable",
+			"error":  "code_index_unavailable",
 			"op":     op,
 			"detail": err.Error(),
 		})

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/bobmcallan/satellites/internal/codeindex"
 	"github.com/bobmcallan/satellites/internal/hubemit"
-	"github.com/bobmcallan/satellites/internal/jcodemunch"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/task"
 )
@@ -51,11 +51,11 @@ type ReindexPayload struct {
 // Deps bundles the dependencies the reindex worker needs. Each field
 // must be non-nil except Publisher (ws emit hooks are advisory).
 type Deps struct {
-	Repos      Store
-	Tasks      task.Store
-	Ledger     ledger.Store
-	Jcodemunch jcodemunch.Client
-	Publisher  hubemit.Publisher
+	Repos     Store
+	Tasks     task.Store
+	Ledger    ledger.Store
+	Indexer   codeindex.Indexer
+	Publisher hubemit.Publisher
 }
 
 // HandleReindex is the per-task worker for `origin=event,
@@ -68,7 +68,7 @@ type Deps struct {
 //  2. Concurrency guard — skip if a sibling reindex is already in
 //     flight for the same repo_id.
 //  3. Write kind:repo-reindex-start.
-//  4. Call jcodemunch.IndexRepo.
+//  4. Call codeindex.IndexRepo.
 //  5. On success: UpdateIndexState + kind:repo-reindex-complete.
 //     On failure: kind:repo-reindex-failed (repo row left untouched).
 //
@@ -76,8 +76,8 @@ type Deps struct {
 // when one is fatal (decoding, transport). errors are wrapped with
 // context so callers can match with errors.Is.
 func HandleReindex(ctx context.Context, deps Deps, t task.Task) (Outcome, error) {
-	if deps.Repos == nil || deps.Tasks == nil || deps.Ledger == nil || deps.Jcodemunch == nil {
-		return OutcomeFailure, errors.New("repo: HandleReindex requires non-nil Repos, Tasks, Ledger, Jcodemunch")
+	if deps.Repos == nil || deps.Tasks == nil || deps.Ledger == nil || deps.Indexer == nil {
+		return OutcomeFailure, errors.New("repo: HandleReindex requires non-nil Repos, Tasks, Ledger, Indexer")
 	}
 
 	payload, err := decodeReindexPayload(t.Payload)
@@ -131,7 +131,7 @@ func HandleReindex(ctx context.Context, deps Deps, t task.Task) (Outcome, error)
 		"prev_head_sha": prevHead,
 	})
 
-	result, err := deps.Jcodemunch.IndexRepo(ctx, r.GitRemote, r.DefaultBranch)
+	result, err := deps.Indexer.IndexRepo(ctx, r.GitRemote, r.DefaultBranch)
 	if err != nil {
 		appendReindexRow(ctx, deps.Ledger, tagReindexFailed, r, t.ID, map[string]any{
 			"prev_head_sha": prevHead,
@@ -144,7 +144,7 @@ func HandleReindex(ctx context.Context, deps Deps, t task.Task) (Outcome, error)
 			"error":       err.Error(),
 			"duration_ms": time.Since(startedAt).Milliseconds(),
 		})
-		return OutcomeFailure, fmt.Errorf("repo: jcodemunch index: %w", err)
+		return OutcomeFailure, fmt.Errorf("repo: code index: %w", err)
 	}
 
 	completedAt := time.Now().UTC()

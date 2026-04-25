@@ -15,10 +15,10 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/ternarybob/arbor"
 
+	"github.com/bobmcallan/satellites/internal/codeindex"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/contract"
 	"github.com/bobmcallan/satellites/internal/document"
-	"github.com/bobmcallan/satellites/internal/jcodemunch"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/project"
 	"github.com/bobmcallan/satellites/internal/repo"
@@ -51,7 +51,7 @@ type Server struct {
 	grants           rolegrant.Store
 	tasks            task.Store
 	repos            repo.Store
-	jcodemunch       jcodemunch.Client
+	indexer          codeindex.Indexer
 	nowFunc          func() time.Time
 }
 
@@ -78,11 +78,14 @@ type Deps struct {
 	// RepoStore is optional; nil disables the repo_* MCP verbs.
 	// Story_970ddfa1.
 	RepoStore repo.Store
-	// JcodemunchClient is the proxy used by the repo_* search/get verbs.
-	// Nil falls back to jcodemunch.NewStub(), which returns a structured
-	// "jcodemunch_unavailable" error for every call. Production wires a
-	// real HTTP/MCP adapter.
-	JcodemunchClient jcodemunch.Client
+	// Indexer is the satellites-native code indexer used by repo_*
+	// search/get verbs and the reindex worker. Nil falls back to
+	// codeindex.NewStub() which returns a structured
+	// "code_index_unavailable" error for every call — useful for unit
+	// tests. Production wires codeindex.NewLocalIndexer(workdir).
+	// Story_75a371c7 replaced the prior jcodemunch proxy with this
+	// satellites-internal package.
+	Indexer codeindex.Indexer
 	// NowFunc is the optional clock source for handlers. Tests inject a
 	// frozen clock so session-staleness fixtures stay deterministic
 	// (story_3ae6621b). Production callers leave it nil and the server
@@ -111,14 +114,14 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		grants:           deps.RoleGrantStore,
 		tasks:            deps.TaskStore,
 		repos:            deps.RepoStore,
-		jcodemunch:       deps.JcodemunchClient,
+		indexer:          deps.Indexer,
 		nowFunc:          deps.NowFunc,
 	}
 	if s.reviewer == nil {
 		s.reviewer = reviewer.AcceptAll{}
 	}
-	if s.jcodemunch == nil {
-		s.jcodemunch = jcodemunch.NewStub()
+	if s.indexer == nil {
+		s.indexer = codeindex.NewStub()
 	}
 
 	serverOpts := []mcpserver.ServerOption{
@@ -600,7 +603,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		s.mcp.AddTool(scanRepoTool, s.handleRepoScan)
 
 		searchTool := mcpgo.NewTool("repo_search",
-			mcpgo.WithDescription("Symbol search via jcodemunch. Writes a kind:repo-query audit row. Returns the jcodemunch payload as JSON. jcodemunch outage → structured `jcodemunch_unavailable` error."),
+			mcpgo.WithDescription("Symbol search via the satellites code indexer. Writes a kind:repo-query audit row. Returns the indexer payload as JSON. Indexer outage → structured `code_index_unavailable` error."),
 			mcpgo.WithString("repo_id", mcpgo.Required(), mcpgo.Description("Repo id.")),
 			mcpgo.WithString("query", mcpgo.Required(), mcpgo.Description("Search query.")),
 			mcpgo.WithString("kind", mcpgo.Description("Optional symbol kind filter.")),
@@ -609,7 +612,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		s.mcp.AddTool(searchTool, s.handleRepoSearch)
 
 		searchTextTool := mcpgo.NewTool("repo_search_text",
-			mcpgo.WithDescription("Full-text search via jcodemunch. Writes a kind:repo-query audit row."),
+			mcpgo.WithDescription("Full-text search via the satellites code indexer. Writes a kind:repo-query audit row."),
 			mcpgo.WithString("repo_id", mcpgo.Required(), mcpgo.Description("Repo id.")),
 			mcpgo.WithString("query", mcpgo.Required(), mcpgo.Description("Search query.")),
 			mcpgo.WithString("file_pattern", mcpgo.Description("Optional file glob.")),
@@ -617,21 +620,21 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		s.mcp.AddTool(searchTextTool, s.handleRepoSearchText)
 
 		symbolSourceTool := mcpgo.NewTool("repo_get_symbol_source",
-			mcpgo.WithDescription("Source of one symbol via jcodemunch."),
+			mcpgo.WithDescription("Source of one symbol via the satellites code indexer."),
 			mcpgo.WithString("repo_id", mcpgo.Required(), mcpgo.Description("Repo id.")),
-			mcpgo.WithString("symbol_id", mcpgo.Required(), mcpgo.Description("Jcodemunch symbol id.")),
+			mcpgo.WithString("symbol_id", mcpgo.Required(), mcpgo.Description("Indexer-internal symbol id.")),
 		)
 		s.mcp.AddTool(symbolSourceTool, s.handleRepoGetSymbolSource)
 
 		fileTool := mcpgo.NewTool("repo_get_file",
-			mcpgo.WithDescription("Raw file content via jcodemunch."),
+			mcpgo.WithDescription("Raw file content via the satellites code indexer."),
 			mcpgo.WithString("repo_id", mcpgo.Required(), mcpgo.Description("Repo id.")),
 			mcpgo.WithString("path", mcpgo.Required(), mcpgo.Description("Repo-relative file path.")),
 		)
 		s.mcp.AddTool(fileTool, s.handleRepoGetFile)
 
 		outlineTool := mcpgo.NewTool("repo_get_outline",
-			mcpgo.WithDescription("File outline (symbols + nesting) via jcodemunch."),
+			mcpgo.WithDescription("File outline (symbols + nesting) via the satellites code indexer."),
 			mcpgo.WithString("repo_id", mcpgo.Required(), mcpgo.Description("Repo id.")),
 			mcpgo.WithString("path", mcpgo.Required(), mcpgo.Description("Repo-relative file path.")),
 		)

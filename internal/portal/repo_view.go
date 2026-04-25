@@ -15,6 +15,7 @@ type repoComposite struct {
 	Repo    repoCard     `json:"repo"`
 	Commits []commitCard `json:"commits"`
 	Empty   bool         `json:"empty"`
+	IsAdmin bool         `json:"is_admin"`
 }
 
 // repoCard is the header row.
@@ -32,14 +33,15 @@ type repoCard struct {
 
 // buildRepoComposite assembles the view-model for projectID's repo.
 // When no repo is registered, returns an empty composite with Empty=true
-// so the SSR template renders the empty-state copy.
-func buildRepoComposite(ctx context.Context, store repo.Store, projectID string, memberships []string) repoComposite {
+// so the SSR template renders the empty-state copy. isAdmin gates the
+// reindex affordance — non-admins see the panel but no button.
+func buildRepoComposite(ctx context.Context, store repo.Store, projectID string, memberships []string, isAdmin bool) repoComposite {
 	if store == nil || projectID == "" {
-		return repoComposite{Empty: true}
+		return repoComposite{Empty: true, IsAdmin: isAdmin}
 	}
 	rows, err := store.List(ctx, projectID, memberships)
 	if err != nil || len(rows) == 0 {
-		return repoComposite{Empty: true}
+		return repoComposite{Empty: true, IsAdmin: isAdmin}
 	}
 	r := rows[0]
 	card := repoCard{
@@ -55,7 +57,11 @@ func buildRepoComposite(ctx context.Context, store repo.Store, projectID string,
 	if !r.LastIndexedAt.IsZero() {
 		card.LastIndexedAt = r.LastIndexedAt.UTC().Format(time.RFC3339)
 	}
-	out := repoComposite{Repo: card, Commits: commitCardsFor(ctx, store, r.ID, memberships)}
+	out := repoComposite{
+		Repo:    card,
+		Commits: commitCardsFor(ctx, store, r.ID, memberships),
+		IsAdmin: isAdmin,
+	}
 	return out
 }
 

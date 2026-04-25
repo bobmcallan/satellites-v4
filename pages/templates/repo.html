@@ -30,7 +30,15 @@
           <span class="panel-header-meta">
             <code>branch {{.Composite.Repo.DefaultBranch}}</code>
             <code class="status-pill status-{{.Composite.Repo.Status}}">{{.Composite.Repo.Status}}</code>
+            <code class="status-pill" :class="reindexChipClass()" data-testid="reindex-chip" x-text="reindexChipLabel()"></code>
             <span class="live-dot" :class="liveClass()" aria-label="live">●</span>
+            {{if .Composite.IsAdmin}}
+            <button type="button"
+                    class="btn-link reindex-btn"
+                    data-testid="reindex-btn"
+                    @click="triggerReindex()"
+                    :disabled="reindexChip === 'running'">reindex</button>
+            {{end}}
           </span>
         </header>
         <div class="panel-body">

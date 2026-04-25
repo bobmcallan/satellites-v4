@@ -202,6 +202,7 @@ func (p *Portal) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/repos/{id}/symbols", p.handleRepoSymbols)
 	mux.HandleFunc("GET /api/repos/{id}/symbols/{symbol_id}", p.handleRepoSymbolSource)
 	mux.HandleFunc("GET /api/repos/{id}/diff", p.handleRepoDiff)
+	mux.HandleFunc("POST /api/repos/{id}/reindex", p.handleRepoReindex)
 	mux.HandleFunc("GET /roles", p.handleRoles)
 	mux.HandleFunc("GET /agents", p.handleAgents)
 	mux.HandleFunc("GET /grants", p.handleGrants)
@@ -988,7 +989,7 @@ func (p *Portal) handleRepoView(w http.ResponseWriter, r *http.Request) {
 		Version:         config.Version,
 		Commit:          config.GitCommit,
 		User:            user,
-		Composite:       buildRepoComposite(r.Context(), p.repos, projectID, memberships),
+		Composite:       buildRepoComposite(r.Context(), p.repos, projectID, memberships, p.isWorkspaceAdmin(r.Context(), active.ID, user.ID)),
 		Workspaces:      chips,
 		ActiveWorkspace: active,
 		WSConfig:        buildWSConfig(active, r),
@@ -1062,6 +1063,45 @@ func (p *Portal) handleRepoSymbolSource(w http.ResponseWriter, r *http.Request) 
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(body)
+}
+
+// handleRepoReindex enqueues a reindex task for the repo at
+// /api/repos/{id}/reindex. Admin gate per AC: the caller must hold
+// RoleAdmin in the active workspace; non-admins → 403. Returns 202
+// with the task id on success.
+func (p *Portal) handleRepoReindex(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if p.repos == nil || p.tasks == nil {
+		http.NotFound(w, r)
+		return
+	}
+	repoID := r.PathValue("id")
+	active, _, memberships := p.activeWorkspace(r, user)
+	if !p.isWorkspaceAdmin(r.Context(), active.ID, user.ID) {
+		http.Error(w, "admin only", http.StatusForbidden)
+		return
+	}
+	row, err := p.repos.GetByID(r.Context(), repoID, memberships)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	taskID := repo.EnqueueReindex(r.Context(), p.tasks, p.ledger, row, "portal", row.HeadSHA, time.Now().UTC())
+	if taskID == "" {
+		http.Error(w, `{"error":"enqueue_failed"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	body, _ := json.Marshal(map[string]any{
+		"task_id": taskID,
+		"repo_id": row.ID,
+	})
 	_, _ = w.Write(body)
 }
 

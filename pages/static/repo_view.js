@@ -18,6 +18,45 @@
             symbolError: '',
             drawer: { open: false, symbol: {}, source: '' },
             diff: { from: '', to: '', result: null, error: '' },
+            reindexChip: 'idle',
+            reindexError: '',
+
+            reindexChipClass() { return 'reindex-chip-' + (this.reindexChip || 'idle'); },
+            reindexChipLabel() {
+                switch (this.reindexChip) {
+                    case 'running': return 'reindexing…';
+                    case 'failed': return 'reindex failed';
+                    default: return 'idle';
+                }
+            },
+
+            async triggerReindex() {
+                const cfg = window.SATELLITES_REPO || {};
+                if (!cfg.repoID) { return; }
+                this.reindexError = '';
+                this.reindexChip = 'running';
+                try {
+                    const r = await fetch('/api/repos/' + cfg.repoID + '/reindex', {
+                        method: 'POST',
+                        credentials: 'same-origin'
+                    });
+                    if (r.status === 403) {
+                        this.reindexChip = 'idle';
+                        this.reindexError = 'admin required';
+                        return;
+                    }
+                    if (!r.ok) {
+                        this.reindexChip = 'failed';
+                        this.reindexError = 'reindex enqueue failed (' + r.status + ')';
+                        return;
+                    }
+                    // Server accepted; ws event will flip the chip back
+                    // when the worker finishes.
+                } catch (e) {
+                    this.reindexChip = 'failed';
+                    this.reindexError = 'reindex enqueue failed: ' + e;
+                }
+            },
 
             async loadDiff() {
                 const cfg = window.SATELLITES_REPO || {};
@@ -90,6 +129,21 @@
 
             closeDrawer() { this.drawer.open = false; },
 
+            applyReindexEvent(ev) {
+                if (!ev || !ev.kind) { return; }
+                switch (ev.kind) {
+                    case 'repo.reindex.start':
+                        this.reindexChip = 'running';
+                        break;
+                    case 'repo.reindex.complete':
+                        this.reindexChip = 'idle';
+                        break;
+                    case 'repo.reindex.failed':
+                        this.reindexChip = 'failed';
+                        break;
+                }
+            },
+
             attachWS() {
                 if (!window.SATELLITES_WS || !window.SATELLITES_WS.workspaceId) { return; }
                 if (!window.SatellitesWS) { return; }
@@ -99,7 +153,7 @@
                     workspaceId: cfg.workspaceId,
                     debug: cfg.debug,
                     onStatusChange: function (next) { self.wsStatus = next; },
-                    onEvent: function () { /* repo view does not consume events in this slice */ }
+                    onEvent: function (ev) { self.applyReindexEvent(ev); }
                 });
                 this._ws.connect();
             }

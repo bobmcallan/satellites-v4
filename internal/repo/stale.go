@@ -93,6 +93,14 @@ func RunStaleCheck(ctx context.Context, deps StaleCheckDeps) (StaleCheckResult, 
 	return result, nil
 }
 
+// EnqueueReindex writes the reindex task + the kind:task-enqueued
+// audit row scoped to the repo's workspace. Returns the task id, or
+// empty when the enqueue rejected. Trigger names the originator
+// ("stale_check", "webhook:<delivery>", "portal").
+func EnqueueReindex(ctx context.Context, tasks task.Store, led ledger.Store, r Repo, trigger, observedHead string, now time.Time) string {
+	return enqueueReindexFromStale(ctx, tasks, led, r, trigger, observedHead, now)
+}
+
 // enqueueReindexFromStale writes the reindex task + the
 // kind:task-enqueued audit row scoped to the repo's workspace. Returns
 // the task id, or empty when the enqueue rejected.

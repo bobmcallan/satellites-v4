@@ -2,6 +2,7 @@ package portal
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/repo"
+	"github.com/bobmcallan/satellites/internal/task"
 )
 
 func renderRepo(t *testing.T, p *Portal, sessionCookie string) *httptest.ResponseRecorder {
@@ -226,6 +228,154 @@ func TestRepoDiffEndpoint_404OnUnknownRepo(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestRepoReindexEndpoint_AdminSucceeds_202(t *testing.T) {
+	t.Parallel()
+	p, users, sessions, ws := newPortalWithWorkspace(t, &config.Config{Env: "dev"})
+	user := auth.User{ID: "u_alice", Email: "alice@local"}
+	users.Add(user)
+	sess, _ := sessions.Create(user.ID, auth.DefaultSessionTTL)
+	wsRow, _ := ws.Create(testCtx(), user.ID, "alpha", time.Now().UTC())
+	// Admin role auto-granted to creator (workspace.MemoryStore.Create).
+	repoRow, _ := p.repos.Create(testCtx(), repo.Repo{
+		WorkspaceID:   wsRow.ID,
+		ProjectID:     "proj_a",
+		GitRemote:     "git@x:y.git",
+		DefaultBranch: "main",
+		Status:        repo.StatusActive,
+	}, time.Now().UTC())
+
+	mux := http.NewServeMux()
+	p.Register(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/repos/"+repoRow.ID+"/reindex", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: sess.ID})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["task_id"] == nil || resp["task_id"] == "" {
+		t.Errorf("task_id missing in response: %s", rec.Body.String())
+	}
+	if resp["repo_id"] != repoRow.ID {
+		t.Errorf("repo_id = %v, want %s", resp["repo_id"], repoRow.ID)
+	}
+	tasks, _ := p.tasks.List(testCtx(), task.ListOptions{}, nil)
+	if len(tasks) != 1 {
+		t.Errorf("tasks queued = %d, want 1", len(tasks))
+	}
+}
+
+func TestRepoReindexEndpoint_NonAdminRejected_403(t *testing.T) {
+	t.Parallel()
+	p, users, sessions, ws := newPortalWithWorkspace(t, &config.Config{Env: "dev"})
+	owner := auth.User{ID: "u_owner", Email: "owner@local"}
+	bob := auth.User{ID: "u_bob", Email: "bob@local"}
+	users.Add(owner)
+	users.Add(bob)
+	sess, _ := sessions.Create(bob.ID, auth.DefaultSessionTTL)
+
+	wsRow, _ := ws.Create(testCtx(), owner.ID, "alpha", time.Now().UTC())
+	// Add bob as a member with viewer role.
+	if err := ws.AddMember(testCtx(), wsRow.ID, bob.ID, "viewer", "test", time.Now().UTC()); err != nil {
+		t.Fatalf("AddMember bob: %v", err)
+	}
+	// Sticky bob's session to the workspace.
+	if err := sessions.SetActiveWorkspace(sess.ID, wsRow.ID); err != nil {
+		t.Fatalf("SetActiveWorkspace: %v", err)
+	}
+	repoRow, _ := p.repos.Create(testCtx(), repo.Repo{
+		WorkspaceID:   wsRow.ID,
+		ProjectID:     "proj_a",
+		GitRemote:     "git@x:y.git",
+		DefaultBranch: "main",
+		Status:        repo.StatusActive,
+	}, time.Now().UTC())
+
+	mux := http.NewServeMux()
+	p.Register(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/repos/"+repoRow.ID+"/reindex", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: sess.ID})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	tasks, _ := p.tasks.List(testCtx(), task.ListOptions{}, nil)
+	if len(tasks) != 0 {
+		t.Errorf("tasks queued = %d on non-admin, want 0", len(tasks))
+	}
+}
+
+func TestRepoReindexEndpoint_404OnUnknownRepo(t *testing.T) {
+	t.Parallel()
+	p, users, sessions, ws := newPortalWithWorkspace(t, &config.Config{Env: "dev"})
+	user := auth.User{ID: "u_alice", Email: "alice@local"}
+	users.Add(user)
+	sess, _ := sessions.Create(user.ID, auth.DefaultSessionTTL)
+	_, _ = ws.Create(testCtx(), user.ID, "alpha", time.Now().UTC())
+
+	mux := http.NewServeMux()
+	p.Register(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/repos/repo_missing/reindex", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: sess.ID})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestRepoView_AdminSeesReindexButton(t *testing.T) {
+	t.Parallel()
+	p, users, sessions, ws := newPortalWithWorkspace(t, &config.Config{Env: "dev"})
+	admin := auth.User{ID: "u_admin", Email: "admin@local"}
+	bob := auth.User{ID: "u_bob", Email: "bob@local"}
+	users.Add(admin)
+	users.Add(bob)
+	wsRow, _ := ws.Create(testCtx(), admin.ID, "alpha", time.Now().UTC())
+	if err := ws.AddMember(testCtx(), wsRow.ID, bob.ID, "viewer", "test", time.Now().UTC()); err != nil {
+		t.Fatalf("AddMember bob: %v", err)
+	}
+	// Need a project owned by each user so the repo view picks it up.
+	// newPortalWithWorkspace's projects store is internal; reach into p.
+	now := time.Now().UTC()
+	adminProj, _ := p.projects.Create(testCtx(), admin.ID, wsRow.ID, "alpha-proj", now)
+	bobProj, _ := p.projects.Create(testCtx(), bob.ID, wsRow.ID, "bob-proj", now)
+	_, _ = p.repos.Create(testCtx(), repo.Repo{
+		WorkspaceID:   wsRow.ID,
+		ProjectID:     adminProj.ID,
+		GitRemote:     "git@x:admin.git",
+		DefaultBranch: "main",
+		Status:        repo.StatusActive,
+	}, now)
+	_, _ = p.repos.Create(testCtx(), repo.Repo{
+		WorkspaceID:   wsRow.ID,
+		ProjectID:     bobProj.ID,
+		GitRemote:     "git@x:bob.git",
+		DefaultBranch: "main",
+		Status:        repo.StatusActive,
+	}, now)
+
+	adminSess, _ := sessions.Create(admin.ID, auth.DefaultSessionTTL)
+	_ = sessions.SetActiveWorkspace(adminSess.ID, wsRow.ID)
+	bobSess, _ := sessions.Create(bob.ID, auth.DefaultSessionTTL)
+	_ = sessions.SetActiveWorkspace(bobSess.ID, wsRow.ID)
+
+	adminRec := renderRepo(t, p, adminSess.ID)
+	bobRec := renderRepo(t, p, bobSess.ID)
+	if adminRec.Code != http.StatusOK || bobRec.Code != http.StatusOK {
+		t.Fatalf("admin status=%d bob status=%d", adminRec.Code, bobRec.Code)
+	}
+	if !strings.Contains(adminRec.Body.String(), `data-testid="reindex-btn"`) {
+		t.Errorf("admin response missing reindex button")
+	}
+	if strings.Contains(bobRec.Body.String(), `data-testid="reindex-btn"`) {
+		t.Errorf("non-admin response leaked reindex button")
 	}
 }
 

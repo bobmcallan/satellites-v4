@@ -18,8 +18,10 @@ import (
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/contract"
 	"github.com/bobmcallan/satellites/internal/document"
+	"github.com/bobmcallan/satellites/internal/jcodemunch"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/project"
+	"github.com/bobmcallan/satellites/internal/repo"
 	"github.com/bobmcallan/satellites/internal/reviewer"
 	"github.com/bobmcallan/satellites/internal/rolegrant"
 	"github.com/bobmcallan/satellites/internal/session"
@@ -48,6 +50,8 @@ type Server struct {
 	reviewer         reviewer.Reviewer
 	grants           rolegrant.Store
 	tasks            task.Store
+	repos            repo.Store
+	jcodemunch       jcodemunch.Client
 }
 
 // Deps bundles the optional per-tool dependencies passed through to
@@ -70,6 +74,14 @@ type Deps struct {
 	// TaskStore is optional; nil disables the task_* MCP verbs.
 	// Story_a8fee0cc.
 	TaskStore task.Store
+	// RepoStore is optional; nil disables the repo_* MCP verbs.
+	// Story_970ddfa1.
+	RepoStore repo.Store
+	// JcodemunchClient is the proxy used by the repo_* search/get verbs.
+	// Nil falls back to jcodemunch.NewStub(), which returns a structured
+	// "jcodemunch_unavailable" error for every call. Production wires a
+	// real HTTP/MCP adapter.
+	JcodemunchClient jcodemunch.Client
 }
 
 // New constructs the MCP server with the satellites_info tool registered.
@@ -92,9 +104,14 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		reviewer:         deps.Reviewer,
 		grants:           deps.RoleGrantStore,
 		tasks:            deps.TaskStore,
+		repos:            deps.RepoStore,
+		jcodemunch:       deps.JcodemunchClient,
 	}
 	if s.reviewer == nil {
 		s.reviewer = reviewer.AcceptAll{}
+	}
+	if s.jcodemunch == nil {
+		s.jcodemunch = jcodemunch.NewStub()
 	}
 
 	serverOpts := []mcpserver.ServerOption{
@@ -545,6 +562,73 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("worker_id", mcpgo.Description("Optional worker id; when supplied, the handler rejects the close if the task has been reclaimed to a different worker since claim time.")),
 		)
 		s.mcp.AddTool(closeTaskTool, s.handleTaskClose)
+	}
+
+	if s.repos != nil {
+		addRepoTool := mcpgo.NewTool("repo_add",
+			mcpgo.WithDescription("Register a git remote on the caller's project. Dedups on (workspace, git_remote); enqueues a reindex task. Returns {repo_id, task_id, deduplicated}. Story_970ddfa1."),
+			mcpgo.WithString("git_remote", mcpgo.Required(), mcpgo.Description("Git remote URL (e.g. git@github.com:owner/repo.git).")),
+			mcpgo.WithString("default_branch", mcpgo.Description("Default branch (default: main).")),
+			mcpgo.WithString("project_id", mcpgo.Description("Project scope. Defaults to caller's first owned project.")),
+		)
+		s.mcp.AddTool(addRepoTool, s.handleRepoAdd)
+
+		getRepoTool := mcpgo.NewTool("repo_get",
+			mcpgo.WithDescription("Return a repo by id. Workspace-scoped — cross-workspace returns not-found."),
+			mcpgo.WithString("repo_id", mcpgo.Required(), mcpgo.Description("Repo id.")),
+		)
+		s.mcp.AddTool(getRepoTool, s.handleRepoGet)
+
+		listRepoTool := mcpgo.NewTool("repo_list",
+			mcpgo.WithDescription("List repos in a project. Defaults to caller's workspaces and status=active. Pass status=archived for archived rows or status=all for both."),
+			mcpgo.WithString("project_id", mcpgo.Description("Project scope. Defaults to caller's first owned project.")),
+			mcpgo.WithString("status", mcpgo.Description("active (default) | archived | all")),
+		)
+		s.mcp.AddTool(listRepoTool, s.handleRepoList)
+
+		scanRepoTool := mcpgo.NewTool("repo_scan",
+			mcpgo.WithDescription("Enqueue a reindex task. Idempotent — returns the in-flight task_id when one already exists for the repo."),
+			mcpgo.WithString("repo_id", mcpgo.Required(), mcpgo.Description("Repo id.")),
+		)
+		s.mcp.AddTool(scanRepoTool, s.handleRepoScan)
+
+		searchTool := mcpgo.NewTool("repo_search",
+			mcpgo.WithDescription("Symbol search via jcodemunch. Writes a kind:repo-query audit row. Returns the jcodemunch payload as JSON. jcodemunch outage → structured `jcodemunch_unavailable` error."),
+			mcpgo.WithString("repo_id", mcpgo.Required(), mcpgo.Description("Repo id.")),
+			mcpgo.WithString("query", mcpgo.Required(), mcpgo.Description("Search query.")),
+			mcpgo.WithString("kind", mcpgo.Description("Optional symbol kind filter.")),
+			mcpgo.WithString("language", mcpgo.Description("Optional language filter.")),
+		)
+		s.mcp.AddTool(searchTool, s.handleRepoSearch)
+
+		searchTextTool := mcpgo.NewTool("repo_search_text",
+			mcpgo.WithDescription("Full-text search via jcodemunch. Writes a kind:repo-query audit row."),
+			mcpgo.WithString("repo_id", mcpgo.Required(), mcpgo.Description("Repo id.")),
+			mcpgo.WithString("query", mcpgo.Required(), mcpgo.Description("Search query.")),
+			mcpgo.WithString("file_pattern", mcpgo.Description("Optional file glob.")),
+		)
+		s.mcp.AddTool(searchTextTool, s.handleRepoSearchText)
+
+		symbolSourceTool := mcpgo.NewTool("repo_get_symbol_source",
+			mcpgo.WithDescription("Source of one symbol via jcodemunch."),
+			mcpgo.WithString("repo_id", mcpgo.Required(), mcpgo.Description("Repo id.")),
+			mcpgo.WithString("symbol_id", mcpgo.Required(), mcpgo.Description("Jcodemunch symbol id.")),
+		)
+		s.mcp.AddTool(symbolSourceTool, s.handleRepoGetSymbolSource)
+
+		fileTool := mcpgo.NewTool("repo_get_file",
+			mcpgo.WithDescription("Raw file content via jcodemunch."),
+			mcpgo.WithString("repo_id", mcpgo.Required(), mcpgo.Description("Repo id.")),
+			mcpgo.WithString("path", mcpgo.Required(), mcpgo.Description("Repo-relative file path.")),
+		)
+		s.mcp.AddTool(fileTool, s.handleRepoGetFile)
+
+		outlineTool := mcpgo.NewTool("repo_get_outline",
+			mcpgo.WithDescription("File outline (symbols + nesting) via jcodemunch."),
+			mcpgo.WithString("repo_id", mcpgo.Required(), mcpgo.Description("Repo id.")),
+			mcpgo.WithString("path", mcpgo.Required(), mcpgo.Description("Repo-relative file path.")),
+		)
+		s.mcp.AddTool(outlineTool, s.handleRepoGetOutline)
 	}
 
 	s.streamable = mcpserver.NewStreamableHTTPServer(s.mcp,

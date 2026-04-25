@@ -33,15 +33,22 @@ func UserFrom(ctx context.Context) (CallerIdentity, bool) {
 // AuthDeps are the satellites dependencies the middleware needs to resolve
 // a caller.
 type AuthDeps struct {
-	Sessions auth.SessionStore
-	Users    auth.UserStoreByID
-	APIKeys  []string
-	Logger   arbor.ILogger
+	Sessions       auth.SessionStore
+	Users          auth.UserStoreByID
+	APIKeys        []string
+	Logger         arbor.ILogger
+	OAuthValidator *auth.BearerValidator // optional; when nil OAuth-Bearer path is skipped
 }
 
-// AuthMiddleware wraps next with /mcp authentication: either a valid
-// satellites_session cookie OR an Authorization: Bearer <api-key> matching
-// one of the configured APIKeys. Unauth requests get 401 + WWW-Authenticate.
+// AuthMiddleware wraps next with /mcp authentication. Three paths in order
+// (story_512cc5cd):
+//
+//  1. Authorization: Bearer <api-key> matching cfg.APIKeys.
+//  2. Authorization: Bearer <token> validated by OAuthValidator (Google /
+//     GitHub access tokens, satellites-signed exchange tokens).
+//  3. satellites_session cookie.
+//
+// Unauthenticated requests get 401 + WWW-Authenticate.
 func AuthMiddleware(deps AuthDeps) func(http.Handler) http.Handler {
 	keyset := make(map[string]struct{}, len(deps.APIKeys))
 	for _, k := range deps.APIKeys {
@@ -52,8 +59,9 @@ func AuthMiddleware(deps AuthDeps) func(http.Handler) http.Handler {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Bearer API key.
-			if token := bearerToken(r); token != "" {
+			token := bearerToken(r)
+			if token != "" {
+				// 1. Bearer API key.
 				if _, ok := keyset[token]; ok {
 					ctx := context.WithValue(r.Context(), userKey, CallerIdentity{
 						Email:  "apikey",
@@ -63,8 +71,20 @@ func AuthMiddleware(deps AuthDeps) func(http.Handler) http.Handler {
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
+				// 2. OAuth bearer (Google / GitHub / satellites-signed).
+				if deps.OAuthValidator != nil {
+					if info, err := deps.OAuthValidator.Validate(r.Context(), token); err == nil {
+						ctx := context.WithValue(r.Context(), userKey, CallerIdentity{
+							Email:  info.Email,
+							UserID: info.UserID,
+							Source: "oauth:" + info.Provider,
+						})
+						next.ServeHTTP(w, r.WithContext(ctx))
+						return
+					}
+				}
 			}
-			// Session cookie.
+			// 3. Session cookie.
 			if id := auth.ReadCookie(r); id != "" {
 				sess, err := deps.Sessions.Get(id)
 				if err == nil {

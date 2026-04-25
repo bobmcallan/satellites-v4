@@ -263,7 +263,15 @@ func main() {
 		attachPublisher(storyStore, publisher)
 	}
 
-	registrars := []httpserver.RouteRegistrar{authHandlers, portalHandlers}
+	bearerValidator := auth.NewBearerValidator(auth.BearerValidatorConfig{
+		CacheTTL: cfg.OAuthTokenCacheTTL,
+	})
+	tokenExchange := &auth.TokenExchange{
+		Sessions:  sessions,
+		Users:     users,
+		Validator: bearerValidator,
+	}
+	registrars := []httpserver.RouteRegistrar{authHandlers, portalHandlers, tokenExchange}
 	if wsHandlers != nil {
 		registrars = append(registrars, wsHandlers)
 	}
@@ -286,10 +294,11 @@ func main() {
 		TaskStore:        taskStore,
 	})
 	mcpAuth := mcpserver.AuthMiddleware(mcpserver.AuthDeps{
-		Sessions: sessions,
-		Users:    users,
-		APIKeys:  cfg.APIKeys,
-		Logger:   logger,
+		Sessions:       sessions,
+		Users:          users,
+		APIKeys:        cfg.APIKeys,
+		Logger:         logger,
+		OAuthValidator: bearerValidator,
 	})
 	srv.Mount("/mcp", mcpAuth(mcp))
 

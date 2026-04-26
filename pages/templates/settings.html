@@ -1,0 +1,21 @@
+{{define "settings.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  {{template "head.html" .}}
+</head>
+<body>
+  {{template "nav.html" .}}
+  <main class="portal-main">
+    <section class="panel-headed" data-testid="settings-panel">
+      <header class="panel-header"><h1>settings</h1></header>
+      <div class="panel-body settings-section">
+        <h2 class="settings-section-title">theme</h2>
+        {{template "theme_picker.html" .}}
+      </div>
+    </section>
+  </main>
+  {{template "footer.html" .}}
+</body>
+</html>
+{{end}}

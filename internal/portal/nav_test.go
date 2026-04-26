@@ -119,7 +119,7 @@ func TestNav_HamburgerDropdown(t *testing.T) {
 	// tricky in raw text; assert substring positions instead.
 	for _, want := range []string{
 		`form action="/auth/logout"`,
-		`form class="theme-picker"`,
+		`data-testid="nav-settings-link"`,
 		`alice@local`,
 	} {
 		idx := strings.Index(body, want)
@@ -153,7 +153,6 @@ func TestNav_NoUnimplementedRoutes(t *testing.T) {
 		`href="/skills"`,
 		`href="/mcp-info"`,
 		`href="/help"`,
-		`href="/settings"`,
 		`href="/profile"`,
 		`href="/changelog"`,
 		`href="/feedback"`,

@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/bobmcallan/satellites/internal/auth"
+	"github.com/bobmcallan/satellites/internal/config"
 )
 
 const (
@@ -89,4 +92,47 @@ func (p *Portal) handleThemeSet(w http.ResponseWriter, r *http.Request) {
 		next = "/"
 	}
 	http.Redirect(w, r, next, http.StatusSeeOther)
+}
+
+// settingsData feeds settings.html. Mirrors the other portal-page view
+// models so the shared head/nav templates render with the same fields.
+type settingsData struct {
+	Title           string
+	Version         string
+	Commit          string
+	User            auth.User
+	Workspaces      []wsChip
+	ActiveWorkspace wsChip
+	DevMode         bool
+	ThemeMode       string
+	ThemePickerNext string
+	WSConfig        WSConfig
+}
+
+// handleSettings renders the user-facing settings page (story_ccee859d).
+// The theme picker now lives here instead of inside the hamburger
+// dropdown; the dropdown links to /settings.
+func (p *Portal) handleSettings(w http.ResponseWriter, r *http.Request) {
+	user, ok := p.resolveUser(r)
+	if !ok {
+		p.redirectToLogin(w, r)
+		return
+	}
+	active, chips, _ := p.activeWorkspace(r, user)
+	data := settingsData{
+		Title:           "settings",
+		Version:         config.Version,
+		Commit:          config.GitCommit,
+		User:            user,
+		Workspaces:      chips,
+		ActiveWorkspace: active,
+		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
+		ThemeMode:       themeFromRequest(r),
+		ThemePickerNext: "/settings",
+		WSConfig:        buildWSConfig(active, r),
+	}
+	if err := p.tmpl.ExecuteTemplate(w, "settings.html", data); err != nil {
+		p.logger.Error().Str("template", "settings.html").Str("error", err.Error()).Msg("template render failed")
+		http.Error(w, "render failed", http.StatusInternalServerError)
+	}
 }

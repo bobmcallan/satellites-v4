@@ -65,9 +65,7 @@
       </button>
       <div x-show="open" x-cloak class="nav-dropdown" data-testid="nav-dropdown" @click.outside="open = false">
         <div class="nav-dropdown-user">{{.User.Email}}</div>
-        <div class="nav-dropdown-section nav-dropdown-theme">
-          {{template "theme_picker.html" .}}
-        </div>
+        <a href="/settings" data-testid="nav-settings-link">settings</a>
         <form action="/auth/logout" method="post" class="nav-dropdown-form">
           <button type="submit" class="nav-dropdown-logout">sign out</button>
         </form>

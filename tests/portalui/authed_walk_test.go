@@ -104,9 +104,12 @@ func TestPortal_AuthedWalk(t *testing.T) {
 		t.Errorf("/tasks panel missing — html=%s", tasksHTML)
 	}
 
-	// Step 5 — open hamburger dropdown; theme picker must be present.
+	// Step 5 — open hamburger dropdown; settings link must be present and
+	// the theme picker must NOT be inside the dropdown (story_ccee859d
+	// moved it to /settings).
 	var dropdownVisible bool
-	var themePickerVisible bool
+	var settingsLinkVisible bool
+	var themePickerInDropdown bool
 	if err := chromedp.Run(browserCtx,
 		chromedp.Click(`button[data-testid="nav-hamburger"]`, chromedp.ByQuery),
 		chromedp.Sleep(150*time.Millisecond),
@@ -114,15 +117,21 @@ func TestPortal_AuthedWalk(t *testing.T) {
 			`(() => { const el = document.querySelector('[data-testid="nav-dropdown"]'); return !!el && el.offsetParent !== null; })()`,
 			&dropdownVisible),
 		chromedp.Evaluate(
+			`(() => { const el = document.querySelector('[data-testid="nav-dropdown"] [data-testid="nav-settings-link"]'); return !!el && el.offsetParent !== null; })()`,
+			&settingsLinkVisible),
+		chromedp.Evaluate(
 			`(() => { const el = document.querySelector('[data-testid="nav-dropdown"] form.theme-picker'); return !!el && el.offsetParent !== null; })()`,
-			&themePickerVisible),
+			&themePickerInDropdown),
 	); err != nil {
 		t.Fatalf("hamburger open: %v", err)
 	}
 	if !dropdownVisible {
 		t.Errorf("hamburger dropdown did not open")
 	}
-	if !themePickerVisible {
-		t.Errorf("theme picker missing inside hamburger dropdown")
+	if !settingsLinkVisible {
+		t.Errorf("settings link missing inside hamburger dropdown")
+	}
+	if themePickerInDropdown {
+		t.Errorf("theme picker still inside hamburger dropdown; expected on /settings page only (story_ccee859d)")
 	}
 }

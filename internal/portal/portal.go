@@ -209,6 +209,7 @@ func (p *Portal) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/grants/{id}/release", p.handleGrantRelease)
 	mux.HandleFunc("GET /workspaces/select", p.handleWorkspaceSelect)
 	mux.HandleFunc("POST /theme", p.handleThemeSet)
+	mux.HandleFunc("GET /settings", p.handleSettings)
 	static, err := pages.Static()
 	if err == nil {
 		mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))

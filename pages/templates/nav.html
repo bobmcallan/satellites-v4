@@ -1,71 +1,73 @@
 {{define "nav.html"}}
 <header class="portal-nav nav" x-data="{open: false}" @click.outside="open = false">
-  <div class="nav-brand"><a href="/">satellites</a></div>
-  {{if .DevMode}}<span class="nav-dev-chip" data-testid="dev-chip">DEV</span>{{end}}
-  {{if and .User.Email .ActiveWorkspace.ID}}<a class="nav-project-focus" data-testid="active-ws-chip" href="/projects">{{.ActiveWorkspace.Name}}</a>{{end}}
-  {{if .User.Email}}
-  <nav class="nav-links">
-    <a href="/projects">projects</a>
-    <a href="/tasks">tasks</a>
-  </nav>
-  {{if .Workspaces}}
-  <div class="nav-workspace" x-data="{wsOpen: false}">
-    <button type="button" class="btn-link" @click="wsOpen = !wsOpen" @keydown.escape.window="wsOpen = false">
-      WORKSPACE / {{if .ActiveWorkspace.ID}}{{.ActiveWorkspace.Name}}{{else}}—{{end}}
-      <span aria-hidden="true">▾</span>
-    </button>
-    <ul class="nav-workspace-menu" x-show="wsOpen" x-cloak @click.outside="wsOpen = false">
-      {{range .Workspaces}}
-      <li>
-        <a href="/workspaces/select?id={{.ID}}&amp;next=/projects" {{if eq .ID $.ActiveWorkspace.ID}}aria-current="true"{{end}}>
-          {{.Name}}
-        </a>
-      </li>
-      {{end}}
-    </ul>
-  </div>
-  {{end}}
-  {{end}}
-  <div class="nav-spacer"></div>
-  {{if .WSConfig.WorkspaceID}}
-  <div class="ws-indicator" x-data="wsIndicator()" x-init="start()" :class="'ws-indicator-' + status">
-    <button type="button" class="ws-indicator-btn" @click="toggleDebug()" :title="statusText()" :aria-label="statusText()">
-      <span class="ws-dot" aria-hidden="true"></span>
-      <span class="sr-only" x-text="statusText()"></span>
-    </button>
-    <div class="ws-debug" x-show="debugOpen" x-cloak @click.outside="debugOpen = false">
-      <div class="ws-debug-header">
-        <span x-text="statusText()"></span>
-        <button type="button" class="btn-link" x-show="status === 'disconnected'" @click="retry()">retry</button>
-      </div>
-      <ul class="ws-debug-events">
-        <template x-for="ev in recentEvents" :key="ev.id">
-          <li>
-            <code x-text="ev.kind"></code>
-            <span class="ws-debug-ts" x-text="ev.created_at"></span>
-          </li>
-        </template>
-        <li x-show="recentEvents.length === 0" class="ws-debug-empty">no events yet</li>
+  <div class="nav-inner">
+    <div class="nav-brand"><a href="/">satellites</a></div>
+    {{if .DevMode}}<span class="nav-dev-chip" data-testid="dev-chip">DEV</span>{{end}}
+    {{if and .User.Email .ActiveWorkspace.ID}}<a class="nav-project-focus" data-testid="active-ws-chip" href="/projects">{{.ActiveWorkspace.Name}}</a>{{end}}
+    {{if .User.Email}}
+    <nav class="nav-links">
+      <a href="/projects">projects</a>
+      <a href="/tasks">tasks</a>
+    </nav>
+    {{if .Workspaces}}
+    <div class="nav-workspace" x-data="{wsOpen: false}">
+      <button type="button" class="btn-link" @click="wsOpen = !wsOpen" @keydown.escape.window="wsOpen = false">
+        WORKSPACE / {{if .ActiveWorkspace.ID}}{{.ActiveWorkspace.Name}}{{else}}—{{end}}
+        <span aria-hidden="true">▾</span>
+      </button>
+      <ul class="nav-workspace-menu" x-show="wsOpen" x-cloak @click.outside="wsOpen = false">
+        {{range .Workspaces}}
+        <li>
+          <a href="/workspaces/select?id={{.ID}}&amp;next=/projects" {{if eq .ID $.ActiveWorkspace.ID}}aria-current="true"{{end}}>
+            {{.Name}}
+          </a>
+        </li>
+        {{end}}
       </ul>
     </div>
-  </div>
-  {{end}}
-  <span class="version-chip" title="commit {{.Commit}}">v{{.Version}} · {{.Commit}}</span>
-  {{if .User.Email}}
-  <div class="nav-hamburger-wrap">
-    <button type="button" class="nav-hamburger" data-testid="nav-hamburger" @click="open = !open" aria-label="open menu">
-      <span class="nav-hamburger-icon" aria-hidden="true">≡</span>
-    </button>
-    <div x-show="open" x-cloak class="nav-dropdown" data-testid="nav-dropdown">
-      <div class="nav-dropdown-user">{{.User.Email}}</div>
-      <div class="nav-dropdown-section nav-dropdown-theme">
-        {{template "theme_picker.html" .}}
+    {{end}}
+    {{end}}
+    <div class="nav-spacer"></div>
+    {{if .WSConfig.WorkspaceID}}
+    <div class="ws-indicator" x-data="wsIndicator()" x-init="start()" :class="'ws-indicator-' + status">
+      <button type="button" class="ws-indicator-btn" @click="toggleDebug()" :title="statusText()" :aria-label="statusText()">
+        <span class="ws-dot" aria-hidden="true"></span>
+        <span class="sr-only" x-text="statusText()"></span>
+      </button>
+      <div class="ws-debug" x-show="debugOpen" x-cloak @click.outside="debugOpen = false">
+        <div class="ws-debug-header">
+          <span x-text="statusText()"></span>
+          <button type="button" class="btn-link" x-show="status === 'disconnected'" @click="retry()">retry</button>
+        </div>
+        <ul class="ws-debug-events">
+          <template x-for="ev in recentEvents" :key="ev.id">
+            <li>
+              <code x-text="ev.kind"></code>
+              <span class="ws-debug-ts" x-text="ev.created_at"></span>
+            </li>
+          </template>
+          <li x-show="recentEvents.length === 0" class="ws-debug-empty">no events yet</li>
+        </ul>
       </div>
-      <form action="/auth/logout" method="post" class="nav-dropdown-form">
-        <button type="submit" class="nav-dropdown-logout">sign out</button>
-      </form>
     </div>
+    {{end}}
+    <span class="version-chip" title="commit {{.Commit}}">v{{.Version}} · {{.Commit}}</span>
+    {{if .User.Email}}
+    <div class="nav-hamburger-wrap">
+      <button type="button" class="nav-hamburger" data-testid="nav-hamburger" @click="open = !open" aria-label="open menu">
+        <span class="nav-hamburger-icon" aria-hidden="true">≡</span>
+      </button>
+      <div x-show="open" x-cloak class="nav-dropdown" data-testid="nav-dropdown">
+        <div class="nav-dropdown-user">{{.User.Email}}</div>
+        <div class="nav-dropdown-section nav-dropdown-theme">
+          {{template "theme_picker.html" .}}
+        </div>
+        <form action="/auth/logout" method="post" class="nav-dropdown-form">
+          <button type="submit" class="nav-dropdown-logout">sign out</button>
+        </form>
+      </div>
+    </div>
+    {{end}}
   </div>
-  {{end}}
 </header>
 {{end}}

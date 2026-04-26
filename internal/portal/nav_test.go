@@ -10,6 +10,42 @@ import (
 	"github.com/bobmcallan/satellites/internal/config"
 )
 
+// TestNav_HasFlexContainer asserts the nav children sit inside a
+// `.nav-inner` wrapper so the existing flex CSS (display: flex,
+// align-items: center) renders the bar as a single horizontal row.
+// Regression guard for story_31d43312 — story_e7e8b455 dropped the
+// wrapper and the dashboard nav stacked vertically.
+func TestNav_HasFlexContainer(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Env: "dev", DevMode: true}
+	p, users, sessions, _, _, _ := newTestPortal(t, cfg)
+	mux := http.NewServeMux()
+	p.Register(mux)
+
+	user := auth.User{ID: "u_1", Email: "alice@local"}
+	users.Add(user)
+	sess, _ := sessions.Create(user.ID, auth.DefaultSessionTTL)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: sess.ID})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+
+	headerOpen := strings.Index(body, `<header class="portal-nav nav"`)
+	innerOpen := strings.Index(body, `<div class="nav-inner">`)
+	brand := strings.Index(body, `class="nav-brand"`)
+	if headerOpen < 0 {
+		t.Fatalf("header missing")
+	}
+	if innerOpen < 0 {
+		t.Fatalf(`<div class="nav-inner"> wrapper missing — nav will stack vertically without flex container`)
+	}
+	if !(headerOpen < innerOpen && innerOpen < brand) {
+		t.Errorf("nav-inner must sit between <header> and the first nav child; got header=%d inner=%d brand=%d", headerOpen, innerOpen, brand)
+	}
+}
+
 // TestNav_DOMOrder asserts the v3 nav layout: brand → optional DEV chip
 // → optional active-WS chip → primary links → spacer → indicators →
 // version chip → hamburger. Renders an authed page for a user with one

@@ -1,5 +1,5 @@
 {{define "nav.html"}}
-<header class="portal-nav nav" x-data="{open: false}" @click.outside="open = false">
+<header class="portal-nav nav">
   <div class="nav-inner">
     <div class="nav-brand"><a href="/">satellites</a></div>
     {{if .DevMode}}<span class="nav-dev-chip" data-testid="dev-chip">DEV</span>{{end}}
@@ -59,11 +59,11 @@
     </div>
     {{end}}
     {{if .User.Email}}
-    <div class="nav-hamburger-wrap">
+    <div class="nav-hamburger-wrap" x-data="{open: false}" @keydown.escape.window="open = false">
       <button type="button" class="nav-hamburger" data-testid="nav-hamburger" @click="open = !open" aria-label="open menu">
         <span class="nav-hamburger-icon" aria-hidden="true">≡</span>
       </button>
-      <div x-show="open" x-cloak class="nav-dropdown" data-testid="nav-dropdown">
+      <div x-show="open" x-cloak class="nav-dropdown" data-testid="nav-dropdown" @click.outside="open = false">
         <div class="nav-dropdown-user">{{.User.Email}}</div>
         <div class="nav-dropdown-section nav-dropdown-theme">
           {{template "theme_picker.html" .}}

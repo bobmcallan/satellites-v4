@@ -3,7 +3,6 @@
   <div class="nav-inner">
     <div class="nav-brand"><a href="/">satellites</a></div>
     {{if .DevMode}}<span class="nav-dev-chip" data-testid="dev-chip">DEV</span>{{end}}
-    {{if and .User.Email .ActiveWorkspace.ID}}<a class="nav-project-focus" data-testid="active-ws-chip" href="/projects">{{.ActiveWorkspace.Name}}</a>{{end}}
     {{if .User.Email}}
     <nav class="nav-links">
       <a href="/projects">projects</a>

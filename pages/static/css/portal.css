@@ -444,6 +444,60 @@ a:hover {
     .nav-links { display: none; }
 }
 
+/* Workspace switcher (story_4d1ef14f). The trigger button reuses the
+   .nav-links typography so the bar reads as one strip; the dropdown is
+   absolutely positioned so opening it never reflows the nav row. */
+.nav-workspace {
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin-left: 1rem;
+}
+
+.btn-link {
+    background: transparent;
+    border: 0;
+    padding: 0.25rem 0;
+    margin: 0;
+    font: inherit;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: inherit;
+    cursor: pointer;
+}
+
+.nav-workspace .btn-link:hover { text-decoration: underline; }
+
+.nav-workspace-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin: 0.25rem 0 0 0;
+    padding: 0.25rem 0;
+    list-style: none;
+    background: #fff;
+    border: 1px solid #000;
+    min-width: 14rem;
+    z-index: 50;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.nav-workspace-menu li { margin: 0; }
+
+.nav-workspace-menu a {
+    display: block;
+    padding: 0.4rem 0.75rem;
+    text-decoration: none;
+    color: #000;
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+}
+
+.nav-workspace-menu a:hover { background: #f5f5f5; }
+.nav-workspace-menu a[aria-current="true"] { font-weight: 700; }
+
 
 /* ============================================================
    FOOTER
@@ -1360,6 +1414,15 @@ code {
     background: #e0e0e0;
     color: #111;
 }
+
+/* Workspace switcher (story_4d1ef14f) — dark-theme. */
+[data-theme="dark"] .nav-workspace-menu {
+    background: #1a1a1a;
+    border-color: #e0e0e0;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+[data-theme="dark"] .nav-workspace-menu a { color: #e0e0e0; }
+[data-theme="dark"] .nav-workspace-menu a:hover { background: #2a2a2a; }
 
 /* Hamburger */
 [data-theme="dark"] .nav-hamburger-icon,

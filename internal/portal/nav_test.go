@@ -191,8 +191,9 @@ func TestNav_NoActiveWSChip(t *testing.T) {
 
 // TestNav_WorkspaceNameSingle asserts the active workspace name appears
 // exactly once in the rendered nav. The switcher button is the single
-// source of truth; the previous duplicate chip has been removed.
-// story_4d1ef14f.
+// source of truth; the chip has been removed and the menu lists only
+// the OTHER workspaces (the active one is the button label, not a
+// switch target). story_4d1ef14f.
 func TestNav_WorkspaceNameSingle(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Env: "dev", DevMode: true}
@@ -202,11 +203,19 @@ func TestNav_WorkspaceNameSingle(t *testing.T) {
 
 	user := auth.User{ID: "u_alice", Email: "alice@local"}
 	users.Add(user)
-	const wsName = "TestaroniWorkspaceXYZ"
-	if _, err := ws.Create(testCtx(), user.ID, wsName, time.Now().UTC()); err != nil {
-		t.Fatalf("create workspace: %v", err)
+	const activeName = "TestaroniWorkspaceXYZ"
+	const otherName = "BetaWorkspaceQRS"
+	active, err := ws.Create(testCtx(), user.ID, activeName, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("create active workspace: %v", err)
+	}
+	if _, err := ws.Create(testCtx(), user.ID, otherName, time.Now().UTC()); err != nil {
+		t.Fatalf("create other workspace: %v", err)
 	}
 	sess, _ := sessions.Create(user.ID, auth.DefaultSessionTTL)
+	if err := sessions.SetActiveWorkspace(sess.ID, active.ID); err != nil {
+		t.Fatalf("set active workspace: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: sess.ID})
@@ -220,13 +229,12 @@ func TestNav_WorkspaceNameSingle(t *testing.T) {
 		t.Fatalf("nav header bounds missing")
 	}
 	navOnly := body[headerStart:headerEnd]
-	got := strings.Count(navOnly, wsName)
-	// Switcher button + one menu entry per workspace; with one workspace
-	// the menu lists it as a single <a> as well. Two occurrences are
-	// expected (button label + menu list item). The bug was THREE (chip +
-	// button + menu).
-	if got != 2 {
-		t.Errorf("active workspace name occurrences in nav = %d, want 2 (switcher button + menu item)", got)
+
+	if got := strings.Count(navOnly, activeName); got != 1 {
+		t.Errorf("active workspace name occurrences in nav = %d, want 1 (switcher button only); navOnly=%s", got, navOnly)
+	}
+	if got := strings.Count(navOnly, otherName); got != 1 {
+		t.Errorf("other workspace name occurrences in nav = %d, want 1 (menu list item); navOnly=%s", got, navOnly)
 	}
 }
 

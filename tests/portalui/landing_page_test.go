@@ -113,7 +113,7 @@ func TestLanding_AuthRoutesToIndex(t *testing.T) {
 	var bodyText string
 	if err := chromedp.Run(browserCtx,
 		chromedp.Navigate(h.BaseURL+"/"),
-		chromedp.WaitVisible(`.version-chip`, chromedp.ByQuery),
+		chromedp.WaitVisible(`footer.footer`, chromedp.ByQuery),
 		chromedp.Text("body", &bodyText, chromedp.ByQuery),
 	); err != nil {
 		t.Fatalf("navigate /: %v", err)

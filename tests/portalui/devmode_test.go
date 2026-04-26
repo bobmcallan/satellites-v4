@@ -30,7 +30,7 @@ func TestDevMode_QuickSignin(t *testing.T) {
 		chromedp.Click(`form[data-testid="dev-signin"] button`, chromedp.ByQuery),
 		// Form POST → 303 → GET /. Wait briefly for the redirect to land.
 		chromedp.Sleep(400*time.Millisecond),
-		chromedp.WaitVisible(`.version-chip`, chromedp.ByQuery),
+		chromedp.WaitVisible(`footer.footer`, chromedp.ByQuery),
 		chromedp.Text("body", &bodyText, chromedp.ByQuery),
 	); err != nil {
 		t.Fatalf("dev signin: %v", err)

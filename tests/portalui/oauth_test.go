@@ -69,7 +69,7 @@ func TestOAuth_FullSigninFlow(t *testing.T) {
 		// Click → 303 to stub /auth → stub 302 → /auth/google/callback → 303
 		// → /. Wait for the dashboard to render.
 		chromedp.Sleep(600*time.Millisecond),
-		chromedp.WaitVisible(`.version-chip`, chromedp.ByQuery),
+		chromedp.WaitVisible(`footer.footer`, chromedp.ByQuery),
 		chromedp.Text("body", &bodyText, chromedp.ByQuery),
 	); err != nil {
 		t.Fatalf("oauth full flow: %v", err)

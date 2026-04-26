@@ -14,13 +14,15 @@
         WORKSPACE / {{if .ActiveWorkspace.ID}}{{.ActiveWorkspace.Name}}{{else}}—{{end}}
         <span aria-hidden="true">▾</span>
       </button>
-      <ul class="nav-workspace-menu" x-show="wsOpen" x-cloak @click.outside="wsOpen = false">
+      <ul class="nav-workspace-menu" x-show="wsOpen" x-cloak @click.outside="wsOpen = false" data-testid="nav-workspace-menu">
         {{range .Workspaces}}
+        {{if ne .ID $.ActiveWorkspace.ID}}
         <li>
-          <a href="/workspaces/select?id={{.ID}}&amp;next=/projects" {{if eq .ID $.ActiveWorkspace.ID}}aria-current="true"{{end}}>
+          <a href="/workspaces/select?id={{.ID}}&amp;next=/projects">
             {{.Name}}
           </a>
         </li>
+        {{end}}
         {{end}}
       </ul>
     </div>

@@ -71,8 +71,8 @@ func TestLoginFlowSetsAndClearsSession(t *testing.T) {
 	if !strings.Contains(string(landing), "dev@local") {
 		t.Errorf("landing missing user email; body=%s", string(landing))
 	}
-	if !strings.Contains(string(landing), "version-chip") {
-		t.Errorf("landing missing version chip; body=%s", string(landing))
+	if !strings.Contains(string(landing), `<footer class="footer">`) {
+		t.Errorf("landing missing footer (story_1340913b moved version metadata to the footer); body=%s", string(landing))
 	}
 
 	// 3. Logout via POST. Then a GET / must redirect back to /login.

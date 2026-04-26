@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,6 +44,62 @@ func TestHealthzShape(t *testing.T) {
 	}
 	if uptime, ok := body["uptime_seconds"].(float64); !ok || uptime < 1 {
 		t.Errorf("uptime_seconds = %v, want >=1", body["uptime_seconds"])
+	}
+}
+
+// TestSecurityHeaders_AllPresent covers AC1+AC2 of story_d5652302.
+// All non-HSTS headers ship on every endpoint regardless of env; HSTS
+// is gated on prod (story_d5652302 — dev hits over plain HTTP).
+func TestSecurityHeaders_AllPresent(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Port: 0, Env: "dev", LogLevel: "info"}
+	s := New(cfg, satarbor.New("info"), time.Now())
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	s.http.Handler.ServeHTTP(rec, req)
+
+	got := rec.Header()
+	for _, want := range []struct{ key, contains string }{
+		{"X-Frame-Options", "DENY"},
+		{"X-Content-Type-Options", "nosniff"},
+		{"Referrer-Policy", "strict-origin-when-cross-origin"},
+		{"Content-Security-Policy", "default-src 'self'"},
+		{"Content-Security-Policy", "https://cdn.jsdelivr.net"},
+		{"Content-Security-Policy", "https://fonts.googleapis.com"},
+		{"Content-Security-Policy", "https://fonts.gstatic.com"},
+		{"Content-Security-Policy", "'unsafe-inline'"},
+	} {
+		v := got.Get(want.key)
+		if v == "" {
+			t.Errorf("missing header %q", want.key)
+			continue
+		}
+		if !strings.Contains(v, want.contains) {
+			t.Errorf("header %q = %q, missing substring %q", want.key, v, want.contains)
+		}
+	}
+	if got.Get("Strict-Transport-Security") != "" {
+		t.Errorf("dev env emitted HSTS; should be prod-only")
+	}
+}
+
+// TestSecurityHeaders_HSTSGatedOnProd verifies HSTS only ships in prod.
+func TestSecurityHeaders_HSTSGatedOnProd(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Port: 0, Env: "prod", LogLevel: "info"}
+	s := New(cfg, satarbor.New("info"), time.Now())
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	s.http.Handler.ServeHTTP(rec, req)
+
+	hsts := rec.Header().Get("Strict-Transport-Security")
+	if hsts == "" {
+		t.Fatalf("prod env did not emit HSTS")
+	}
+	if !strings.Contains(hsts, "max-age=31536000") || !strings.Contains(hsts, "includeSubDomains") {
+		t.Errorf("HSTS = %q, want max-age=31536000 + includeSubDomains", hsts)
 	}
 }
 

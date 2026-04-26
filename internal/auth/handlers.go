@@ -25,6 +25,18 @@ type Handlers struct {
 	// default workspace per docs/architecture.md §8 (Workspace is the
 	// multi-tenant primitive). Optional; nil = no-op.
 	OnUserCreated func(ctx context.Context, userID string)
+
+	// LoginLimiter throttles per-IP credential submissions on POST
+	// /auth/login. Optional — nil disables the gate (test default).
+	// story_d5652302 wires the live limiter from main().
+	LoginLimiter LoginLimiter
+}
+
+// LoginLimiter is the narrow surface auth.Handlers consumes from
+// internal/ratelimit. Kept as an interface so tests can inject a
+// deterministic stub without depending on the package.
+type LoginLimiter interface {
+	Allow(key string) bool
 }
 
 // UserStoreByEmail is the lookup surface the login handler needs. Kept
@@ -43,6 +55,14 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 // Login authenticates the supplied username + password, creates a session,
 // sets the cookie, and redirects 303 to `/` (or to `?next=` when present).
 func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
+	if h.LoginLimiter != nil {
+		key := loginRateKey(r)
+		if !h.LoginLimiter.Allow(key) {
+			h.Logger.Warn().Str("event", "login-throttled").Str("source_ip", key).Msg("auth login rate-limited")
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
+	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
@@ -142,4 +162,26 @@ func (h *Handlers) authenticate(username, password string) (User, bool) {
 
 func cookieOpts(cfg *config.Config) CookieOptions {
 	return CookieOptions{Secure: cfg.Env == "prod"}
+}
+
+// loginRateKey resolves the per-request rate-limit key. Behind Fly's
+// proxy the original client IP is delivered in X-Forwarded-For; fall
+// back to RemoteAddr (host portion) when absent. Empty string is a
+// stable bucket — denying-all-when-unparseable is preferable to
+// silently letting an unidentified caller bypass the limit.
+func loginRateKey(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// Format: "client, proxy1, proxy2"; take the first hop.
+		if idx := strings.IndexByte(xff, ','); idx > 0 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return strings.TrimSpace(xff)
+	}
+	if r.RemoteAddr == "" {
+		return ""
+	}
+	if idx := strings.LastIndexByte(r.RemoteAddr, ':'); idx > 0 {
+		return r.RemoteAddr[:idx]
+	}
+	return r.RemoteAddr
 }

@@ -74,7 +74,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, registra
 		r.Register(s.mux)
 	}
 
-	handler := requestID(accessLog(logger, s.mux))
+	handler := securityHeaders(cfg.Env == "prod", requestID(accessLog(logger, s.mux)))
 
 	s.http = &http.Server{
 		Addr:              net.JoinHostPort("0.0.0.0", strconv.Itoa(cfg.Port)),

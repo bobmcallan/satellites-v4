@@ -15,6 +15,7 @@ import (
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
 	"github.com/bobmcallan/satellites/internal/auth"
+	"github.com/bobmcallan/satellites/internal/ratelimit"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/contract"
 	"github.com/bobmcallan/satellites/internal/db"
@@ -63,12 +64,13 @@ func main() {
 	providers := auth.BuildProviderSet(cfg)
 	states := auth.NewStateStore(10 * time.Minute)
 	authHandlers := &auth.Handlers{
-		Users:     users,
-		Sessions:  sessions,
-		Logger:    logger,
-		Cfg:       cfg,
-		Providers: providers,
-		States:    states,
+		Users:        users,
+		Sessions:     sessions,
+		Logger:       logger,
+		Cfg:          cfg,
+		Providers:    providers,
+		States:       states,
+		LoginLimiter: ratelimit.New(10, time.Minute),
 	}
 	// After the workspace store is wired (below), main() may set
 	// authHandlers.OnUserCreated to seed each new user's default workspace.

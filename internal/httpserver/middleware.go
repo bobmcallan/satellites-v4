@@ -13,6 +13,38 @@ import (
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
 )
 
+// contentSecurityPolicy is the served value of the CSP header. The portal
+// emits inline <script> blocks for Alpine init, fetches Alpine itself
+// from cdn.jsdelivr.net, and pulls Google Fonts for the wordmark, so the
+// policy permits each source explicitly. Tightening to nonces is a
+// follow-up — story_d5652302 names the CDN allow-listing as the
+// pragmatic v4 baseline.
+const contentSecurityPolicy = "default-src 'self'; " +
+	"script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
+	"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+	"font-src 'self' https://fonts.gstatic.com; " +
+	"connect-src 'self' ws: wss:"
+
+// securityHeaders injects the v4 security-header baseline on every
+// response: CSP, X-Frame-Options, X-Content-Type-Options,
+// Referrer-Policy, and Strict-Transport-Security (prod only). HSTS is
+// gated on prod because dev/local hits 127.0.0.1 over plain HTTP and
+// HSTS would lock the browser into HTTPS for the dev hostname. See
+// story_d5652302.
+func securityHeaders(prod bool, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", contentSecurityPolicy)
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		if prod {
+			h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // requestID injects a UUID v4 into the request context when the inbound
 // request does not carry an X-Request-ID header. The value is also echoed on
 // the response so clients can correlate logs.

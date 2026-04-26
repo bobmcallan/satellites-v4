@@ -94,6 +94,45 @@ func TestLogin_MissingUser(t *testing.T) {
 	}
 }
 
+// stubLimiter denies on Allow once threshold requests have been served.
+type stubLimiter struct {
+	allowed int
+	max     int
+}
+
+func (s *stubLimiter) Allow(_ string) bool {
+	if s.allowed >= s.max {
+		return false
+	}
+	s.allowed++
+	return true
+}
+
+// TestLogin_RateLimited429 covers AC3 of story_d5652302: requests in
+// excess of the per-IP threshold must return 429 before the credential
+// path runs.
+func TestLogin_RateLimited429(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Env: "dev"}
+	h, users, _ := newTestHandlers(t, cfg)
+	seedUser(t, users, "alice@local", "s3cr3t")
+	h.LoginLimiter = &stubLimiter{max: 3}
+
+	for i := 0; i < 3; i++ {
+		rec := postLogin(t, h, "alice@local", "wrong")
+		if rec.Code == http.StatusTooManyRequests {
+			t.Fatalf("request %d throttled too soon (under threshold)", i)
+		}
+	}
+	rec := postLogin(t, h, "alice@local", "wrong")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("over-threshold status = %d, want 429", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "too many") {
+		t.Errorf("body = %q, want 'too many requests' message", rec.Body.String())
+	}
+}
+
 func TestLogin_DevMode_DevEnvAllowed(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Env: "dev", DevMode: true, DevUsername: "dev@local", DevPassword: "devpass"}

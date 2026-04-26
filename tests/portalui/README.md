@@ -36,6 +36,23 @@ the underlying error. The two non-chromedp smokes (`TestHarness_Boots`,
 | `TestIndicator_ProlongedOutage_TurnsRed` | AC5 — prolonged outage → red + retry button |
 | `TestIndicator_RetryButton_Recovers` | AC6 — click retry → reconnects |
 | `TestIndicator_DebugPanel_RendersEvents` | AC7 — `?debug=true` panel shows live events |
+| `TestPortal_AuthedWalk` | story_4fc0d35c — full authed flow (dev-signin → dashboard → workspace menu → /projects → /tasks → hamburger). Includes regression guards for story_690b8f5c (empty workspace menu) and story_0f415ab3 (empty /projects). |
+| `TestProjects_DevUserSeesDefaultProject` | story_0f415ab3 — focused per-user default project seed |
+| `TestWorkspaceSwitcher_DropdownDoesNotReflowNav` | story_4d1ef14f — workspace switcher height stability |
+| `TestDevMode_QuickSignin` | story_7105204f — single-click dev signin |
+
+## Authed flow walk
+
+`TestPortal_AuthedWalk` is the catch-all "real user navigates the
+portal" test. When you ship a new authed page, extend it with a step
+that asserts both the page renders **and** the empty/broken edge cases
+fail loudly. The pattern from the existing assertions:
+
+- Resolve the link/button (`a[href="/X"]`, `[data-testid="..."]`).
+- Wait for the next page's anchor element (`section.panel-headed`,
+  `footer.footer`, …).
+- Assert the expected content count (rows ≥ 1, children ≥ 1, no
+  empty-state copy).
 
 ## Notable design choices
 

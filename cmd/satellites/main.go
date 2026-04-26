@@ -15,7 +15,6 @@ import (
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
 	"github.com/bobmcallan/satellites/internal/auth"
-	"github.com/bobmcallan/satellites/internal/ratelimit"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/contract"
 	"github.com/bobmcallan/satellites/internal/db"
@@ -29,6 +28,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/mcpserver"
 	"github.com/bobmcallan/satellites/internal/portal"
 	"github.com/bobmcallan/satellites/internal/project"
+	"github.com/bobmcallan/satellites/internal/ratelimit"
 	"github.com/bobmcallan/satellites/internal/rolegrant"
 	"github.com/bobmcallan/satellites/internal/session"
 	"github.com/bobmcallan/satellites/internal/story"
@@ -60,7 +60,7 @@ func main() {
 	defer stop()
 
 	users := auth.NewMemoryUserStore()
-	sessions := auth.NewMemorySessionStore()
+	var sessions auth.SessionStore = auth.NewMemorySessionStore()
 	providers := auth.BuildProviderSet(cfg)
 	states := auth.NewStateStore(10 * time.Minute)
 	authHandlers := &auth.Handlers{
@@ -120,6 +120,11 @@ func main() {
 		wsStore = workspace.NewSurrealStore(conn)
 		contractStore = contract.NewSurrealStore(conn, docStore, storyStore)
 		sessionStore = session.NewSurrealStore(conn)
+		// story_0ab83f82: replace MemorySessionStore with the durable
+		// Surreal-backed implementation when DB_DSN is set so cookie
+		// sessions survive Fly rolling restarts.
+		sessions = auth.NewSurrealSessionStore(conn)
+		authHandlers.Sessions = sessions
 		grantStore = rolegrant.NewSurrealStore(conn, docStore)
 		taskStore = task.NewSurrealStore(conn)
 		dbPing = func(hcCtx context.Context) error { return db.Ping(hcCtx, conn) }

@@ -946,9 +946,17 @@ func (s *Server) handleDocumentCreate(ctx context.Context, req mcpgo.CallToolReq
 		doc.Structured = []byte(structured)
 	}
 
-	created, err := s.docs.Create(ctx, doc, time.Now().UTC())
+	now := time.Now().UTC()
+	created, err := s.docs.Create(ctx, doc, now)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	// Story_8b06a100: enqueue an embed-document task so the production
+	// embed worker (when EMBEDDINGS_PROVIDER is set) chunks + embeds the
+	// new row. Returns nil + nil when bodies are too short or the
+	// taskStore isn't wired (dev/no-DB), so the success path is unaffected.
+	if _, err := document.EnqueueIngest(ctx, s.tasks, created, now); err != nil {
+		s.logger.Warn().Str("doc_id", created.ID).Str("error", err.Error()).Msg("embed enqueue failed")
 	}
 	body, _ := json.Marshal(created)
 	s.logger.Info().

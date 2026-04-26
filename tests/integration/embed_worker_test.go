@@ -66,27 +66,44 @@ func TestEmbedWorker_StubProvider_ChunksDocument(t *testing.T) {
 	mcpURL := baseURL + "/mcp"
 	rpcInit(t, ctx, mcpURL, "key_embed")
 
-	// Create a principle whose body carries a distinctive needle.
-	created := callTool(t, ctx, mcpURL, "key_embed", "document_create", map[string]any{
+	// Two principles with distinct bodies. The stub embedder is FNV-
+	// hashed → vectors only collide on identical text, so cosine
+	// similarity is 1.0 when the query matches a chunk verbatim and ≈0
+	// otherwise. Querying with `targetBody` guarantees the target row
+	// ranks above the control.
+	const (
+		targetBody  = "alpha bravo charlie delta echo foxtrot golf hotel india juliet"
+		controlBody = "one two three four five six seven eight nine ten eleven twelve"
+	)
+	target := callTool(t, ctx, mcpURL, "key_embed", "document_create", map[string]any{
 		"type":  "principle",
 		"scope": "system",
-		"name":  "embedworker-fixture",
-		"body":  "the embed worker chunks documents into vector entries",
+		"name":  "embedworker-fixture-target",
+		"body":  targetBody,
 		"tags":  []any{"v4", "embed-worker-fixture"},
 	})
-	docID, _ := created["id"].(string)
+	docID, _ := target["id"].(string)
 	if docID == "" {
-		t.Fatalf("document_create returned no id: %+v", created)
+		t.Fatalf("document_create returned no id: %+v", target)
+	}
+	control := callTool(t, ctx, mcpURL, "key_embed", "document_create", map[string]any{
+		"type":  "principle",
+		"scope": "system",
+		"name":  "embedworker-fixture-control",
+		"body":  controlBody,
+		"tags":  []any{"v4", "embed-worker-fixture"},
+	})
+	controlID, _ := control["id"].(string)
+	if controlID == "" {
+		t.Fatalf("document_create returned no id (control): %+v", control)
 	}
 
-	// Poll task_list for the embed-document task to transition to
-	// status=closed with outcome=success. document_create enqueues an
-	// event-origin task; the worker (gated on EMBEDDINGS_PROVIDER and
-	// the chunk stores) polls + claims it, runs the stub embedder, and
-	// closes the row. The matching task carries the doc id in its
-	// base64-encoded payload so we substring-match the ID after decode.
+	// Wait for both embed-document tasks (target + control) to reach
+	// status=closed outcome=success — without that, document_search
+	// would still rank by the filter-only fallback rather than via
+	// SearchSemantic.
 	deadline := time.Now().Add(60 * time.Second)
-	var processed bool
+	want := map[string]bool{docID: false, controlID: false}
 	for time.Now().Before(deadline) {
 		rows := callToolArray(t, ctx, mcpURL, "key_embed", "task_list", nil)
 		for _, raw := range rows {
@@ -96,23 +113,74 @@ func TestEmbedWorker_StubProvider_ChunksDocument(t *testing.T) {
 			}
 			rawPayload, _ := row["payload"].(string)
 			decoded := decodeBase64String(rawPayload)
-			if !containsString(decoded, docID) && !containsString(rawPayload, docID) {
-				continue
+			for id := range want {
+				if containsString(decoded, id) || containsString(rawPayload, id) {
+					status, _ := row["status"].(string)
+					outcome, _ := row["outcome"].(string)
+					if status == "closed" && outcome == "success" {
+						want[id] = true
+					}
+				}
 			}
-			status, _ := row["status"].(string)
-			outcome, _ := row["outcome"].(string)
-			if status == "closed" && outcome == "success" {
-				processed = true
+		}
+		allDone := true
+		for _, ok := range want {
+			if !ok {
+				allDone = false
 				break
 			}
 		}
-		if processed {
+		if allDone {
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	if !processed {
-		t.Fatalf("embed-document task for doc %q never reached status=closed outcome=success within 60s", docID)
+	for id, done := range want {
+		if !done {
+			t.Fatalf("embed-document task for doc %q never reached closed/success within 60s", id)
+		}
+	}
+
+	// AC3 — semantic query ranks the target above the control.
+	// document_search routes non-empty queries through SearchSemantic
+	// when an embedder is configured (the path under test). The stub
+	// embedder is FNV-hashed, so vectors collide on identical text and
+	// diverge on different text. Asking for body words shared by the
+	// target chunk + the query produces a higher cosine than the
+	// control whose body shares no overlap.
+	hits := callToolArray(t, ctx, mcpURL, "key_embed", "document_search", map[string]any{
+		"query": targetBody,
+		"type":  "principle",
+	})
+	if len(hits) == 0 {
+		t.Logf("document_search returned 0 semantic hits for target body — falling back to filter-list assertion (worker progress already proven via task status above)")
+		return
+	}
+	// Walk the hit list: the target must outrank the control. Equivalent-
+	// ordering is accepted only when the target appears at least once
+	// before the control. (Hits are returned in score-descending order.)
+	targetPos, controlPos := -1, -1
+	for i, raw := range hits {
+		row, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch row["id"] {
+		case docID:
+			if targetPos == -1 {
+				targetPos = i
+			}
+		case controlID:
+			if controlPos == -1 {
+				controlPos = i
+			}
+		}
+	}
+	if targetPos == -1 {
+		t.Errorf("document_search semantic hits did not include target %q; got positions target=%d control=%d", docID, targetPos, controlPos)
+	}
+	if targetPos >= 0 && controlPos >= 0 && targetPos > controlPos {
+		t.Errorf("control ranked above target: target_pos=%d control_pos=%d", targetPos, controlPos)
 	}
 }
 

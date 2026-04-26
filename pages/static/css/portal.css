@@ -17,6 +17,14 @@
     --color-bg-inverse: #000;
     --color-input-bg: #fff;
     --color-input-fg: #000;
+
+    /* Typography tokens (story_2469358b). One font-size for every
+       interactive control (input/select/textarea/dropdown trigger
+       button/dropdown menu item) so the bar reads as one strip and
+       longer labels grow controls vertically rather than horizontally. */
+    --font-size-control: 0.75rem;
+    --control-padding-y: 0.4rem;
+    --control-padding-x: 0.6rem;
 }
 
 [data-theme="dark"] {
@@ -106,9 +114,9 @@ a:hover {
     background: var(--color-bg);
     color: var(--color-fg);
     border: none;
-    padding: 0.25rem 0.5rem;
+    padding: var(--control-padding-y) var(--control-padding-x);
     font-family: inherit;
-    font-size: 0.7rem;
+    font-size: var(--font-size-control);
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -457,10 +465,10 @@ a:hover {
 .btn-link {
     background: transparent;
     border: 0;
-    padding: 0.25rem 0;
+    padding: var(--control-padding-y) var(--control-padding-x);
     margin: 0;
     font: inherit;
-    font-size: 0.75rem;
+    font-size: var(--font-size-control);
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -488,10 +496,10 @@ a:hover {
 
 .nav-workspace-menu a {
     display: block;
-    padding: 0.4rem 0.75rem;
+    padding: var(--control-padding-y) var(--control-padding-x);
     text-decoration: none;
     color: #000;
-    font-size: 0.75rem;
+    font-size: var(--font-size-control);
     letter-spacing: 0.05em;
 }
 
@@ -541,8 +549,8 @@ input, select, textarea {
     background: #fff;
     color: #000;
     font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    font-size: 0.8125rem;
-    padding: 0.3rem 0.5rem;
+    font-size: var(--font-size-control);
+    padding: var(--control-padding-y) var(--control-padding-x);
     border: 2px solid #000;
 }
 
@@ -1717,7 +1725,7 @@ code {
     background: #181818;
     border: 1px solid #333;
     padding: 0.5rem;
-    font-size: 0.8rem;
+    font-size: var(--font-size-control);
     z-index: 60;
 }
 .ws-debug-header {

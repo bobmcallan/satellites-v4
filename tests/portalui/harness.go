@@ -38,6 +38,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/contract"
 	"github.com/bobmcallan/satellites/internal/document"
+	"github.com/bobmcallan/satellites/internal/httpserver"
 	"github.com/bobmcallan/satellites/internal/hub"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/portal"
@@ -182,6 +183,13 @@ func StartHarness(t *testing.T) *Harness {
 	authHandlers.Register(mux)
 	portalHandlers.Register(mux)
 
+	// Wrap the mux with the production security-headers middleware so
+	// chromedp tests render under the same Content-Security-Policy as
+	// pprod (story_a7297367). Without this, CSP-gated regressions like
+	// the Alpine unsafe-eval block silently pass the harness while
+	// breaking real users.
+	wrapped := httpserver.SecurityHeaders(false, mux)
+
 	h := &Harness{
 		AuthHub:      authHub,
 		AuthHandlers: authHandlers,
@@ -217,15 +225,15 @@ func StartHarness(t *testing.T) *Harness {
 	// with a tracking wrapper. ConnContext lets the wsGate map a request
 	// back to its underlying net.Conn for forced-close on DisableWS.
 	srv := &http.Server{
-		Handler:           mux,
+		Handler:           wrapped,
 		ReadHeaderTimeout: 5 * time.Second,
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 			return context.WithValue(ctx, connContextKey{}, c)
 		},
 	}
-	ts := httptest.NewUnstartedServer(mux)
+	ts := httptest.NewUnstartedServer(wrapped)
 	ts.Config = srv
-	srv.Handler = mux
+	srv.Handler = wrapped
 	ts.Start()
 
 	h.Server = ts

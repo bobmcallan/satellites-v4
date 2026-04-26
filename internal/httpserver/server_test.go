@@ -69,6 +69,8 @@ func TestSecurityHeaders_AllPresent(t *testing.T) {
 		{"Content-Security-Policy", "https://fonts.googleapis.com"},
 		{"Content-Security-Policy", "https://fonts.gstatic.com"},
 		{"Content-Security-Policy", "'unsafe-inline'"},
+		// Alpine v3 standard build needs unsafe-eval (story_a7297367).
+		{"Content-Security-Policy", "'unsafe-eval'"},
 	} {
 		v := got.Get(want.key)
 		if v == "" {

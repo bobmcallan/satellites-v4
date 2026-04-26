@@ -13,28 +13,45 @@ import (
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
 )
 
-// contentSecurityPolicy is the served value of the CSP header. The portal
+// ContentSecurityPolicy is the served value of the CSP header. The portal
 // emits inline <script> blocks for Alpine init, fetches Alpine itself
 // from cdn.jsdelivr.net, and pulls Google Fonts for the wordmark, so the
 // policy permits each source explicitly. Tightening to nonces is a
 // follow-up — story_d5652302 names the CDN allow-listing as the
 // pragmatic v4 baseline.
-const contentSecurityPolicy = "default-src 'self'; " +
-	"script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
+//
+// 'unsafe-eval' is granted to script-src because Alpine.js v3's standard
+// build evaluates inline directives (x-data, x-show, :class, …) via the
+// Function() constructor (story_a7297367). Without it every Alpine page
+// — nav dropdown, workspace switcher, ws-indicator, tasks board — is
+// silently broken in production. Removing it requires migrating to the
+// @alpinejs/csp build (Alpine.data factories instead of inline
+// expressions), which is tracked as a follow-up so the unsafe-eval
+// grant can be dropped later.
+//
+// Exported so test harnesses (tests/portalui) can apply the same policy
+// the production server emits, ensuring chromedp tests run under the
+// same CSP regime as pprod.
+const ContentSecurityPolicy = "default-src 'self'; " +
+	"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; " +
 	"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
 	"font-src 'self' https://fonts.gstatic.com; " +
 	"connect-src 'self' ws: wss:"
 
-// securityHeaders injects the v4 security-header baseline on every
+// SecurityHeaders injects the v4 security-header baseline on every
 // response: CSP, X-Frame-Options, X-Content-Type-Options,
 // Referrer-Policy, and Strict-Transport-Security (prod only). HSTS is
 // gated on prod because dev/local hits 127.0.0.1 over plain HTTP and
 // HSTS would lock the browser into HTTPS for the dev hostname. See
 // story_d5652302.
-func securityHeaders(prod bool, next http.Handler) http.Handler {
+//
+// Exported so the portalui chromedp harness can wrap its in-process
+// server in the same middleware as production (story_a7297367). Pass
+// prod=false from tests; HSTS only emits in real prod.
+func SecurityHeaders(prod bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", contentSecurityPolicy)
+		h.Set("Content-Security-Policy", ContentSecurityPolicy)
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")

@@ -13,7 +13,7 @@ import (
 
 // Handlers holds the dependencies shared by Login and Logout.
 type Handlers struct {
-	Users     UserStoreByEmail
+	Users     UserStore
 	Sessions  SessionStore
 	Logger    arbor.ILogger
 	Cfg       *config.Config
@@ -126,12 +126,13 @@ func (h *Handlers) authenticate(username, password string) (User, bool) {
 				DisplayName: "Dev User",
 				Provider:    "devmode",
 			}
-			// Ensure downstream session → user lookups resolve. The
-			// MemoryUserStore composes by id + email; register once on
-			// first DevMode login.
-			if ms, ok := h.Users.(*MemoryUserStore); ok {
-				if _, err := ms.GetByID(u.ID); err != nil {
-					ms.Add(u)
+			// Ensure downstream session → user lookups resolve. Add on
+			// first DevMode login; the underlying UserStore handles its
+			// own dedupe via GetByID. Story_7512783a widened the field
+			// type so this path runs against Memory + Surreal stores.
+			if h.Users != nil {
+				if _, err := h.Users.GetByID(u.ID); err != nil {
+					h.Users.Add(u)
 					if h.OnUserCreated != nil {
 						h.OnUserCreated(context.Background(), u.ID)
 					}

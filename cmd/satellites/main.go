@@ -59,7 +59,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	users := auth.NewMemoryUserStore()
+	var users auth.UserStore = auth.NewMemoryUserStore()
 	var sessions auth.SessionStore = auth.NewMemorySessionStore()
 	providers := auth.BuildProviderSet(cfg)
 	states := auth.NewStateStore(10 * time.Minute)
@@ -125,6 +125,11 @@ func main() {
 		// sessions survive Fly rolling restarts.
 		sessions = auth.NewSurrealSessionStore(conn)
 		authHandlers.Sessions = sessions
+		// story_7512783a: replace MemoryUserStore with the durable
+		// Surreal-backed implementation. OAuth-minted users now persist
+		// across restarts, so cookies don't orphan after a deploy.
+		users = auth.NewSurrealUserStore(conn)
+		authHandlers.Users = users
 		grantStore = rolegrant.NewSurrealStore(conn, docStore)
 		taskStore = task.NewSurrealStore(conn)
 		dbPing = func(hcCtx context.Context) error { return db.Ping(hcCtx, conn) }

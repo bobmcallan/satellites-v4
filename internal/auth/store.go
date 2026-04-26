@@ -16,10 +16,16 @@ var ErrNoSuchUser = errors.New("auth: no such user")
 // or expired.
 var ErrSessionNotFound = errors.New("auth: session not found")
 
-// UserStore resolves users by email. v4 uses MemoryUserStore; story 10.9
-// swaps in a SurrealDB-backed implementation.
+// UserStore is the full mutating + lookup surface for users. Memory and
+// Surreal implementations both satisfy it. v3 / earlier slices typed
+// h.Users as UserStoreByEmail; story_7512783a widens it so OAuth +
+// DevMode signin paths (Add, GetByID) work against either backend
+// without a *MemoryUserStore type assertion.
 type UserStore interface {
+	Add(u User)
 	GetByEmail(email string) (User, error)
+	GetByID(id string) (User, error)
+	Update(u User) error
 }
 
 // SessionStore creates, fetches, and deletes server-side sessions keyed by
@@ -95,6 +101,22 @@ func (s *MemoryUserStore) GetByID(id string) (User, error) {
 	}
 	return u, nil
 }
+
+// Update overwrites an existing user keyed by id. ErrNoSuchUser when the
+// id is unknown — the caller is expected to Add new users explicitly.
+func (s *MemoryUserStore) Update(u User) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.byID[u.ID]; !ok {
+		return ErrNoSuchUser
+	}
+	s.byEmail[normaliseEmail(u.Email)] = u
+	s.byID[u.ID] = u
+	return nil
+}
+
+// Compile-time assertion.
+var _ UserStore = (*MemoryUserStore)(nil)
 
 // MemorySessionStore is the in-process session store. Safe for concurrent
 // use. Expired rows are lazily pruned on access.

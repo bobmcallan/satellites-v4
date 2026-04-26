@@ -241,29 +241,28 @@ func (h *Handlers) oauthCallback(w http.ResponseWriter, r *http.Request, p *Prov
 }
 
 // upsertOAuthUser is idempotent: a second call with the same provider+email
-// returns the existing user row rather than minting a new ID.
+// returns the existing user row rather than minting a new ID. Runs against
+// any UserStore implementation (Memory + Surreal) — story_7512783a widened
+// the surface so OAuth login persists across Fly restarts.
 func (h *Handlers) upsertOAuthUser(provider string, info ProviderUserInfo) User {
 	key := provider + ":" + normaliseEmail(info.Email)
-	// Users is a UserStoreByEmail; MemoryUserStore composes both surfaces.
-	if ms, ok := h.Users.(*MemoryUserStore); ok {
-		if existing, err := ms.GetByEmail(key); err == nil {
-			return existing
-		}
-		u := User{
-			ID:          "u_" + key,
-			Email:       key,
-			DisplayName: info.DisplayName,
-			Provider:    provider,
-		}
-		ms.Add(u)
-		if h.OnUserCreated != nil {
-			h.OnUserCreated(context.Background(), u.ID)
-		}
-		return u
+	if h.Users == nil {
+		return User{ID: "u_" + key, Email: key, DisplayName: info.DisplayName, Provider: provider}
 	}
-	// Unknown store implementation — return a transient user. Real store
-	// lands in 10.9 and takes over this code path.
-	return User{ID: "u_" + key, Email: key, DisplayName: info.DisplayName, Provider: provider}
+	if existing, err := h.Users.GetByEmail(key); err == nil {
+		return existing
+	}
+	u := User{
+		ID:          "u_" + key,
+		Email:       key,
+		DisplayName: info.DisplayName,
+		Provider:    provider,
+	}
+	h.Users.Add(u)
+	if h.OnUserCreated != nil {
+		h.OnUserCreated(context.Background(), u.ID)
+	}
+	return u
 }
 
 // ensure we use arbor for the type assertion in signature

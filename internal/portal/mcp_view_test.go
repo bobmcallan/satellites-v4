@@ -191,6 +191,41 @@ func TestMCPPage_NoExtraFields(t *testing.T) {
 	}
 }
 
+// TestBuildMCPComposite_VisibleAcrossWorkspaces locks in the
+// system-scope read semantics. The catalogue lives in the system
+// workspace; an operator whose memberships do not include that
+// workspace must still see it. Reproduces the production bug where
+// /mcp rendered the empty-state copy after deploy because the
+// handler was passing the operator's memberships into GetByName,
+// filtering the system-scope artifact out.
+func TestBuildMCPComposite_VisibleAcrossWorkspaces(t *testing.T) {
+	t.Parallel()
+	docs := document.NewMemoryStore()
+	cat := mcpserver.Catalogue{
+		SnapshotAt: time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC),
+		Tools:      []mcpserver.CatalogueEntry{{Name: "story_get", Description: "x", Parameters: []mcpserver.CatalogueParam{{Name: "id", Type: "string", Required: true}}}},
+	}
+	body, _ := json.Marshal(cat)
+	if _, err := docs.Create(context.Background(), document.Document{
+		WorkspaceID: "wksp_system",
+		Type:        document.TypeArtifact,
+		Scope:       document.ScopeSystem,
+		Name:        mcpserver.CatalogueArtifactName,
+		Body:        string(body),
+		Tags:        []string{mcpserver.CatalogueKindTag},
+		Status:      document.StatusActive,
+	}, time.Now().UTC()); err != nil {
+		t.Fatalf("seed catalogue: %v", err)
+	}
+	composite := buildMCPComposite(context.Background(), docs)
+	if !composite.HasSnapshot {
+		t.Fatalf("system-scope catalogue not visible — operator memberships should not gate this read")
+	}
+	if composite.ToolCount != 1 {
+		t.Errorf("ToolCount = %d, want 1", composite.ToolCount)
+	}
+}
+
 // TestNav_HasMCPLink covers the AC: desktop hamburger nav carries an
 // MCP link routing to /mcp.
 func TestNav_HasMCPLink(t *testing.T) {

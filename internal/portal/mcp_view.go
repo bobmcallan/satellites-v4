@@ -73,7 +73,7 @@ func (p *Portal) handleMCPCatalogue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	active, chips, memberships := p.activeWorkspace(r, user)
-	composite := buildMCPComposite(r.Context(), p.documents, memberships)
+	composite := buildMCPComposite(r.Context(), p.documents)
 	data := mcpPageData{
 		Title:           buildPageTitle(active, "", "mcp"),
 		Version:         config.Version,
@@ -99,11 +99,18 @@ func (p *Portal) handleMCPCatalogue(w http.ResponseWriter, r *http.Request) {
 // into the page-ready shape. Returns an empty-state composite when the
 // artifact is missing, malformed, or the document store is nil — the
 // page renders a "no snapshot yet" panel rather than 500.
-func buildMCPComposite(ctx context.Context, docs document.Store, memberships []string) mcpComposite {
+//
+// The catalogue is a system-scope artifact: every operator sees the
+// same view of what Claude reads. Read with nil memberships to bypass
+// workspace scoping (matching the established system-scope read
+// pattern used by help_view.go for type=help docs). Without this, an
+// operator whose workspace memberships do not include the system
+// workspace would see the empty-state copy in production.
+func buildMCPComposite(ctx context.Context, docs document.Store) mcpComposite {
 	if docs == nil {
 		return mcpComposite{}
 	}
-	doc, err := docs.GetByName(ctx, "", mcpserver.CatalogueArtifactName, memberships)
+	doc, err := docs.GetByName(ctx, "", mcpserver.CatalogueArtifactName, nil)
 	if err != nil || doc.Type != document.TypeArtifact || doc.Status != document.StatusActive {
 		return mcpComposite{}
 	}

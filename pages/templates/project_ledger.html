@@ -108,6 +108,18 @@
             <span x-text="pendingCount"></span> new rows · jump to top
           </button>
         </header>
+        <div class="panel-active-filters" data-testid="ledger-active-filters">
+          <template x-if="filters.story_id">
+            <button type="button"
+                    class="filter-pill filter-pill-story"
+                    data-testid="filter-pill-story-id"
+                    @click="clearStoryID"
+                    :title="'Clear story filter — ' + filters.story_id">
+              story_id: <code x-text="filters.story_id"></code>
+              <span aria-hidden="true">×</span>
+            </button>
+          </template>
+        </div>
         <div class="panel-body">
           <template x-if="rowsEmpty">
             <p class="muted" data-testid="ledger-empty">No rows match the current filters.</p>

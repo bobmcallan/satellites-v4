@@ -109,6 +109,14 @@
                 this.reload();
             },
 
+            // sty_cdcd66a5 — pill click clears the active story_id and
+            // re-fetches. Mirrors the V3 chip-strip "× clear" UX so the
+            // operator does not have to find the sidebar input.
+            clearStoryID() {
+                this.filters.story_id = '';
+                this.reload();
+            },
+
             async reload() {
                 writeURLFilters(this.filters, this.tagInput);
                 if (!this.apiURL) { return; }

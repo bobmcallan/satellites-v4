@@ -455,6 +455,7 @@ func main() {
 		RepoStore:        repoStore,
 		ChangelogStore:   changelogStore,
 		Indexer:          repoIndexer,
+		AuditReadTTL:     auditReadTTL(),
 	})
 	// Sty_088f6d5c: install the portal_replicate action vocabulary
 	// from the seeded replicate_vocabulary document. configseed has
@@ -628,4 +629,21 @@ func taskRetentionDays() int {
 // env var lookup tolerates trailing newlines from `echo -n` patterns.
 func strconvAtoiSafe(s string) (int, error) {
 	return strconv.Atoi(strings.TrimSpace(s))
+}
+
+// auditReadTTL returns the resolved ephemeral-row TTL applied to read
+// MCP-call audit rows. Reads SATELLITES_AUDIT_READ_TTL_HOURS; falls
+// back to 720h (30 days) when unset / non-numeric / non-positive.
+// Sty_1493c077.
+func auditReadTTL() time.Duration {
+	const fallback = 720 * time.Hour
+	raw := strings.TrimSpace(os.Getenv("SATELLITES_AUDIT_READ_TTL_HOURS"))
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return time.Duration(n) * time.Hour
 }

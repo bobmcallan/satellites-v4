@@ -55,6 +55,7 @@ type Server struct {
 	replicateVocab   *portalreplicate.Vocabulary
 	replicateRunner  func(ctx context.Context, opts portalreplicate.RunOptions, actions []portalreplicate.Action) ([]portalreplicate.Result, portalreplicate.Summary, error)
 	nowFunc          func() time.Time
+	audit            *auditLogger
 }
 
 // HandshakeFallbackInstructions is the literal MCP server-instructions
@@ -83,6 +84,10 @@ func resolveHandshakeInstructions(docs document.Store) string {
 // Deps bundles the optional per-tool dependencies passed through to
 // handlers. A nil store field disables the associated verbs.
 type Deps struct {
+	// AuditReadTTL is the durability TTL applied to read-classified
+	// audit rows. Zero falls back to 720h (30 days). Mutations land
+	// durable and ignore this knob. Sty_1493c077.
+	AuditReadTTL     time.Duration
 	DocStore         document.Store
 	DocsDir          string
 	ProjectStore     project.Store
@@ -141,6 +146,15 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		s.indexer = codeindex.NewStub()
 	}
 
+	// sty_1493c077: per-call audit logger. Wraps every tool handler via
+	// mcp-go's middleware seam; writes one ledger row per call tagged
+	// kind:mcp-call. Reads land ephemeral, mutations durable. Disabled
+	// when no ledger store is wired (early-test fixtures).
+	if s.ledger != nil {
+		s.audit = newAuditLogger(s.ledger, s.tasks, s.projects, s.logger,
+			deps.AuditReadTTL, s.defaultProjectID, s.nowFunc)
+	}
+
 	// sty_e1ab884d: handshake instructions are sourced from the
 	// agent-process artifact. Resolution chain: project-scope override
 	// (when this server boots into a project context — not yet wired) →
@@ -151,6 +165,9 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	serverOpts := []mcpserver.ServerOption{
 		mcpserver.WithToolCapabilities(true),
 		mcpserver.WithInstructions(resolveHandshakeInstructions(s.docs)),
+	}
+	if s.audit != nil {
+		serverOpts = append(serverOpts, mcpserver.WithToolHandlerMiddleware(s.audit.middleware))
 	}
 	s.mcp = mcpserver.NewMCPServer(
 		"satellites",

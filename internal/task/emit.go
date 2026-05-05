@@ -26,6 +26,19 @@ func emitStatus(ctx context.Context, p hubemit.Publisher, t Task) {
 		"origin":       t.Origin,
 		"priority":     t.Priority,
 	}
+	// sty_a03449d1: story_id + kind + action let the portal route a
+	// frame to the correct story panel + render a skeleton row when
+	// the rejection-append loop spawns a fresh task without a page
+	// reload. Empty fields are omitted so the payload stays tight.
+	if t.StoryID != "" {
+		payload["story_id"] = t.StoryID
+	}
+	if t.Kind != "" {
+		payload["kind"] = t.Kind
+	}
+	if t.Action != "" {
+		payload["action"] = t.Action
+	}
 	if t.Outcome != "" {
 		payload["outcome"] = t.Outcome
 	}

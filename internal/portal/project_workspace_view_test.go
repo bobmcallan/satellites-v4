@@ -70,7 +70,7 @@ func TestProjectWorkspace_EmptyQueryReturnsRecentRows(t *testing.T) {
 	seedStory(t, stories, "proj_a", "beta story", "second", now.Add(-1*time.Hour))
 	seedDoc(t, docs, "proj_a", document.TypeArtifact, "design notes", "body", now.Add(-30*time.Minute))
 
-	got := buildProjectWorkspaceComposite(context.Background(), stories, docs, nil, nil, nil, "proj_a", projectWorkspaceFilters{Limit: 25}, nil, false)
+	got := buildProjectWorkspaceComposite(context.Background(), stories, docs, nil, nil, nil, nil, "proj_a", projectWorkspaceFilters{Limit: 25}, nil, false)
 
 	if len(got.Stories) != 2 {
 		t.Fatalf("Stories = %d, want 2", len(got.Stories))
@@ -110,7 +110,7 @@ func TestProjectWorkspace_ExcludesContractAndSkillDocs(t *testing.T) {
 		t.Fatalf("seed skill: %v", err)
 	}
 
-	got := buildProjectWorkspaceComposite(context.Background(), stories, docs, nil, nil, nil, "proj_a", projectWorkspaceFilters{Limit: 25}, nil, false)
+	got := buildProjectWorkspaceComposite(context.Background(), stories, docs, nil, nil, nil, nil, "proj_a", projectWorkspaceFilters{Limit: 25}, nil, false)
 
 	if len(got.Documents) != 2 {
 		t.Fatalf("Documents = %d, want 2 (contract + skill excluded; artifact + principle remain)", len(got.Documents))
@@ -136,7 +136,7 @@ func TestProjectWorkspace_ProjectScopingExcludesOtherProjects(t *testing.T) {
 	seedDoc(t, docs, "proj_a", document.TypeArtifact, "in-scope art", "x", now)
 	seedDoc(t, docs, "proj_other", document.TypeArtifact, "out-of-scope art", "x", now)
 
-	got := buildProjectWorkspaceComposite(context.Background(), stories, docs, nil, nil, nil, "proj_a", projectWorkspaceFilters{Limit: 25}, nil, false)
+	got := buildProjectWorkspaceComposite(context.Background(), stories, docs, nil, nil, nil, nil, "proj_a", projectWorkspaceFilters{Limit: 25}, nil, false)
 
 	if len(got.Stories) != 1 || got.Stories[0].Title != "in-scope story" {
 		t.Errorf("Stories = %#v, want only the proj_a story", got.Stories)
@@ -158,7 +158,7 @@ func TestProjectWorkspace_SystemScopeDocsIncluded(t *testing.T) {
 	seedDoc(t, docs, "proj_a", document.TypeArtifact, "project-art", "x", now)
 	seedDoc(t, docs, "", document.TypePrinciple, "system-principle", "x", now)
 
-	got := buildProjectWorkspaceComposite(context.Background(), stories, docs, nil, nil, nil, "proj_a", projectWorkspaceFilters{Limit: 25}, nil, false)
+	got := buildProjectWorkspaceComposite(context.Background(), stories, docs, nil, nil, nil, nil, "proj_a", projectWorkspaceFilters{Limit: 25}, nil, false)
 
 	names := map[string]bool{}
 	for _, d := range got.Documents {
@@ -184,7 +184,7 @@ func TestProjectWorkspace_DenyAllMembershipsReturnsEmpty(t *testing.T) {
 
 	// Deny-all: empty (non-nil) memberships slice — both stores treat
 	// an empty slice as "no workspace is visible".
-	got := buildProjectWorkspaceComposite(context.Background(), stories, docs, nil, nil, nil, "proj_a", projectWorkspaceFilters{Limit: 25}, []string{}, false)
+	got := buildProjectWorkspaceComposite(context.Background(), stories, docs, nil, nil, nil, nil, "proj_a", projectWorkspaceFilters{Limit: 25}, []string{}, false)
 
 	if len(got.Stories) != 0 {
 		t.Errorf("Stories under deny-all = %d, want 0", len(got.Stories))
@@ -208,7 +208,7 @@ func TestProjectWorkspace_LimitCapsEachSection(t *testing.T) {
 		seedDoc(t, docs, "proj_a", document.TypeArtifact, "d"+strconv.Itoa(i), "x", now.Add(time.Duration(i)*time.Minute))
 	}
 
-	got := buildProjectWorkspaceComposite(context.Background(), stories, docs, nil, nil, nil, "proj_a", projectWorkspaceFilters{Limit: 5}, nil, false)
+	got := buildProjectWorkspaceComposite(context.Background(), stories, docs, nil, nil, nil, nil, "proj_a", projectWorkspaceFilters{Limit: 5}, nil, false)
 
 	if len(got.Stories) != 5 {
 		t.Errorf("Stories under limit=5 = %d, want 5", len(got.Stories))
@@ -220,7 +220,7 @@ func TestProjectWorkspace_LimitCapsEachSection(t *testing.T) {
 
 func TestProjectWorkspace_NoStoreDegrades(t *testing.T) {
 	t.Parallel()
-	got := buildProjectWorkspaceComposite(context.Background(), nil, nil, nil, nil, nil, "proj_a", projectWorkspaceFilters{Limit: 25}, nil, false)
+	got := buildProjectWorkspaceComposite(context.Background(), nil, nil, nil, nil, nil, nil, "proj_a", projectWorkspaceFilters{Limit: 25}, nil, false)
 	if len(got.Stories) != 0 || len(got.Documents) != 0 {
 		t.Errorf("nil stores must yield empty composite, got %#v", got)
 	}

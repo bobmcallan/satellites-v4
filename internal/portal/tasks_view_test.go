@@ -171,4 +171,3 @@ func TestTasksView_DrawerNotFound(t *testing.T) {
 		t.Errorf("status = %d, want 404 for missing task", rec.Code)
 	}
 }
-

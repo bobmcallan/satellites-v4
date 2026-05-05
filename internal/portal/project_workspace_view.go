@@ -20,6 +20,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/repo"
 	"github.com/bobmcallan/satellites/internal/story"
+	"github.com/bobmcallan/satellites/internal/task"
 )
 
 const (
@@ -63,7 +64,7 @@ type changelogCard struct {
 
 // storyCard is the per-row view-model for the Stories section. The
 // expand-row on the V3-style story panel reads Description,
-// AcceptanceCriteria, and Contracts. CreatedAt + Tags are exposed on
+// AcceptanceCriteria, and TaskChain. CreatedAt + Tags are exposed on
 // the row's data-* attributes so the client-side `order:<field>` and
 // tag-chip click handlers can reorder + filter without an extra round
 // trip.
@@ -79,21 +80,7 @@ type storyCard struct {
 	UpdatedAt          string
 	Description        string
 	AcceptanceCriteria string
-	Contracts          []storyContractCard
-}
-
-// storyContractCard is one row in the panel's contracts sub-table.
-// Renders the columns the panel actually shows (sequence, contract
-// name, status, agent). AgentHref is empty when AgentID is unset;
-// the template falls back to an em-dash.
-type storyContractCard struct {
-	ID           string
-	Sequence     int
-	ContractName string
-	Status       string
-	AgentID      string
-	AgentName    string
-	AgentHref    string
+	TaskChain          []taskChainCard
 }
 
 // projectWorkspaceFilters carries the per-section row cap.
@@ -123,17 +110,18 @@ func parseProjectWorkspaceFilters(r *http.Request) projectWorkspaceFilters {
 // gracefully when running without a backing store. Documents are loaded
 // twice (project scope + system scope) and merged so global content
 // (principles, reviewer notes) shows alongside the project's own.
-func buildProjectWorkspaceComposite(ctx context.Context, stories story.Store, docs document.Store, repos repo.Store, led ledger.Store, changelogs changelog.Store, projectID string, f projectWorkspaceFilters, memberships []string, isAdmin bool) projectWorkspaceComposite {
+func buildProjectWorkspaceComposite(ctx context.Context, stories story.Store, docs document.Store, repos repo.Store, led ledger.Store, changelogs changelog.Store, tasks task.Store, projectID string, f projectWorkspaceFilters, memberships []string, isAdmin bool) projectWorkspaceComposite {
 	if f.Limit <= 0 {
 		f.Limit = projectWorkspaceDefaultLimit
 	}
 	out := projectWorkspaceComposite{Filters: f}
 
-	out.Stories = collectStoryCards(ctx, stories, projectID, f, memberships)
+	out.Stories = collectStoryCards(ctx, stories, tasks, led, projectID, f, memberships)
 	out.StoryTotal = len(out.Stories)
-	// sty_c6d76a5b checkpoint 14: contract_instance rows retired; the
-	// per-story contracts sub-table has no backing data. Stories
-	// expose their task chain via /stories/{id}/walk now.
+	// sty_a03449d1: each storyCard's TaskChain is populated from the
+	// task store so the panel renders the live task chain. Empty
+	// when no tasks exist (the chain is the conversation log; an
+	// empty story has no plan yet).
 
 	out.Documents = collectDocumentCards(ctx, docs, projectID, f, memberships)
 	out.DocTotal = len(out.Documents)
@@ -253,7 +241,10 @@ func collectRecentLedger(ctx context.Context, led ledger.Store, projectID string
 // and caps at f.Limit. Returns an empty slice when the store is nil or
 // errors — the page still renders. Filtering lives on the dedicated
 // /projects/<id>/stories page (story_59b11d8c).
-func collectStoryCards(ctx context.Context, stories story.Store, projectID string, f projectWorkspaceFilters, memberships []string) []storyCard {
+//
+// Each card's TaskChain is populated when the tasks store is non-nil
+// so the SSR template can render the per-story chain inline.
+func collectStoryCards(ctx context.Context, stories story.Store, tasks task.Store, led ledger.Store, projectID string, f projectWorkspaceFilters, memberships []string) []storyCard {
 	if stories == nil || projectID == "" {
 		return []storyCard{}
 	}
@@ -265,9 +256,53 @@ func collectStoryCards(ctx context.Context, stories story.Store, projectID strin
 	if len(rows) > f.Limit {
 		rows = rows[:f.Limit]
 	}
+	verdicts := verdictExcerptsByTask(ctx, led, projectID, memberships)
 	out := make([]storyCard, 0, len(rows))
 	for _, s := range rows {
-		out = append(out, storyCardFor(s))
+		card := storyCardFor(s)
+		if tasks != nil {
+			card.TaskChain = taskChainCardsForStory(ctx, tasks, verdicts, s.ID, memberships)
+		}
+		out = append(out, card)
+	}
+	return out
+}
+
+// taskChainCardsForStory pulls the story's tasks and projects them to
+// taskChainCard view-models in created_at order. Iteration is computed
+// per (action, kind) so retries advance the lap number. Verdict
+// excerpts are looked up from the pre-built map keyed by task id.
+func taskChainCardsForStory(ctx context.Context, tasks task.Store, verdicts map[string]string, storyID string, memberships []string) []taskChainCard {
+	rows, err := tasks.List(ctx, task.ListOptions{StoryID: storyID, Limit: 500}, memberships)
+	if err != nil || len(rows) == 0 {
+		return nil
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].CreatedAt.Before(rows[j].CreatedAt) })
+	out := make([]taskChainCard, 0, len(rows))
+	for i, t := range rows {
+		excerpt := ""
+		if verdicts != nil {
+			excerpt = verdicts[t.ID]
+		}
+		card := taskChainCard{
+			ID:             t.ID,
+			Sequence:       i + 1,
+			Kind:           t.Kind,
+			Action:         t.Action,
+			ContractName:   contractNameFromAction(t.Action),
+			Status:         t.Status,
+			Outcome:        t.Outcome,
+			Iteration:      walkIterationForTask(t, rows),
+			ClaimedBy:      t.ClaimedBy,
+			ParentTaskID:   t.ParentTaskID,
+			PriorTaskID:    t.PriorTaskID,
+			CreatedAt:      t.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+			VerdictExcerpt: excerpt,
+		}
+		if t.CompletedAt != nil {
+			card.CompletedAt = t.CompletedAt.UTC().Format("2006-01-02T15:04:05Z07:00")
+		}
+		out = append(out, card)
 	}
 	return out
 }
@@ -352,4 +387,3 @@ func storyCardFor(s story.Story) storyCard {
 		AcceptanceCriteria: s.AcceptanceCriteria,
 	}
 }
-

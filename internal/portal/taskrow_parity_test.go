@@ -1,12 +1,11 @@
 // sty_de9f10f9 — same shape as storyrow_parity_test.go but for the
 // task sub-table inside the expanded story-row. SSR side is the
 // `<tr class="story-task-row">` rendered by the inner range over
-// .Contracts; JS side is _appendContractRow in common.js.
+// .TaskChain; JS side is _appendTaskRow in common.js.
 //
-// Today the two sides ARE aligned (4 cols: col-seq, col-name,
-// col-status, col-agent). The test passes on day one and acts as a
-// regression guard so any future drift fails immediately. NO
-// xfail-style divergence list — this is a strict equality check.
+// sty_a03449d1 retired contract_instance.* events; the chain is
+// keyed by task_id now. Both renderers must list the same eight
+// columns in the same order.
 package portal
 
 import (
@@ -21,13 +20,13 @@ func TestTaskRow_SSR_JS_ColumnParity(t *testing.T) {
 	t.Parallel()
 
 	ssrCells := renderTaskRowSSRCells(t)
-	jsCells := extractAppendContractRowJSCells(t)
+	jsCells := extractAppendTaskRowJSCells(t)
 
 	if len(ssrCells) == 0 {
 		t.Fatalf("SSR task-row rendered no cells; rendering plumbing broke")
 	}
 	if len(jsCells) == 0 {
-		t.Fatalf("JS _appendContractRow has no <td class=…> literals; parser broke")
+		t.Fatalf("JS _appendTaskRow has no <td class=…> literals; parser broke")
 	}
 	if !equalStringSlices(ssrCells, jsCells) {
 		t.Fatalf("task-row SSR/JS column drift detected.\n"+
@@ -41,8 +40,8 @@ func TestTaskRow_SSR_JS_ColumnParity(t *testing.T) {
 }
 
 // renderTaskRowSSRCells executes _panel_stories.html with one
-// story carrying one contract row, then extracts the ordered <td
-// class=…> list of the resulting <tr class="story-task-row">.
+// story carrying one task-chain row, then extracts the ordered
+// <td class=…> list of the resulting <tr class="story-task-row">.
 func renderTaskRowSSRCells(t *testing.T) []string {
 	t.Helper()
 	tmpl, err := pages.Templates()
@@ -63,11 +62,14 @@ func renderTaskRowSSRCells(t *testing.T) []string {
 			UpdatedAt:          "2026-01-01T00:00:00Z",
 			Description:        "probe",
 			AcceptanceCriteria: "probe",
-			Contracts: []storyContractCard{{
-				ID:           "ci_parity",
-				Sequence:     0,
+			TaskChain: []taskChainCard{{
+				ID:           "task_parity",
+				Sequence:     1,
+				Kind:         "work",
+				Action:       "contract:plan",
 				ContractName: "plan",
-				Status:       "ready",
+				Status:       "published",
+				CreatedAt:    "2026-01-01T00:00:00Z",
 			}},
 		}},
 	}
@@ -79,7 +81,7 @@ func renderTaskRowSSRCells(t *testing.T) []string {
 	}
 
 	rendered := buf.String()
-	rowOpen := strings.Index(rendered, `<tr class="story-task-row"`)
+	rowOpen := strings.Index(rendered, `<tr class="story-task-row`)
 	if rowOpen < 0 {
 		t.Fatalf("rendered template has no <tr class=\"story-task-row\">; rendered=%s", rendered)
 	}
@@ -90,13 +92,13 @@ func renderTaskRowSSRCells(t *testing.T) []string {
 	return scanTDClasses(rendered[rowOpen : rowOpen+rowClose])
 }
 
-// extractAppendContractRowJSCells reads pages/static/common.js,
-// locates _appendContractRow, and scans tr.innerHTML for the
+// extractAppendTaskRowJSCells reads pages/static/common.js,
+// locates _appendTaskRow, and scans tr.innerHTML for the
 // ordered td class list.
-func extractAppendContractRowJSCells(t *testing.T) []string {
+func extractAppendTaskRowJSCells(t *testing.T) []string {
 	t.Helper()
 	source := readCommonJS(t)
-	body := extractJSFunctionBody(t, source, "_appendContractRow(")
+	body := extractJSFunctionBody(t, source, "_appendTaskRow(")
 	rowInner := isolateInnerHTMLAssignment(t, body, "tr.innerHTML")
 	return scanTDClasses(rowInner)
 }

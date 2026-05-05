@@ -18,9 +18,9 @@ import (
 // and a per-action summary for renderers that want a contract-shaped
 // view without the substrate carrying contract_instance rows.
 type taskWalkResponse struct {
-	Story         taskWalkStory     `json:"story"`
-	Tasks         []taskWalkTask    `json:"tasks"`
-	CurrentTaskID string            `json:"current_task_id,omitempty"`
+	Story         taskWalkStory           `json:"story"`
+	Tasks         []taskWalkTask          `json:"tasks"`
+	CurrentTaskID string                  `json:"current_task_id,omitempty"`
 	ActionSummary []taskWalkActionSummary `json:"action_summary,omitempty"`
 }
 
@@ -56,14 +56,14 @@ type taskWalkTask struct {
 // taskWalkActionSummary aggregates tasks by Action so renderers can
 // show "develop ×3" loops without re-deriving the count themselves.
 type taskWalkActionSummary struct {
-	Action        string `json:"action"`
-	WorkTotal     int    `json:"work_total"`
-	WorkOpen      int    `json:"work_open"`
-	WorkClosed    int    `json:"work_closed"`
-	ReviewTotal   int    `json:"review_total"`
-	ReviewOpen    int    `json:"review_open"`
-	ReviewClosed  int    `json:"review_closed"`
-	LedgerRowCount int   `json:"ledger_row_count"`
+	Action         string `json:"action"`
+	WorkTotal      int    `json:"work_total"`
+	WorkOpen       int    `json:"work_open"`
+	WorkClosed     int    `json:"work_closed"`
+	ReviewTotal    int    `json:"review_total"`
+	ReviewOpen     int    `json:"review_open"`
+	ReviewClosed   int    `json:"review_closed"`
+	LedgerRowCount int    `json:"ledger_row_count"`
 }
 
 // handleTaskWalk implements the task_walk MCP verb: returns a single

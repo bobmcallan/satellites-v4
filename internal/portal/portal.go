@@ -546,7 +546,7 @@ func (p *Portal) handleProjectDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	filters := parseProjectWorkspaceFilters(r)
 	isAdmin := p.isWorkspaceAdmin(r.Context(), active.ID, user.ID)
-	composite := buildProjectWorkspaceComposite(r.Context(), p.stories, p.documents, p.repos, p.ledger, p.changelog, pr.ID, filters, memberships, isAdmin)
+	composite := buildProjectWorkspaceComposite(r.Context(), p.stories, p.documents, p.repos, p.ledger, p.changelog, p.tasks, pr.ID, filters, memberships, isAdmin)
 	data := projectDetailData{
 		Title:           buildPageTitle(active, pr.Name, ""),
 		Version:         config.Version,
@@ -819,7 +819,7 @@ func (p *Portal) handleStoryDetail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	composite, err := buildStoryComposite(r.Context(), p.stories, p.documents, p.ledger, storyID, memberships)
+	composite, err := buildStoryComposite(r.Context(), p.stories, p.documents, p.ledger, p.tasks, storyID, memberships)
 	if err != nil || composite.Story.ID == "" || composite.Story.ID != storyID {
 		http.NotFound(w, r)
 		return
@@ -883,7 +883,7 @@ func (p *Portal) handleStoryComposite(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	composite, err := buildStoryComposite(r.Context(), p.stories, p.documents, p.ledger, storyID, memberships)
+	composite, err := buildStoryComposite(r.Context(), p.stories, p.documents, p.ledger, p.tasks, storyID, memberships)
 	if err != nil || composite.Story.ID == "" || composite.Story.ID != storyID {
 		http.NotFound(w, r)
 		return

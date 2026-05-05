@@ -168,4 +168,3 @@ func TestMemoryStore_Diff_DiffSourceUnavailable(t *testing.T) {
 		t.Errorf("Unified+SymbolChanges should be empty in v1; got Unified=%q SymbolChanges=%v", d.Unified, d.SymbolChanges)
 	}
 }
-

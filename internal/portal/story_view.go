@@ -4,11 +4,9 @@
 // struct so the SSR template and the JSON composite endpoint render
 // from the same shape.
 //
-// sty_c6d76a5b retired the contract-instance row type. The
-// TaskChain slice on the composite is an always-empty placeholder:
-// the canonical "what's happening on this story" view lives at
-// /stories/{id}/walk, which renders the task chain via task_walk.
-// Sty_509a46fa renamed the placeholder away from the dead noun.
+// sty_a03449d1 wired TaskChain to the task store so the project-detail
+// stories panel and the /stories/{id} composite both render the live
+// task chain (work + review siblings, retries via prior_task_id).
 package portal
 
 import (
@@ -21,6 +19,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/story"
+	"github.com/bobmcallan/satellites/internal/task"
 )
 
 // excerptLimit caps the ledger-excerpts panel; older rows fall off the
@@ -66,9 +65,28 @@ type sourceDocLink struct {
 	Display string `json:"display"`
 }
 
-// taskChainCard is an always-empty placeholder; the canonical
-// task-chain view lives at /stories/{id}/walk.
-type taskChainCard struct{}
+// taskChainCard is one task on the story's chain rendered in
+// /stories panels. Sequence is the 1-based row index in
+// created_at order; Iteration is the lap among same-action peers
+// (1 for the first attempt, >1 for rejection-append retries).
+// VerdictExcerpt carries a short preview of the verdict ledger row
+// when one exists for the row's task_id.
+type taskChainCard struct {
+	ID             string `json:"id"`
+	Sequence       int    `json:"sequence"`
+	Kind           string `json:"kind"`
+	Action         string `json:"action,omitempty"`
+	ContractName   string `json:"contract_name,omitempty"`
+	Status         string `json:"status"`
+	Outcome        string `json:"outcome,omitempty"`
+	Iteration      int    `json:"iteration,omitempty"`
+	ClaimedBy      string `json:"claimed_by,omitempty"`
+	ParentTaskID   string `json:"parent_task_id,omitempty"`
+	PriorTaskID    string `json:"prior_task_id,omitempty"`
+	CreatedAt      string `json:"created_at"`
+	CompletedAt    string `json:"completed_at,omitempty"`
+	VerdictExcerpt string `json:"verdict_excerpt,omitempty"`
+}
 
 // verdictCard is one reviewer-verdict row scoped to this story. The
 // task_id tag (set by the reviewer service) carries the originating
@@ -124,6 +142,7 @@ func buildStoryComposite(
 	stories story.Store,
 	docs document.Store,
 	ledgerStore ledger.Store,
+	tasks task.Store,
 	storyID string,
 	memberships []string,
 ) (storyComposite, error) {
@@ -147,8 +166,92 @@ func buildStoryComposite(
 		c.Activity = buildStoryActivity(ctx, ledgerStore, s.ProjectID, storyID, c.ActivityKinds, memberships)
 		c.Delivery = applyDeliveryVerdict(c.Delivery, c.Verdicts)
 	}
+	if tasks != nil {
+		c.TaskChain = taskChainForStory(ctx, tasks, ledgerStore, s.ProjectID, storyID, memberships)
+	}
 
 	return c, nil
+}
+
+// taskChainForStory pulls every task scoped to storyID, orders by
+// created_at, then projects to view-model with iteration + verdict
+// excerpt populated. Verdict excerpts are best-effort; absence does
+// not error out the view.
+func taskChainForStory(ctx context.Context, tasks task.Store, ledgerStore ledger.Store, projectID, storyID string, memberships []string) []taskChainCard {
+	rows, err := tasks.List(ctx, task.ListOptions{StoryID: storyID, Limit: 500}, memberships)
+	if err != nil || len(rows) == 0 {
+		return []taskChainCard{}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].CreatedAt.Before(rows[j].CreatedAt)
+	})
+	verdicts := verdictExcerptsByTask(ctx, ledgerStore, projectID, memberships)
+	out := make([]taskChainCard, 0, len(rows))
+	for i, t := range rows {
+		card := taskChainCard{
+			ID:             t.ID,
+			Sequence:       i + 1,
+			Kind:           t.Kind,
+			Action:         t.Action,
+			ContractName:   contractNameFromAction(t.Action),
+			Status:         t.Status,
+			Outcome:        t.Outcome,
+			Iteration:      walkIterationForTask(t, rows),
+			ClaimedBy:      t.ClaimedBy,
+			ParentTaskID:   t.ParentTaskID,
+			PriorTaskID:    t.PriorTaskID,
+			CreatedAt:      t.CreatedAt.UTC().Format(time.RFC3339),
+			VerdictExcerpt: verdicts[t.ID],
+		}
+		if t.CompletedAt != nil {
+			card.CompletedAt = t.CompletedAt.UTC().Format(time.RFC3339)
+		}
+		out = append(out, card)
+	}
+	return out
+}
+
+// verdictExcerptsByTask scans kind:verdict ledger rows and indexes
+// the short reasoning by the task_id tag they carry. Empty map when
+// the store is nil or unreachable.
+func verdictExcerptsByTask(ctx context.Context, ledgerStore ledger.Store, projectID string, memberships []string) map[string]string {
+	out := map[string]string{}
+	if ledgerStore == nil || projectID == "" {
+		return out
+	}
+	rows, err := ledgerStore.List(ctx, projectID, ledger.ListOptions{
+		Tags:  []string{verdictTagKind},
+		Limit: ledger.MaxListLimit,
+	}, memberships)
+	if err != nil {
+		return out
+	}
+	for _, r := range rows {
+		var taskID string
+		for _, t := range r.Tags {
+			if id, ok := taskIDFromTag(t); ok {
+				taskID = id
+				break
+			}
+		}
+		if taskID == "" {
+			continue
+		}
+		if _, dup := out[taskID]; dup {
+			continue
+		}
+		excerpt := r.Content
+		if len(r.Structured) > 0 {
+			var payload struct {
+				Reasoning string `json:"reasoning"`
+			}
+			if json.Unmarshal(r.Structured, &payload) == nil && payload.Reasoning != "" {
+				excerpt = payload.Reasoning
+			}
+		}
+		out[taskID] = truncate(excerpt, 160)
+	}
+	return out
 }
 
 // sourceDocsForStory parses `source:` tags on the story into

@@ -386,13 +386,13 @@ func (s *Server) validatePlanCapabilities(ctx context.Context, inputs []taskInpu
 // the first violation as a structured error string; nil when clean.
 //
 // Structural rules in this slice:
-//   1. tasks[] non-empty.
-//   2. tasks[0].action == "contract:plan".
-//   3. tasks[0].kind == KindWork (the plan task itself is work).
-//   4. Every kind=work task has an immediate kind=review sibling
-//      in the next slot — substrate does not silently insert.
-//   5. Every action is well-formed (contract:<name> with a non-empty
-//      contract name).
+//  1. tasks[] non-empty.
+//  2. tasks[0].action == "contract:plan".
+//  3. tasks[0].kind == KindWork (the plan task itself is work).
+//  4. Every kind=work task has an immediate kind=review sibling
+//     in the next slot — substrate does not silently insert.
+//  5. Every action is well-formed (contract:<name> with a non-empty
+//     contract name).
 //
 // Deferred to a follow-up slice (require contract markdown
 // enumeration / agent capability lookups):
@@ -459,4 +459,3 @@ func collectActions(inputs []taskInput) []string {
 	}
 	return out
 }
-

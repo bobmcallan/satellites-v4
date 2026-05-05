@@ -126,6 +126,47 @@ func TestTask_InvalidTransition_NoPublish(t *testing.T) {
 	assert.Equal(t, 1, rec.count(), "no publish on failed mutation")
 }
 
+// sty_a03449d1: every task.<status> emit must carry story_id +
+// kind + action when set so the portal can route the frame to the
+// matching story panel and render a skeleton row for fresh tasks.
+func TestTask_StatusPublishesStoryRoutingFields(t *testing.T) {
+	store := NewMemoryStore()
+	rec := &recorder{}
+	store.SetPublisher(rec)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	row := newSeededTask("")
+	row.StoryID = "sty_visible"
+	row.Kind = KindWork
+	row.Action = ContractAction("plan")
+	enqueued, err := store.Enqueue(ctx, row, now)
+	require.NoError(t, err)
+	require.Equal(t, 1, rec.count())
+
+	payload := rec.events[0].data.(map[string]any)
+	assert.Equal(t, enqueued.ID, payload["task_id"])
+	assert.Equal(t, "sty_visible", payload["story_id"], "story_id is the panel-routing key")
+	assert.Equal(t, KindWork, payload["kind"], "kind tells the patcher work vs review")
+	assert.Equal(t, ContractAction("plan"), payload["action"], "action hydrates skeleton-row contract name")
+}
+
+func TestTask_StatusOmitsEmptyStoryID(t *testing.T) {
+	store := NewMemoryStore()
+	rec := &recorder{}
+	store.SetPublisher(rec)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Story-less task (legacy / non-story origin) — payload must not
+	// carry a story_id key at all so the portal ignores it cleanly.
+	_, err := store.Enqueue(ctx, newSeededTask(""), now)
+	require.NoError(t, err)
+	payload := rec.events[0].data.(map[string]any)
+	_, present := payload["story_id"]
+	assert.False(t, present, "story_id key absent when StoryID is empty")
+}
+
 func TestTask_PanicRecovered(t *testing.T) {
 	store := NewMemoryStore()
 	store.SetPublisher(panickingPub{})

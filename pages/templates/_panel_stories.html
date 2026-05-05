@@ -154,32 +154,36 @@
               </section>
               <section class="story-detail-block" data-story-tasks="{{.ID}}">
                 <h4>tasks</h4>
-                {{if .Contracts}}
+                {{if .TaskChain}}
                   <table class="panel-table panel-table-tasks" data-testid="story-tasks-{{.ID}}">
                     <thead>
                       <tr>
                         <th class="col-seq">#</th>
-                        <th class="col-name">task</th>
+                        <th class="col-kind">kind</th>
+                        <th class="col-name">action</th>
                         <th class="col-status">status</th>
-                        <th class="col-agent">agent</th>
+                        <th class="col-iter">iter</th>
+                        <th class="col-outcome">outcome</th>
+                        <th class="col-claimed">claimed by</th>
+                        <th class="col-verdict">verdict</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {{range .Contracts}}
-                      <tr class="story-task-row"
-                          data-ci-id="{{.ID}}"
+                      {{range .TaskChain}}
+                      <tr class="story-task-row{{if eq .Status "planned"}} status-planned{{end}}{{if .PriorTaskID}} is-retry{{end}}"
+                          data-task-id="{{.ID}}"
                           data-status="{{.Status}}"
+                          data-kind="{{.Kind}}"
+                          {{if .PriorTaskID}}data-prior-task-id="{{.PriorTaskID}}"{{end}}
                           data-testid="story-task-row-{{.ID}}">
                         <td class="col-seq"><code>#{{.Sequence}}</code></td>
+                        <td class="col-kind"><code class="task-kind-{{.Kind}}">{{.Kind}}</code></td>
                         <td class="col-name"><code class="ci-name">{{.ContractName}}</code></td>
                         <td class="col-status"><code class="status-pill status-{{.Status}}" data-testid="story-task-status-{{.ID}}">{{.Status}}</code></td>
-                        <td class="col-agent">
-                          {{if .AgentID}}
-                            <a href="{{.AgentHref}}" class="ci-agent-link" data-testid="story-task-agent-{{.ID}}" data-agent-id="{{.AgentID}}"><code>{{if .AgentName}}{{.AgentName}}{{else}}{{.AgentID}}{{end}}</code></a>
-                          {{else}}
-                            <span class="muted" data-testid="story-task-agent-{{.ID}}">—</span>
-                          {{end}}
-                        </td>
+                        <td class="col-iter">{{if gt .Iteration 1}}<code class="iteration-pill" title="retry of {{.PriorTaskID}}">#{{.Iteration}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
+                        <td class="col-outcome">{{if .Outcome}}<code class="outcome-{{.Outcome}}" data-testid="story-task-outcome-{{.ID}}">{{.Outcome}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
+                        <td class="col-claimed">{{if .ClaimedBy}}<code class="claimed-by" data-testid="story-task-claimed-{{.ID}}">{{.ClaimedBy}}</code>{{else}}<span class="muted">—</span>{{end}}</td>
+                        <td class="col-verdict">{{if .VerdictExcerpt}}<details class="verdict-excerpt" data-testid="story-task-verdict-{{.ID}}"><summary>verdict</summary><pre class="verdict-excerpt-pre">{{.VerdictExcerpt}}</pre></details>{{else}}<span class="muted">—</span>{{end}}</td>
                       </tr>
                       {{end}}
                     </tbody>

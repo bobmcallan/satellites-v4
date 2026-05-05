@@ -20,7 +20,6 @@
           {{if eq .ID "stories"}}<code data-testid="panel-stories-count">({{$.Composite.StoryTotal}})</code>{{end}}
           {{if eq .ID "documents"}}<code data-testid="panel-documents-count">({{$.Composite.DocTotal}})</code>{{end}}
           {{if eq .ID "contracts"}}<code data-testid="panel-contracts-count">({{$.Composite.ContractsTotal}})</code>{{end}}
-          {{if eq .ID "ledger"}}<code data-testid="panel-ledger-count">({{$.Composite.LedgerTotal}})</code>{{end}}
           {{if eq .ID "changelog"}}<code data-testid="panel-changelog-count">({{$.Composite.ChangelogsTotal}})</code>{{end}}
           <span class="section-toggle-caret" aria-hidden="true" x-text="caret"></span>
         </span>
@@ -33,7 +32,6 @@
         {{else if eq .ID "configuration"}}{{template "_panel_configuration.html" $}}
         {{else if eq .ID "repo"}}{{template "_panel_repo.html" $}}
         {{else if eq .ID "changelog"}}{{template "_panel_changelog.html" $}}
-        {{else if eq .ID "ledger"}}{{template "_panel_ledger.html" $}}
         {{end}}
       </div>
     </section>

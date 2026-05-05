@@ -26,6 +26,8 @@ func defaultPanels() []panel {
 		{ID: "configuration", Title: "configuration", DefaultExpanded: false},
 		{ID: "repo", Title: "repo", DefaultExpanded: false},
 		{ID: "changelog", Title: "changelog", DefaultExpanded: false},
-		{ID: "ledger", Title: "ledger", DefaultExpanded: false},
+		// sty_9596b012: ledger panel removed. The /projects/{id}/ledger
+		// page is the canonical surface (filters + timeline) and the
+		// nav link from sty_5b92165a routes there directly.
 	}
 }

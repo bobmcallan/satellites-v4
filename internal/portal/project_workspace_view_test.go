@@ -280,6 +280,35 @@ func renderWorkspace(t *testing.T, query string, seedFn func(ctx context.Context
 	return rec
 }
 
+// sty_9596b012 — the inline ledger panel is removed from the
+// project detail page. The standalone /projects/{id}/ledger
+// page is the canonical surface, and the LEDGER nav link
+// (sty_5b92165a) routes there. No panel-ledger-* markers
+// should appear on the project page.
+func TestProjectWorkspaceRender_LedgerPanelRemoved(t *testing.T) {
+	t.Parallel()
+	rec := renderWorkspace(t, "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, mustNot := range []string{
+		`data-testid="panel-ledger-count"`,
+		`data-testid="panel-ledger-body"`,
+		`data-testid="panel-ledger-table"`,
+		`data-testid="panel-ledger-empty"`,
+		`data-testid="panel-ledger-open"`,
+		`data-id="ledger"`,
+	} {
+		if strings.Contains(body, mustNot) {
+			t.Errorf("project page still contains ledger-panel marker %q (sty_9596b012 removal incomplete)", mustNot)
+		}
+	}
+	if !strings.Contains(body, `data-testid="panel-stories"`) {
+		t.Errorf("stories panel missing — refactor likely overshot")
+	}
+}
+
 func TestProjectWorkspaceRender_SectionsPresentNoSearchBox(t *testing.T) {
 	t.Parallel()
 	rec := renderWorkspace(t, "", nil)

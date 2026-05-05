@@ -1,6 +1,6 @@
 [satellites]
-version = 0.0.233
-build = 2026-05-05-19-15-00
+version = 0.0.234
+build = 2026-05-05-19-30-00
 
 [satellites-agent]
 version = 0.0.3

@@ -465,8 +465,10 @@ func main() {
 
 	// sty_51571015 retired the in-process reviewer service goroutine.
 	// kind:review tasks now flow to the orchestrator session, which
-	// dispatches the appropriate reviewer agent via `agent_dispatch`
-	// (internal/agentdispatch) — same path as every other dispatch.
+	// reads its seed-prescribed dispatch mechanism (per the
+	// default_agent_process artifact body) and runs the appropriate
+	// reviewer agent via `claude -p` from its own Bash tool — same
+	// path as every other dispatch.
 
 	// sty_509a46fa: embedding ingestion worker + repo reindex worker
 	// removed. Both depended on Task.Payload as a job envelope, which is

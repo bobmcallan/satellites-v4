@@ -22,13 +22,13 @@ import (
 // or call Gemini — those would either need a real API key (flaky,
 // costs money) or a stub reviewer that always accepts (meaningless).
 // sty_51571015 retired the in-process reviewer service; reviewer
-// agents are now dispatched (see internal/agentdispatch.Dispatch),
-// and the dispatched subprocess reads its own agent doc body as the
-// system prompt. So the seeded markdown IS what the live reviewer
-// reads at runtime — file-level assertions remain the faithful
-// proxy for "the live reviewer will behave per the rubric." Drift
-// back into deleted concepts will fail this test before it reaches
-// a contract close.
+// agents are now dispatched by the orchestrator session per the
+// seed-prescribed dispatch mechanism, and the dispatched subprocess
+// reads its own agent doc body as the system prompt. So the seeded
+// markdown IS what the live reviewer reads at runtime — file-level
+// assertions remain the faithful proxy for "the live reviewer will
+// behave per the rubric." Drift back into deleted concepts will
+// fail this test before it reaches a contract close.
 //
 // The "synthetic 7-step workflow" framing in sty_7a061d73's AC #4
 // is a description of the BEHAVIOURAL invariant the rubric must

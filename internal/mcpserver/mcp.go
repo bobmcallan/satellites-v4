@@ -618,15 +618,13 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	)
 	s.mcp.AddTool(systemSeedTool, s.handleSystemSeedRun)
 
-	// sty_51571015: agent dispatch is KV-configured only. The
-	// agentdispatch Go primitive ships in internal/agentdispatch
-	// (consumed by operator-local invokers — e.g. satellites-agent
-	// CLI); it is NOT exposed as an MCP verb on the substrate
-	// because the substrate runs on Fly without filesystem access
-	// to the operator's repo. Behaviour is steered via the four
-	// system-tier KV rows agent.dispatch.{mode,bash.claude_path,
-	// bash.timeout_seconds,bash.preserve_worktree_on_failure} which
-	// the local invoker reads via ledger.KVResolveScoped.
+	// sty_51571015: agent dispatch is seed-prescribed, not Go code.
+	// The orchestrator session reads the dispatch mechanism from its
+	// handshake (default_agent_process artifact body + agent docs) and
+	// executes `claude -p` via its own Bash tool — the substrate does
+	// not exec subprocesses for dispatch. Configuration over code:
+	// tune dispatch by editing config/seed/artifacts/default_agent_process.md
+	// or config/seed/agents/*.md, then call system_seed_run.
 
 	if s.tasks != nil {
 		// task_plan is the only remaining bare task-creation MCP verb

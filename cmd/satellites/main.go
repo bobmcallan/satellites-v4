@@ -465,6 +465,12 @@ func main() {
 	if err := mcp.LoadReplicateVocabularyFromDoc(ctx, "default"); err != nil {
 		logger.Warn().Str("error", err.Error()).Msg("portal_replicate vocabulary load failed (canonical-only fallback)")
 	}
+	// sty_cd8b89c6: snapshot the registered MCP tool catalogue into the
+	// document store so the portal /mcp page renders 1:1 what Claude
+	// sees through tools/list. Boot-time only; no runtime drift window.
+	if err := mcp.MaterialiseCatalogue(ctx); err != nil {
+		logger.Warn().Str("error", err.Error()).Msg("mcp catalogue snapshot failed (page will render empty-state)")
+	}
 	mcpAuth := mcpserver.AuthMiddleware(mcpserver.AuthDeps{
 		Sessions:       sessions,
 		Users:          users,

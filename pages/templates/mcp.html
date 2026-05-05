@@ -1,0 +1,69 @@
+{{define "mcp.html"}}
+<!doctype html>
+<html lang="en">
+<head>{{template "head.html" .}}</head>
+<body>
+  {{template "nav.html" .}}
+  <main class="portal-main">
+    <section class="panel-headed" data-testid="mcp-page">
+      <header class="panel-header">
+        <h1>mcp</h1>
+        <span class="panel-header-meta">
+          {{if .Composite.HasSnapshot}}
+            <code data-testid="mcp-tool-count">({{.Composite.ToolCount}} tools)</code>
+            <span class="muted" data-testid="mcp-snapshot-at">snapshot {{.Composite.SnapshotAt}}</span>
+          {{end}}
+        </span>
+      </header>
+      <div class="panel-body">
+        {{if not .Composite.HasSnapshot}}
+          <p class="muted" data-testid="mcp-empty">
+            no snapshot yet — check satellites server boot logs
+          </p>
+        {{else}}
+          {{range .Composite.Groups}}
+          <section class="mcp-group" data-testid="mcp-group-{{.Primitive}}">
+            <h2 class="mcp-group-heading"><code>{{.Primitive}}</code></h2>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>name</th>
+                  <th>description</th>
+                  <th>parameters</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{range .Tools}}
+                <tr data-testid="mcp-tool-row-{{.Name}}">
+                  <td><code data-testid="mcp-tool-name">{{.Name}}</code></td>
+                  <td data-testid="mcp-tool-description">{{.Description}}</td>
+                  <td data-testid="mcp-tool-parameters">
+                    {{if .Parameters}}
+                      <ul class="mcp-param-list">
+                        {{range .Parameters}}
+                        <li data-testid="mcp-param-{{.Name}}">
+                          <code class="mcp-param-name">{{.Name}}</code>
+                          {{if .Type}}<code class="tag-chip mcp-param-type">{{.Type}}</code>{{end}}
+                          {{if .Required}}<code class="tag-chip mcp-param-required">required</code>{{end}}
+                          {{if .Description}}<span class="mcp-param-desc">{{.Description}}</span>{{end}}
+                        </li>
+                        {{end}}
+                      </ul>
+                    {{else}}
+                      <span class="muted">—</span>
+                    {{end}}
+                  </td>
+                </tr>
+                {{end}}
+              </tbody>
+            </table>
+          </section>
+          {{end}}
+        {{end}}
+      </div>
+    </section>
+  </main>
+  {{template "footer.html" .}}
+</body>
+</html>
+{{end}}

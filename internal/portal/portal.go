@@ -261,6 +261,7 @@ func (p *Portal) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /tasks", p.handleTasks)
 	mux.HandleFunc("GET /api/tasks/{task_id}", p.handleTaskDrawer)
 	mux.HandleFunc("GET /ledger", p.handleLedgerRedirect)
+	mux.HandleFunc("GET /mcp", p.handleMCPCatalogue)
 	mux.HandleFunc("GET /projects/{id}/api/ledger", p.handleProjectLedgerJSON)
 	mux.HandleFunc("GET /documents", p.handleDocumentsList)
 	mux.HandleFunc("GET /documents/{id}", p.handleDocumentDetail)

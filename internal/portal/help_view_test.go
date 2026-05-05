@@ -184,3 +184,20 @@ func TestNav_HasHelpLink(t *testing.T) {
 		t.Errorf("nav missing HELP link")
 	}
 }
+
+// sty_5b92165a — desktop nav carries the LEDGER link routing to
+// /ledger (which redirects to the active project's ledger page).
+// Mobile nav already has the equivalent entry; this covers the
+// missing top-bar parity.
+func TestNav_HasLedgerLink(t *testing.T) {
+	t.Parallel()
+	f := newHelpFixture(t)
+	rec := f.request(t, "/help")
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="nav-ledger-link"`) {
+		t.Errorf("desktop nav missing LEDGER link (sty_5b92165a)")
+	}
+	if !strings.Contains(body, `href="/ledger"`) {
+		t.Errorf("LEDGER link missing href=\"/ledger\"")
+	}
+}

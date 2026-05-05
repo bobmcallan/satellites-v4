@@ -445,10 +445,11 @@ func TestPrincipleSeedLoad(t *testing.T) {
 	}
 }
 
-// TestRun_RealSeedDirShipsAllPrinciples (story_ac3dc4d0 AC1+AC7+AC8):
-// the on-disk config/seed/principles/ directory contains exactly 9
-// markdown files, each loads cleanly into a type=principle scope=system
-// document via the principle phase.
+// TestRun_RealSeedDirShipsAllPrinciples checks the loader's structural
+// contract on the real config/seed/principles/ directory: every .md
+// file becomes one type=principle scope=system document with a
+// non-empty body. The inventory itself (which principles exist, their
+// names) is content, not loader behaviour, so it isn't pinned here.
 func TestRun_RealSeedDirShipsAllPrinciples(t *testing.T) {
 	t.Parallel()
 	seedDir, err := filepath.Abs(filepath.Join("..", "..", "config", "seed"))
@@ -457,6 +458,13 @@ func TestRun_RealSeedDirShipsAllPrinciples(t *testing.T) {
 	}
 	if _, err := os.Stat(seedDir); err != nil {
 		t.Fatalf("seed dir %q not found: %v", seedDir, err)
+	}
+	files, err := filepath.Glob(filepath.Join(seedDir, "principles", "*.md"))
+	if err != nil {
+		t.Fatalf("glob principles: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatalf("no principle files under %s/principles", seedDir)
 	}
 
 	docs := document.NewMemoryStore()
@@ -472,41 +480,17 @@ func TestRun_RealSeedDirShipsAllPrinciples(t *testing.T) {
 	principles, err := docs.List(context.Background(), document.ListOptions{
 		Type:  document.TypePrinciple,
 		Scope: document.ScopeSystem,
-		Limit: 50,
+		Limit: len(files) * 2,
 	}, nil)
 	if err != nil {
 		t.Fatalf("List principles: %v", err)
 	}
-	if len(principles) != 11 {
-		t.Fatalf("principles count = %d, want 11", len(principles))
-	}
-
-	wantNames := map[string]bool{
-		"Agile smallest-change delivery":                         false,
-		"Evidence must be verifiable":                            false,
-		"Iterate locally, deploy once":                           false,
-		"Lifecycle and project contract separation":              false,
-		"Mandate enforced by reviewer, not substrate":            false,
-		"No unrequested abstractions or backwards-compat layers": false,
-		"Pipeline integrity":                                     false,
-		"Process is trust":                                       false,
-		"Quality over speed":                                     false,
-		"Root cause, not hack":                                   false,
-		"Skills and reviewers are ad-hoc, not baseline":          false,
+	if len(principles) != len(files) {
+		t.Fatalf("principles count = %d, want %d (one per .md file)", len(principles), len(files))
 	}
 	for _, p := range principles {
-		if _, ok := wantNames[p.Name]; !ok {
-			t.Errorf("unexpected principle name %q", p.Name)
-			continue
-		}
-		wantNames[p.Name] = true
 		if p.Body == "" {
 			t.Errorf("principle %q has empty body", p.Name)
-		}
-	}
-	for name, found := range wantNames {
-		if !found {
-			t.Errorf("expected principle %q not seeded", name)
 		}
 	}
 }

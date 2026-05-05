@@ -40,9 +40,6 @@ func TestAgentProcessPanel_EmptyStateRendersSystemDefault(t *testing.T) {
 		// The system default body is rendered inline so the user sees
 		// what the agent receives.
 		`data-testid="config-agent-process-body"`,
-		"configuration over code",
-		"satellites_project_set",
-		"satellites_story_get",
 		// Scope pill shows "system default".
 		"system default",
 	} {

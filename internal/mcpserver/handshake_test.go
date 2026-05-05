@@ -7,7 +7,6 @@ package mcpserver
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -44,15 +43,14 @@ func TestResolveHandshakeInstructions_ServesSeededBody(t *testing.T) {
 	if got == HandshakeFallbackInstructions {
 		t.Errorf("seeded handshake fell through to fallback")
 	}
-	// Pin the fundamentals tokens so the test fails loudly if the
-	// resolver ever serves a stripped body.
-	for _, want := range []string{"configuration over code", "satellites_project_set", "satellites_story_get"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("handshake body missing %q", want)
-		}
+	if got == "" {
+		t.Errorf("seeded handshake = empty, want seeded body")
 	}
-	// Sanity: pull the artifact directly to check it's the agentprocess one.
-	if _, err := store.GetByName(context.Background(), "", agentprocess.SystemDefaultName, nil); err != nil {
-		t.Errorf("system default artifact not seeded: %v", err)
+	doc, err := store.GetByName(context.Background(), "", agentprocess.SystemDefaultName, nil)
+	if err != nil {
+		t.Fatalf("system default artifact not seeded: %v", err)
+	}
+	if got != doc.Body {
+		t.Errorf("handshake body diverges from seeded artifact body")
 	}
 }

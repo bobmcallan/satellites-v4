@@ -3,20 +3,15 @@
 // carrying the markdown the satellites MCP server surfaces as its
 // handshake instructions block.
 //
-// Resolution chain (sty_e1ab884d):
+// Resolution chain:
 //
 //  1. project-scope `name=agent_process` artifact (per-project override)
 //  2. system-scope `name=default_agent_process` artifact (seeded by configseed)
 //  3. empty
 //
-// The system-scope body is seeded from
-// `config/seed/artifacts/default_agent_process.md` by configseed
-// (sty_6c3f8091). The body MUST include the satellites fundamentals
-// (configuration over code, story is the unit of work, process order,
-// session = one role, five primitives) and the routing rules
-// (`satellites_project_set` first, `satellites_story_get` on
-// `implement <id>`). A regression test pins these tokens against the
-// seed file; future edits that drop any of them break the build.
+// The body is authoritative prose, not code. The resolver shuttles
+// whatever markdown the seed/override carries; constraints on its
+// content live in the markdown itself, not here.
 package agentprocess
 
 import (

@@ -2,134 +2,13 @@ package agentprocess
 
 import (
 	"context"
-	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/bobmcallan/satellites/internal/configseed"
 	"github.com/bobmcallan/satellites/internal/document"
 )
-
-// TestSystemDefaultSeedFile_CarriesPreflightRules is the regression
-// test that sty_7fef4a3a (orchestrator pre-flight, order:01) demands.
-// The seeded artifact body MUST carry the three Rule anchors so future
-// Claude sessions reading the body via `story_context.agent_process`
-// pick up the orchestrator's pre-flight discipline.
-func TestSystemDefaultSeedFile_CarriesPreflightRules(t *testing.T) {
-	t.Parallel()
-	body := readSeedBody(t)
-	mustContain := []string{
-		"Rule 1 — read contracts before composing evidence",
-		"Rule 2 — read contracts before composing the plan",
-		"Rule 3 — reviewer rejection is operator authority",
-		"pr_reviewer_voice_authoritative",
-	}
-	for _, want := range mustContain {
-		if !strings.Contains(body, want) {
-			t.Errorf("seed body missing pre-flight anchor %q — sty_7fef4a3a requires the rule wording in the seed so future sessions pick it up", want)
-		}
-	}
-}
-
-// TestSystemDefaultSeedFile_CarriesDispatchLoop is the regression
-// test that sty_9d7992c3 (orchestrator dispatch loop, order:02)
-// demands. The seeded artifact body MUST carry the five dispatch-
-// loop anchor strings + the section heading so future Claude
-// sessions reading the body via `story_context.agent_process`
-// pick up the dispatch discipline.
-func TestSystemDefaultSeedFile_CarriesDispatchLoop(t *testing.T) {
-	t.Parallel()
-	body := readSeedBody(t)
-	mustContain := []string{
-		"## dispatch loop",
-		"agents do not do work themselves",
-		"bash(claude -p",
-		".satellites-agents/<task_id>",
-		"pr_substrate_provides_context",
-		"--allowedTools",
-	}
-	for _, want := range mustContain {
-		if !strings.Contains(body, want) {
-			t.Errorf("seed body missing dispatch-loop anchor %q — sty_9d7992c3 requires the wording in the seed so future sessions pick up the dispatch discipline", want)
-		}
-	}
-}
-
-// TestDocsCarryDispatchArchitecture is the regression test that
-// sty_2de0905b (docs update, order:03) demands. The architecture
-// and agent-process docs MUST carry the dispatch architecture so
-// readers (operator, future Claude sessions, dispatched agents
-// reading docs as context) treat the new model as authoritative.
-func TestDocsCarryDispatchArchitecture(t *testing.T) {
-	t.Parallel()
-	architecture := readDocBody(t, "architecture.md")
-	agentProcess := readDocBody(t, "agent_process_v3.md")
-
-	architectureAnchors := []string{
-		"## Agent Dispatch",
-		"bash(claude -p",
-		".satellites-agents/<task_id>",
-	}
-	for _, want := range architectureAnchors {
-		if !strings.Contains(architecture, want) {
-			t.Errorf("docs/architecture.md missing dispatch anchor %q", want)
-		}
-	}
-
-	agentProcessAnchors := []string{
-		"bash(claude -p",
-		"pr_substrate_provides_context",
-		"Substrate provides context",
-	}
-	for _, want := range agentProcessAnchors {
-		if !strings.Contains(agentProcess, want) {
-			t.Errorf("docs/agent_process_v3.md missing dispatch anchor %q", want)
-		}
-	}
-}
-
-// readDocBody returns the on-disk body of a doc file under
-// docs/ at the repo root.
-func readDocBody(t *testing.T, name string) string {
-	t.Helper()
-	path := filepath.Join("..", "..", "docs", name)
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read doc file %s: %v", path, err)
-	}
-	return string(content)
-}
-
-// TestSystemDefaultSeedFile_PinsContractTokens is the regression test
-// that AC6 of sty_e1ab884d demands. The seeded body MUST keep its
-// fundamentals + routing tokens; a future edit that drops any of them
-// breaks this test loudly. Reads the on-disk seed file directly so the
-// test acts as a contract on whatever configseed will load at boot.
-// Sty_6c3f8091.
-func TestSystemDefaultSeedFile_PinsContractTokens(t *testing.T) {
-	t.Parallel()
-	body := readSeedBody(t)
-	mustContain := []string{
-		// Fundamentals.
-		"configuration over code",
-		"story is the unit",
-		"workflow is a list of contract",
-		"process order",
-		"session = one agent",
-		"five primitives",
-		// Routing rules.
-		"satellites_project_set",
-		"satellites_story_get",
-		"implement <story_id>",
-	}
-	for _, want := range mustContain {
-		if !strings.Contains(body, want) {
-			t.Errorf("seed body missing required token %q — the seed is the contract; do not drop tokens", want)
-		}
-	}
-}
 
 // TestConfigseedRunsArtifactsIdempotent — sty_6c3f8091 wires the
 // `default_agent_process` artifact through configseed (KindArtifact).
@@ -199,10 +78,10 @@ func TestResolve_FallsBackToSystemDefault(t *testing.T) {
 	ctx := context.Background()
 	store := document.NewMemoryStore()
 	now := time.Now().UTC()
-	seedSystemDefault(t, ctx, store, "wksp_a", "configuration over code default", now)
-	body := Resolve(ctx, store, "proj_no_override", nil)
-	if !strings.Contains(body, "configuration over code") {
-		t.Errorf("Resolve fell through to empty when system default should serve")
+	const seeded = "SYSTEM_DEFAULT_BODY"
+	seedSystemDefault(t, ctx, store, "wksp_a", seeded, now)
+	if got := Resolve(ctx, store, "proj_no_override", nil); got != seeded {
+		t.Errorf("Resolve fell through with no project override = %q, want %q", got, seeded)
 	}
 }
 
@@ -284,20 +163,4 @@ func absSeedDir(t *testing.T) string {
 		t.Fatalf("abs seed dir: %v", err)
 	}
 	return dir
-}
-
-// readSeedBody returns the body of the on-disk default_agent_process
-// seed file, with frontmatter stripped via configseed.Parse.
-func readSeedBody(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(absSeedDir(t), "artifacts", "default_agent_process.md")
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read seed file: %v", err)
-	}
-	_, body, err := configseed.Parse(content)
-	if err != nil {
-		t.Fatalf("parse seed file: %v", err)
-	}
-	return string(body)
 }

@@ -231,7 +231,19 @@
             status: row.status || '',
             content: row.content || row.Content || '',
             created_at: row.created_at || row.CreatedAt || '',
-            structured: row.structured ? (typeof row.structured === 'string' ? row.structured : JSON.stringify(row.structured)) : ''
+            structured: row.structured ? (typeof row.structured === 'string' ? row.structured : JSON.stringify(row.structured)) : '',
+            // sty_2b0ee8b3 timeline metadata. Server populates these
+            // for the SSR snapshot + every JSON refetch; the WS push
+            // path (ledger.created) needs the same shape so applyEvent
+            // backfills missing fields with safe defaults.
+            kind_class: row.kind_class || 'raw',
+            kind_label: row.kind_label || row.type || row.Type || 'raw',
+            verdict_outcome: row.verdict_outcome || '',
+            verdict_reasoning: row.verdict_reasoning || '',
+            status_change_from: row.status_change_from || '',
+            status_change_to: row.status_change_to || '',
+            task_id: row.task_id || '',
+            phase: row.phase || ''
         };
     }
 

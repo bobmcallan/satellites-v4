@@ -99,7 +99,9 @@
 
       <section class="panel-headed ledger-rows-panel" data-testid="ledger-rows-panel">
         <header class="panel-header">
-          <h2>rows</h2>
+          <h2 :data-testid="filters.story_id ? 'ledger-timeline-title' : 'ledger-rows-title'">
+            <span x-text="filters.story_id ? 'timeline · ' + filters.story_id : 'rows'"></span>
+          </h2>
           <button type="button"
                   :class="hiddenWhenShowNewRowsPill"
                   data-testid="new-rows-pill"
@@ -120,36 +122,54 @@
             </button>
           </template>
         </div>
-        <div class="panel-body">
+        <div class="panel-body" :class="filters.story_id ? 'ledger-timeline' : ''" :data-mode="filters.story_id ? 'timeline' : 'feed'">
           <template x-if="rowsEmpty">
             <p class="muted" data-testid="ledger-empty">No rows match the current filters.</p>
           </template>
           {{if not .Composite.Rows}}<noscript><p class="muted" data-testid="ledger-empty-ssr">No rows match.</p></noscript>{{end}}
           <ul class="ledger-rows">
             <template x-for="row in rows" :key="row.id">
-              <li :data-testid="row.testid">
+              <li :data-testid="row.testid"
+                  :class="'ledger-card kind-' + (row.kind_class || 'raw')"
+                  :data-kind="row.kind_class || 'raw'">
                 <div class="ledger-row-summary" :data-row-id="row.id" @click="toggleExpand">
-                  <code x-text="row.created_at"></code>
-                  <code class="type-pill" x-text="row.type"></code>
-                  <template x-for="t in row.tagsList" :key="t">
-                    <code class="tag-chip" x-text="t"></code>
+                  <code class="ledger-ts" x-text="row.created_at"></code>
+                  <code class="kind-pill" :class="'kind-pill-' + (row.kind_class || 'raw')" x-text="row.kind_label || row.type"></code>
+                  <template x-if="row.kind_class === 'verdict' && row.verdict_outcome">
+                    <code class="verdict-pill" :class="'verdict-' + row.verdict_outcome" x-text="row.verdict_outcome"></code>
                   </template>
-                  <template x-if="row.story_id">
+                  <template x-if="row.kind_class === 'status-change' && row.status_change_to">
+                    <code class="status-change-pill" :title="'transition'">
+                      <span x-text="row.status_change_from || '—'"></span>
+                      →
+                      <span x-text="row.status_change_to"></span>
+                    </code>
+                  </template>
+                  <template x-if="row.task_id">
+                    <code class="task-id-chip" x-text="row.task_id"></code>
+                  </template>
+                  <template x-if="row.phase">
+                    <code class="phase-chip" x-text="row.phase"></code>
+                  </template>
+                  <template x-if="row.story_id && !filters.story_id">
                     <code class="ledger-link" x-text="row.story_id"></code>
                   </template>
-                  <span class="muted ledger-content" x-text="row.content"></span>
+                  <span class="muted ledger-content" x-text="row.kind_class === 'verdict' && row.verdict_reasoning ? row.verdict_reasoning : row.content"></span>
                 </div>
                 <pre x-cloak :class="rowDetailClass(row)"><span x-text="row.content"></span><template x-if="row.structured"><span x-text="row.structured"></span></template></pre>
               </li>
             </template>
             {{range .Composite.Rows}}
             <noscript>
-              <li data-testid="ledger-row-ssr-{{.ID}}">
-                <code>{{.CreatedAt}}</code>
-                <code class="type-pill">{{.Type}}</code>
-                {{range .Tags}}<code class="tag-chip">{{.}}</code> {{end}}
+              <li data-testid="ledger-row-ssr-{{.ID}}" class="ledger-card kind-{{.KindClass}}" data-kind="{{.KindClass}}">
+                <code class="ledger-ts">{{.CreatedAt}}</code>
+                <code class="kind-pill kind-pill-{{.KindClass}}">{{if .KindLabel}}{{.KindLabel}}{{else}}{{.Type}}{{end}}</code>
+                {{if and (eq .KindClass "verdict") .VerdictOutcome}}<code class="verdict-pill verdict-{{.VerdictOutcome}}">{{.VerdictOutcome}}</code>{{end}}
+                {{if eq .KindClass "status-change"}}<code class="status-change-pill">{{if .StatusChangeFrom}}{{.StatusChangeFrom}}{{else}}—{{end}} → {{.StatusChangeTo}}</code>{{end}}
+                {{if .TaskID}}<code class="task-id-chip">{{.TaskID}}</code>{{end}}
+                {{if .Phase}}<code class="phase-chip">{{.Phase}}</code>{{end}}
                 {{if .StoryID}}<code class="ledger-link">{{.StoryID}}</code>{{end}}
-                <span class="muted ledger-content">{{.Content}}</span>
+                <span class="muted ledger-content">{{if and (eq .KindClass "verdict") .VerdictReasoning}}{{.VerdictReasoning}}{{else}}{{.Content}}{{end}}</span>
               </li>
             </noscript>
             {{end}}

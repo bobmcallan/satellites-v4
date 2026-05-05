@@ -280,6 +280,177 @@ func TestLedgerView_ClearStoryIDDefined(t *testing.T) {
 	_ = source
 }
 
+// sty_2b0ee8b3: when the story_id filter is set, the rows are
+// reordered oldest-first (timeline order) so the operator reads
+// the story as a narrative.
+func TestLedgerComposite_StoryFilterOrdersAscending(t *testing.T) {
+	t.Parallel()
+	led := ledger.NewMemoryStore()
+	now := time.Now().UTC()
+	storyID := "sty_narrative"
+	mk := func(content string, offset time.Duration) {
+		_, _ = led.Append(t.Context(), ledger.LedgerEntry{
+			ProjectID:  "proj_a",
+			StoryID:    &storyID,
+			Type:       ledger.TypeDecision,
+			Tags:       []string{"kind:plan"},
+			Content:    content,
+			Durability: ledger.DurabilityDurable,
+			SourceType: ledger.SourceAgent,
+			Status:     ledger.StatusActive,
+		}, now.Add(offset))
+	}
+	mk("event-1-oldest", 1*time.Second)
+	mk("event-2-middle", 2*time.Second)
+	mk("event-3-newest", 3*time.Second)
+
+	// With story filter → ascending.
+	c := buildLedgerComposite(t.Context(), led, "proj_a",
+		ledgerFilters{StoryID: storyID}, nil)
+	if len(c.Rows) != 3 {
+		t.Fatalf("rows = %d, want 3", len(c.Rows))
+	}
+	if c.Rows[0].Content != "event-1-oldest" {
+		t.Errorf("Rows[0].Content = %q, want oldest first under timeline mode", c.Rows[0].Content)
+	}
+	if c.Rows[2].Content != "event-3-newest" {
+		t.Errorf("Rows[2].Content = %q, want newest last under timeline mode", c.Rows[2].Content)
+	}
+
+	// Without story filter → store default (newest first).
+	c2 := buildLedgerComposite(t.Context(), led, "proj_a",
+		ledgerFilters{}, nil)
+	if len(c2.Rows) != 3 {
+		t.Fatalf("project-wide rows = %d, want 3", len(c2.Rows))
+	}
+	if c2.Rows[0].Content != "event-3-newest" {
+		t.Errorf("Rows[0].Content = %q, want newest first under feed mode", c2.Rows[0].Content)
+	}
+}
+
+// sty_2b0ee8b3: each row carries kind_class + kind_label derived
+// from the primary kind:<x> tag, plus structured payload extracts
+// (verdict outcome, status-change from→to). The template uses
+// these to render distinct chrome per event.
+func TestLedgerRowView_PerKindMetadata(t *testing.T) {
+	t.Parallel()
+	led := ledger.NewMemoryStore()
+	now := time.Now().UTC()
+	storyID := "sty_kinds"
+
+	type evt struct {
+		tags       []string
+		structured string
+		content    string
+	}
+	rows := []evt{
+		{tags: []string{"kind:plan"}, content: "plan body"},
+		{tags: []string{"kind:evidence", "task_id:task_evdev", "phase:develop"}, content: "evidence body"},
+		{tags: []string{"kind:verdict"}, content: "rationale body",
+			structured: `{"verdict":"rejected","reasoning":"AC#3 missing"}`},
+		{tags: []string{"kind:story.status_change"}, content: "",
+			structured: `{"from":"in_progress","to":"done"}`},
+		{tags: []string{"kind:operator-override"}, content: "override body"},
+		{tags: []string{}, content: "no kind"},
+	}
+	for i, r := range rows {
+		entry := ledger.LedgerEntry{
+			ProjectID:  "proj_a",
+			StoryID:    &storyID,
+			Type:       ledger.TypeDecision,
+			Tags:       r.tags,
+			Content:    r.content,
+			Durability: ledger.DurabilityDurable,
+			SourceType: ledger.SourceAgent,
+			Status:     ledger.StatusActive,
+		}
+		if r.structured != "" {
+			entry.Structured = []byte(r.structured)
+		}
+		_, _ = led.Append(t.Context(), entry, now.Add(time.Duration(i)*time.Second))
+	}
+
+	c := buildLedgerComposite(t.Context(), led, "proj_a",
+		ledgerFilters{StoryID: storyID}, nil)
+	if len(c.Rows) != 6 {
+		t.Fatalf("rows = %d, want 6", len(c.Rows))
+	}
+	classes := make([]string, len(c.Rows))
+	for i, r := range c.Rows {
+		classes[i] = r.KindClass
+	}
+	want := []string{"plan", "evidence", "verdict", "status-change", "operator-override", "raw"}
+	for i := range want {
+		if classes[i] != want[i] {
+			t.Errorf("Rows[%d].KindClass = %q, want %q", i, classes[i], want[i])
+		}
+	}
+
+	// Per-kind extracts.
+	if c.Rows[1].TaskID != "task_evdev" {
+		t.Errorf("evidence row TaskID = %q, want task_evdev", c.Rows[1].TaskID)
+	}
+	if c.Rows[1].Phase != "develop" {
+		t.Errorf("evidence row Phase = %q, want develop", c.Rows[1].Phase)
+	}
+	if c.Rows[2].VerdictOutcome != "rejected" {
+		t.Errorf("verdict row VerdictOutcome = %q, want rejected", c.Rows[2].VerdictOutcome)
+	}
+	if c.Rows[2].VerdictReasoning != "AC#3 missing" {
+		t.Errorf("verdict row VerdictReasoning = %q, want AC#3 missing", c.Rows[2].VerdictReasoning)
+	}
+	if c.Rows[3].StatusChangeFrom != "in_progress" || c.Rows[3].StatusChangeTo != "done" {
+		t.Errorf("status-change row = (%q→%q), want (in_progress→done)",
+			c.Rows[3].StatusChangeFrom, c.Rows[3].StatusChangeTo)
+	}
+	if c.Rows[5].KindLabel == "" {
+		t.Errorf("raw row KindLabel must fall back to row Type, got empty")
+	}
+}
+
+// sty_2b0ee8b3: SSR carries the timeline title block + per-kind
+// chrome (kind-pill, verdict-pill, status-change-pill).
+func TestLedgerPage_RendersTimelineForFilteredStory(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	p, users, sessions, projects, ledgerStore, stories := newTestPortal(t, &config.Config{Env: "dev"})
+	mux := http.NewServeMux()
+	p.Register(mux)
+	user := auth.User{ID: "u_alice", Email: "alice@local"}
+	users.Add(user)
+	now := time.Now().UTC()
+	proj, _ := projects.Create(ctx, user.ID, "", "alpha", now)
+	s := seedStory(t, stories, proj.ID, "narrative", "x", now)
+	storyID := s.ID
+	_, _ = ledgerStore.Append(ctx, ledger.LedgerEntry{
+		ProjectID: proj.ID, StoryID: &storyID, Type: ledger.TypeVerdict,
+		Tags: []string{"kind:verdict", "phase:develop"}, Content: "rejected — see reasoning",
+		Structured: []byte(`{"verdict":"rejected","reasoning":"AC#3 missing"}`),
+		Durability: ledger.DurabilityDurable, SourceType: ledger.SourceAgent, Status: ledger.StatusActive,
+	}, now)
+	sess, _ := sessions.Create(user.ID, auth.DefaultSessionTTL)
+
+	req := httptest.NewRequest(http.MethodGet, "/projects/"+proj.ID+"/ledger?story_id="+storyID, nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: sess.ID})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`'ledger-timeline-title' : 'ledger-rows-title'`,
+		`kind-verdict`,
+		`verdict-rejected`,
+		// SSR <noscript> path renders the verdict reasoning excerpt.
+		`AC#3 missing`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("timeline body missing marker %q", want)
+		}
+	}
+}
+
 func TestLedgerJSON_StoryIDCrossOwnerYieldsZero(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()

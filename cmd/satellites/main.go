@@ -368,6 +368,28 @@ func main() {
 		attachPublisher(ledgerStore, publisher)
 		attachPublisher(taskStore, publisher)
 		attachPublisher(storyStore, publisher)
+
+		// sty_0233fabd: wire the open-tasks gate. UpdateStatus rejects
+		// transitions to done|cancelled while the chain has any task at
+		// status=published or status=planned. UpdateStatusDerived bypasses.
+		if g, ok := storyStore.(interface {
+			SetOpenTasksFunc(story.OpenTasksFunc)
+		}); ok && taskStore != nil {
+			ts := taskStore
+			g.SetOpenTasksFunc(func(ctx context.Context, storyID string, memberships []string) ([]string, error) {
+				rows, err := ts.List(ctx, task.ListOptions{StoryID: storyID, Limit: 500}, memberships)
+				if err != nil {
+					return nil, err
+				}
+				ids := make([]string, 0)
+				for _, r := range rows {
+					if r.Status == task.StatusPublished || r.Status == task.StatusPlanned {
+						ids = append(ids, r.ID)
+					}
+				}
+				return ids, nil
+			})
+		}
 	}
 
 	// sty_dc2998c5: nightly sweep that flips closed tasks older than

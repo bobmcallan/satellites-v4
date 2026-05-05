@@ -19,13 +19,18 @@ import (
 // transaction but satisfies the v4-baseline invariant: "failed ledger
 // emission must not leave the status advanced" (pr_20440c77).
 type SurrealStore struct {
-	db        *surrealdb.DB
-	ledger    ledger.Store
-	publisher hubemit.Publisher
+	db          *surrealdb.DB
+	ledger      ledger.Store
+	publisher   hubemit.Publisher
+	openTasksFn OpenTasksFunc
 }
 
 // SetPublisher installs the hub emit sink for subsequent mutations.
 func (s *SurrealStore) SetPublisher(p hubemit.Publisher) { s.publisher = p }
+
+// SetOpenTasksFunc wires the terminal-transition gate; see MemoryStore
+// for the contract. Sty_0233fabd.
+func (s *SurrealStore) SetOpenTasksFunc(fn OpenTasksFunc) { s.openTasksFn = fn }
 
 // NewSurrealStore wraps db as a Store. Defines the `stories` table
 // schemaless and panics if led is nil.
@@ -125,6 +130,15 @@ func (s *SurrealStore) List(ctx context.Context, projectID string, opts ListOpti
 }
 
 func (s *SurrealStore) UpdateStatus(ctx context.Context, id, newStatus, actor string, now time.Time, memberships []string) (Story, error) {
+	if s.openTasksFn != nil && isTerminalStatus(newStatus) {
+		ids, err := s.openTasksFn(ctx, id, memberships)
+		if err != nil {
+			return Story{}, fmt.Errorf("story: open-tasks lookup: %w", err)
+		}
+		if len(ids) > 0 {
+			return Story{}, &StoryHasOpenTasksError{StoryID: id, OpenTaskIDs: ids}
+		}
+	}
 	current, err := s.GetByID(ctx, id, memberships)
 	if err != nil {
 		return Story{}, err

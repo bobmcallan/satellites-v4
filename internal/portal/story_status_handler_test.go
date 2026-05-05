@@ -208,6 +208,55 @@ func TestStoryStatusPanel_RenderTimeAffordances(t *testing.T) {
 	}
 }
 
+// TestStoryStatusUpdate_OpenTasksGateReturns422WithTaskIDs asserts
+// sty_0233fabd: when the open-tasks gate fires, the handler returns
+// 422 with a JSON body whose `open_task_ids` array lists every task
+// id the operator must reconcile before retrying.
+func TestStoryStatusUpdate_OpenTasksGateReturns422WithTaskIDs(t *testing.T) {
+	t.Parallel()
+	p, users, sessions, projects, _, stories := newTestPortal(t, &config.Config{Env: "dev"})
+	stories.SetOpenTasksFunc(func(ctx context.Context, storyID string, memberships []string) ([]string, error) {
+		return []string{"task_open1", "task_open2"}, nil
+	})
+	ctx := context.Background()
+	now := time.Now().UTC()
+	user := auth.User{ID: "u_alice", Email: "alice@local"}
+	users.Add(user)
+	proj, _ := projects.Create(ctx, user.ID, "wksp_a", "alpha", now)
+	st, _ := stories.Create(ctx, story.Story{
+		WorkspaceID: proj.WorkspaceID, ProjectID: proj.ID,
+		Title: "open-chain", Status: story.StatusBacklog, CreatedBy: user.ID,
+	}, now)
+	sess, _ := sessions.Create(user.ID, auth.DefaultSessionTTL)
+
+	rec := postStoryStatus(t, p, st.ID, sess.ID, map[string]any{"status": "done"})
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("content-type = %q, want application/json", ct)
+	}
+	var resp struct {
+		Error       string   `json:"error"`
+		OpenTaskIDs []string `json:"open_task_ids"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode body: %v (raw=%s)", err, rec.Body.String())
+	}
+	if resp.Error == "" {
+		t.Error("error field missing")
+	}
+	if len(resp.OpenTaskIDs) != 2 || resp.OpenTaskIDs[0] != "task_open1" || resp.OpenTaskIDs[1] != "task_open2" {
+		t.Errorf("open_task_ids = %v, want [task_open1 task_open2]", resp.OpenTaskIDs)
+	}
+
+	// Status must remain backlog — gate must not let the write through.
+	got, _ := stories.GetByID(ctx, st.ID, nil)
+	if got.Status != story.StatusBacklog {
+		t.Errorf("status leaked through gate: got %q, want backlog", got.Status)
+	}
+}
+
 // TestStoryStatusUpdate_MissingStatusReturns400 asserts the body
 // validation gate.
 func TestStoryStatusUpdate_MissingStatusReturns400(t *testing.T) {

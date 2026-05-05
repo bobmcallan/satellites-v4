@@ -2,9 +2,12 @@ package portal
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/bobmcallan/satellites/internal/story"
 )
 
 // storyStatusRequest is the POST body for /api/stories/{id}/status.
@@ -66,6 +69,19 @@ func (p *Portal) handleStoryStatusUpdate(w http.ResponseWriter, r *http.Request)
 	now := time.Now().UTC()
 	updated, err := p.stories.UpdateStatus(r.Context(), storyID, target, user.ID, now, memberships)
 	if err != nil {
+		// sty_0233fabd: when the open-tasks gate fires, surface the
+		// list of task ids in the JSON body so the operator can
+		// reconcile without reading server logs.
+		var openErr *story.StoryHasOpenTasksError
+		if errors.As(err, &openErr) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":         err.Error(),
+				"open_task_ids": openErr.OpenTaskIDs,
+			})
+			return
+		}
 		// 422 keeps the operator's UI state intact while signalling that
 		// the substrate rejected the transition (illegal jump, terminal
 		// re-target, etc.).

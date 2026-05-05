@@ -25,6 +25,35 @@ const derivedActor = "system:reconciler"
 // ErrNotFound is returned when a story lookup misses.
 var ErrNotFound = errors.New("story: not found")
 
+// ErrStoryHasOpenTasks is returned by UpdateStatus when a transition
+// to done|cancelled is rejected because the story's task chain has
+// open work (tasks at status=published or status=planned). Wrapped by
+// *StoryHasOpenTasksError, which carries the open task ids so handlers
+// can include them in their response. Sty_0233fabd.
+var ErrStoryHasOpenTasks = errors.New("story: open tasks remain on chain")
+
+// StoryHasOpenTasksError is the typed concrete error returned when the
+// terminal-transition gate fires. errors.Is(err, ErrStoryHasOpenTasks)
+// is true; callers extract the ids via errors.As to *StoryHasOpenTasksError.
+type StoryHasOpenTasksError struct {
+	StoryID     string
+	OpenTaskIDs []string
+}
+
+func (e *StoryHasOpenTasksError) Error() string {
+	return fmt.Sprintf("%s: %s has %d open task(s)", ErrStoryHasOpenTasks.Error(), e.StoryID, len(e.OpenTaskIDs))
+}
+
+// Unwrap supports errors.Is(err, ErrStoryHasOpenTasks).
+func (e *StoryHasOpenTasksError) Unwrap() error { return ErrStoryHasOpenTasks }
+
+// OpenTasksFunc returns the ids of tasks on storyID at
+// status=published or status=planned. The Store calls this before
+// permitting a transition to done|cancelled. When the func is nil
+// (test wiring or pre-boot state), the gate is skipped and transitions
+// proceed as before. Sty_0233fabd.
+type OpenTasksFunc func(ctx context.Context, storyID string, memberships []string) ([]string, error)
+
 // UpdateFields names the per-call mutable subset for Update. Nil-valued
 // pointers mean "leave alone"; non-nil means "set to this value". The
 // Tags slice is wholesale-replace: a non-nil empty slice clears the tag
@@ -117,14 +146,21 @@ type transitionPayload struct {
 // It emits a ledger row on every successful UpdateStatus; if the ledger
 // append fails, the in-memory status change is reverted.
 type MemoryStore struct {
-	mu        sync.Mutex
-	rows      map[string]Story
-	ledger    ledger.Store
-	publisher hubemit.Publisher
+	mu          sync.Mutex
+	rows        map[string]Story
+	ledger      ledger.Store
+	publisher   hubemit.Publisher
+	openTasksFn OpenTasksFunc
 }
 
 // SetPublisher installs the hub emit sink for subsequent mutations.
 func (m *MemoryStore) SetPublisher(p hubemit.Publisher) { m.publisher = p }
+
+// SetOpenTasksFunc wires the terminal-transition gate. When set,
+// UpdateStatus rejects transitions to done|cancelled while the story's
+// chain has any task at status=published or status=planned. Nil disables
+// the gate (boot ordering / unit-test paths). Sty_0233fabd.
+func (m *MemoryStore) SetOpenTasksFunc(fn OpenTasksFunc) { m.openTasksFn = fn }
 
 // NewMemoryStore returns an empty MemoryStore backed by the supplied
 // ledger.Store. A nil ledger is rejected — status transitions MUST emit
@@ -216,6 +252,18 @@ func inStoryMemberships(wsID string, memberships []string) bool {
 }
 
 func (m *MemoryStore) UpdateStatus(ctx context.Context, id, newStatus, actor string, now time.Time, memberships []string) (Story, error) {
+	m.mu.Lock()
+	fn := m.openTasksFn
+	m.mu.Unlock()
+	if fn != nil && isTerminalStatus(newStatus) {
+		ids, err := fn(ctx, id, memberships)
+		if err != nil {
+			return Story{}, fmt.Errorf("story: open-tasks lookup: %w", err)
+		}
+		if len(ids) > 0 {
+			return Story{}, &StoryHasOpenTasksError{StoryID: id, OpenTaskIDs: ids}
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.rows[id]

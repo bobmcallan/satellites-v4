@@ -63,3 +63,9 @@ func IsKnownStatus(s string) bool {
 	}
 	return false
 }
+
+// isTerminalStatus reports whether s is one of the immutable terminal
+// states the open-tasks gate guards against. Sty_0233fabd.
+func isTerminalStatus(s string) bool {
+	return s == StatusDone || s == StatusCancelled
+}

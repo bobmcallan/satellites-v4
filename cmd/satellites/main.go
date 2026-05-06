@@ -263,6 +263,16 @@ func main() {
 			}
 		}
 
+		// sty_8f6b90c8: archive scope=system type=principle rows whose
+		// Name no longer matches a seed file under system/principles/.
+		// Catches orphans left after a principle is moved to project
+		// tier or deleted from the seed dir. Idempotent.
+		if archived, err := configseed.SweepOrphanedSystemPrinciples(ctx, docStore, configseed.ResolveSeedDir(), logger, time.Now().UTC()); err != nil {
+			logger.Warn().Str("error", err.Error()).Msg("system principle sweep failed")
+		} else if archived > 0 {
+			logger.Info().Int("archived", archived).Msg("orphan system principles archived")
+		}
+
 		// sty_c1200f75: migrate any pre-existing tasks at status=enqueued
 		// to status=published. The substrate now distinguishes planned
 		// (agent-local) from published (queue-visible); existing rows

@@ -285,21 +285,22 @@ mistype.
 
 ## Concrete example
 
+A trace of one operator prompt as it flows through the satellites
+MCP surface. Calls to other MCP servers in the session are out of
+scope and excluded — this walkthrough covers the satellites
+contribution only.
+
 | Step | Phase | Owner | Call / action |
 |---|---|---|---|
 | 1 | 6 | Operator | Typed: *"review existing stories. Is there one which removes the changelog…"* |
 | 2 | 6.1 | Claude | Parsed prompt — no identifiers, intent = "find story matching X" |
-| 3 | 6.3 | jcodemunch MCP | `list_repos` (different server — indexing check) |
-| 4 | 6.3 | Satellites MCP | `session_whoami({})` → `session_not_registered` |
-| 5 | 6.3 | Satellites MCP | `project_list({})` — 4 projects returned |
-| 6 | 6.3 | Satellites MCP | `story_list(project_id=…)` — 643KB overflow, fell to file |
-| 7 | 6.4 | Claude / harness | `bash` + `jq` on the file (overflow workaround) |
-| 8 | 6.3 | Satellites MCP | `story_get(id=sty_cf8ff98b)` — returned the candidate |
-| 9 | 6.4 | Claude | Synthesised + answered |
+| 3 | 6.3 | Satellites MCP | `session_whoami({})` → `session_not_registered` |
+| 4 | 6.3 | Satellites MCP | `project_list({})` — 4 projects returned |
+| 5 | 6.3 | Satellites MCP | `story_list(project_id=…)` — 643KB overflow, fell to file |
+| 6 | 6.3 | Satellites MCP | `story_get(id=sty_cf8ff98b)` — returned the candidate |
+| 7 | 6.4 | Claude | Synthesised + answered |
 
-Nine steps from prompt to answer. Three were satellites
-context-stitching that the target shape (`story_context` with
-project intent + `task_context` for task work) would deliver in
-one or two roundtrips. Two more steps (3, 7) only fired because
-of the substrate's overflow handling on `story_list` —
-unrelated to the fetch flow itself.
+Of these, three (steps 3–5) are satellites context-stitching that
+the target shape (`story_context` with project intent +
+`task_context` for task work) would deliver in one or two
+roundtrips.

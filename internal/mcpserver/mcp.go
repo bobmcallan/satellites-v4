@@ -635,6 +635,16 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	)
 	s.mcp.AddTool(systemSeedTool, s.handleSystemSeedRun)
 
+	// sty_8868eaf4: re-seed one project's tier from
+	// config/seed/<project_id>/<kind>/*.md. Idempotent on body hash;
+	// writes a kind:project-seed-run ledger row attached to the
+	// project. Global admin only. System rows are never touched.
+	projectSeedTool := mcpgo.NewTool("project_seed_run",
+		mcpgo.WithDescription("Re-run the project-tier configseed loader for one project (config/seed/<project_id>/<kind>/*.md). Global admin only. Produces only scope=project rows; system seeding is unchanged. Returns a summary {project_id, loaded, created, updated, skipped, errors, ledger_id}. Each invocation writes a kind:project-seed-run ledger row attached to the project."),
+		mcpgo.WithString("project_id", mcpgo.Required(), mcpgo.Description("Project to re-seed. The project must already exist; the loader does not auto-create projects.")),
+	)
+	s.mcp.AddTool(projectSeedTool, s.handleProjectSeedRun)
+
 	// sty_51571015: agent dispatch is seed-prescribed, not Go code.
 	// The orchestrator session reads the dispatch mechanism from its
 	// handshake (default_agent_process artifact body + agent docs) and

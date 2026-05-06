@@ -6,10 +6,9 @@ tags: [help, seed, config]
 ---
 # Seed & System Config
 
-System-tier configuration (agents, contracts, workflows, help)
-is **markdown in the repo**. The boot path reads
-`./config/seed/{agents,contracts,workflows}/*.md` and
-`./config/help/*.md` and upserts each file into the document
+Substrate configuration (agents, contracts, workflows, help, plus
+project-tier overrides) is **markdown in the repo**. The boot path
+reads two parallel trees and upserts each file into the document
 store. Markdown is the single source of truth.
 
 ## Layout
@@ -17,11 +16,31 @@ store. Markdown is the single source of truth.
 ```
 config/
   seed/
-    agents/      *.md  -> type=agent
-    contracts/   *.md  -> type=contract
-    workflows/   *.md  -> type=workflow
-  help/          *.md  -> type=help
+    agents/        *.md  -> type=agent,    scope=system
+    contracts/     *.md  -> type=contract, scope=system
+    workflows/     *.md  -> type=workflow, scope=system
+    principles/    *.md  -> type=principle
+    artifacts/     *.md  -> type=artifact
+    <project_id>/        -> project-tier override (sty_8868eaf4)
+      agents/      *.md  -> type=agent,    scope=project, project_id=<id>
+      contracts/   *.md  -> ...
+      principles/  *.md
+      artifacts/   *.md
+  help/            *.md  -> type=help
 ```
+
+## Two tiers, strict isolation
+
+- **System tier** lives directly under `config/seed/<kind>/`. The
+  system loader produces only `scope=system` rows and never touches
+  any `proj_*` subdirectory.
+- **Project tier** lives under `config/seed/<project_id>/<kind>/`.
+  The project loader produces only `scope=project, project_id=<id>`
+  rows and never touches the system kind dirs at the seed-dir root.
+
+A project tier directory whose `<project_id>` does not resolve to an
+existing project row is skipped at boot with a structured warning —
+the loader never auto-creates projects.
 
 ## Frontmatter
 
@@ -38,15 +57,33 @@ the rendered page itself.
 ## Re-seed without restart
 
 Global admins can trigger a re-seed without restarting the
-server via the **System Config** page in the hamburger menu, or
-by calling the `system_seed_run` MCP verb. Each run writes a
-`kind:system-seed-run` ledger row with the
-`{loaded, created, updated, skipped, errors}` summary so the
-audit chain captures every refresh.
+server via two MCP verbs (or, for system, the **System Config**
+page in the hamburger menu):
+
+- `system_seed_run` — re-runs the system tier (every kind subdir
+  at the seed-dir root, plus `config/help/*.md`). Writes a
+  `kind:system-seed-run` ledger row.
+- `project_seed_run(project_id)` — re-runs the project tier for
+  one project (`config/seed/<project_id>/<kind>/*.md`). Writes a
+  `kind:project-seed-run` ledger row attached to that project.
+
+Both share the same `{loaded, created, updated, skipped, errors}`
+summary shape. Idempotent — a re-run with unchanged file bodies
+short-circuits via body-hash and counts files as `skipped`.
+
+## Boot behaviour
+
+- The system seed runs synchronously at startup.
+- The project seed pass runs **as a goroutine after the server is
+  ready** — it must not impede startup. Errors land in the boot
+  log at warn; missing project rows for a discovered `proj_*`
+  directory log a warning and skip that subtree.
 
 ## Env overrides
 
-- `SATELLITES_SEED_DIR` — defaults to `./config/seed`.
+- `SATELLITES_SEED_DIR` — defaults to `./config/seed`. Both tiers
+  resolve from this single root; project subtrees live under
+  `<seed_dir>/proj_*`.
 - `SATELLITES_HELP_DIR` — defaults to `./config/help`.
 
 ## Limitations

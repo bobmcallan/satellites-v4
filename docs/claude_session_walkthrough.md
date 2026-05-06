@@ -82,14 +82,19 @@ Not an MCP call.
 
 // response — runtime
 {
-  "id": "proj_7a62aedb",
-  "workspace_id": "wksp_5b3257d1",
-  "name": "satellites",
-  "git_remote": "git@github.com:bobmcallan/satellites.git",
-  "owner_user_id": "u_google:operator@example.com",
-  "status": "active"
+  "project_id": "proj_7a62aedb",
+  "status": "resolved",
+  "mcp_url": "https://satellites-pprod.fly.dev/mcp?project_id=proj_7a62aedb",
+  "repo_url_canonical": "https://github.com/bobmcallan/satellites",
+  "intent_body": "# what satellites is …",
+  "principles": [{"name": "…", "scope": "system", "body": "…"}]
 }
 ```
+
+The remote→project binding lives on the per-project repo row; the
+lookup walks `repos.GetByRemote(workspace, canonical)` →
+`repo.project_id` → `projects.GetByID(...)`. sty_14dfd05b dropped the
+legacy `projects.git_remote` column.
 
 **Response: runtime.** The project row keys the rest of the
 session; subsequent project-scoped verbs default to this id when

@@ -15,6 +15,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/project"
+	"github.com/bobmcallan/satellites/internal/repo"
 	"github.com/bobmcallan/satellites/internal/session"
 	"github.com/bobmcallan/satellites/internal/story"
 	"github.com/bobmcallan/satellites/internal/workspace"
@@ -43,6 +44,7 @@ func newOrientationFixture(t *testing.T) (*Server, project.Project, string) {
 	s := New(cfg, satarbor.New("info"), time.Now(), Deps{
 		DocStore:       docs,
 		ProjectStore:   project.NewMemoryStore(),
+		RepoStore:      repo.NewMemoryStore(),
 		SessionStore:   session.NewMemoryStore(),
 		WorkspaceStore: workspace.NewMemoryStore(),
 		LedgerStore:    led,
@@ -58,9 +60,20 @@ func newOrientationFixture(t *testing.T) (*Server, project.Project, string) {
 	if err := s.workspaces.AddMember(ctx, ws.ID, "u_alice", "admin", "u_alice", now); err != nil {
 		t.Fatalf("member: %v", err)
 	}
-	p, err := s.projects.CreateWithRemote(ctx, "u_alice", ws.ID, "satellites", "https://github.com/owner/repo", now)
+	p, err := s.projects.Create(ctx, "u_alice", ws.ID, "satellites", now)
 	if err != nil {
 		t.Fatalf("project: %v", err)
+	}
+	// sty_14dfd05b: the project↔remote binding lives on the repo row.
+	// project_set walks repos.GetByRemote(ws, canonical) → projectID, so
+	// the orientation fixture must seed a repo row for the project.
+	if _, err := s.repos.Create(ctx, repo.Repo{
+		WorkspaceID: ws.ID,
+		ProjectID:   p.ID,
+		GitRemote:   "https://github.com/owner/repo",
+		Status:      repo.StatusActive,
+	}, now); err != nil {
+		t.Fatalf("repo: %v", err)
 	}
 
 	pid := p.ID

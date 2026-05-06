@@ -24,9 +24,11 @@ const (
 // every Project row carries a WorkspaceID scoping back to the tenant
 // boundary (docs/architecture.md §8).
 //
-// GitRemote is the canonical identity for a code-backed project: one
-// project per remote per workspace. Empty when the project predates the
-// schema change or when the project intentionally tracks no remote.
+// The project↔git-remote binding lives on the per-project repo row
+// (internal/repo) — one repo per project, keyed on (workspace_id,
+// git_remote) and canonicalised on write. project_set looks up the
+// remote there. sty_14dfd05b dropped the legacy git_remote column on
+// this row.
 //
 // MCPURL is the explicit MCP connection string a user pastes into
 // .mcp.json. Empty falls back to the derived form
@@ -35,7 +37,6 @@ type Project struct {
 	ID          string    `json:"id"`
 	WorkspaceID string    `json:"workspace_id"`
 	Name        string    `json:"name"`
-	GitRemote   string    `json:"git_remote,omitempty"`
 	MCPURL      string    `json:"mcp_url,omitempty"`
 	OwnerUserID string    `json:"owner_user_id"`
 	Status      string    `json:"status"`

@@ -271,13 +271,10 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 
 	if s.projects != nil {
 		createTool := mcpgo.NewTool("project_create",
-			mcpgo.WithDescription("Create a new project owned by the caller. Pass git_remote to key the project to a specific repo (canonical identity); duplicates within the workspace are rejected."),
+			mcpgo.WithDescription("Create a new project owned by the caller. Code-backed projects: follow with repo_add to register the git remote on the resulting project. The (workspace, git_remote) binding lives on the per-project repo row, not on the project itself."),
 			mcpgo.WithString("name",
 				mcpgo.Required(),
 				mcpgo.Description("Project display name."),
-			),
-			mcpgo.WithString("git_remote",
-				mcpgo.Description("Optional git remote URL (e.g. git@github.com:owner/repo.git). When set, makes the project the canonical home for that remote in this workspace."),
 			),
 		)
 		s.mcp.AddTool(createTool, s.handleProjectCreate)
@@ -297,10 +294,9 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		s.mcp.AddTool(listProjTool, s.handleProjectList)
 
 		updateProjTool := mcpgo.NewTool("project_update",
-			mcpgo.WithDescription("Update a project's name, git_remote, and/or mcp_url. Owner-only. Duplicate (workspace, git_remote) is rejected."),
+			mcpgo.WithDescription("Update a project's name and/or mcp_url. Owner-only. The git remote binding is managed by repo_add — call that to add or replace the project's tracked repo."),
 			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Project id (proj_<8hex>).")),
 			mcpgo.WithString("name", mcpgo.Description("New display name. Empty to leave unchanged.")),
-			mcpgo.WithString("git_remote", mcpgo.Description("New git remote URL. Empty string clears the remote (caller must explicitly pass empty to clear; absent leaves unchanged).")),
 			mcpgo.WithString("mcp_url", mcpgo.Description("Explicit MCP connection URL. Empty string clears the override and falls back to the derived form. Absent leaves unchanged.")),
 		)
 		s.mcp.AddTool(updateProjTool, s.handleProjectUpdate)
@@ -1469,13 +1465,9 @@ func (s *Server) handleProjectCreate(ctx context.Context, req mcpgo.CallToolRequ
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	gitRemote := req.GetString("git_remote", "")
 	wsID := s.resolveCallerWorkspaceID(ctx, caller)
-	p, err := s.projects.CreateWithRemote(ctx, caller.UserID, wsID, name, gitRemote, time.Now().UTC())
+	p, err := s.projects.Create(ctx, caller.UserID, wsID, name, time.Now().UTC())
 	if err != nil {
-		if errors.Is(err, project.ErrDuplicateGitRemote) {
-			return mcpgo.NewToolResultError("project with that git_remote already exists in this workspace"), nil
-		}
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	body, _ := json.Marshal(s.buildProjectView(ctx, p))
@@ -1483,7 +1475,6 @@ func (s *Server) handleProjectCreate(ctx context.Context, req mcpgo.CallToolRequ
 		Str("method", "tools/call").
 		Str("tool", "project_create").
 		Str("project_id", p.ID).
-		Str("git_remote", p.GitRemote).
 		Str("owner_user_id", p.OwnerUserID).
 		Int64("duration_ms", time.Since(start).Milliseconds()).
 		Msg("mcp tool call")
@@ -1541,8 +1532,12 @@ func (s *Server) handleProjectSet(ctx context.Context, req mcpgo.CallToolRequest
 		return mcpgo.NewToolResultError("repo_url_required"), nil
 	}
 	wsID := s.resolveCallerWorkspaceID(ctx, caller)
-	p, err := s.projects.GetByGitRemote(ctx, wsID, canonical)
-	if err != nil {
+	// sty_14dfd05b: resolve via the repos table — the canonical home for
+	// the project↔remote binding. The legacy projects.git_remote column
+	// is gone; repo_add canonicalises on write so the (workspace,
+	// git_remote) index returns hits regardless of input shape.
+	p, ok := s.resolveProjectByRemote(ctx, wsID, canonical)
+	if !ok {
 		body, _ := json.Marshal(map[string]any{
 			"status":             "no_project_for_remote",
 			"repo_url_canonical": canonical,
@@ -1589,6 +1584,31 @@ func (s *Server) handleProjectSet(ctx context.Context, req mcpgo.CallToolRequest
 		Int64("duration_ms", time.Since(start).Milliseconds()).
 		Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+// resolveProjectByRemote walks repos.GetByRemote(workspace, canonical)
+// → repo.ProjectID → projects.GetByID(...). Returns the project + true
+// when a repo row in the workspace tracks the canonical remote and the
+// owning project is still readable (not archived, not cross-workspace).
+// sty_14dfd05b — replaces the legacy projects.GetByGitRemote lookup.
+func (s *Server) resolveProjectByRemote(ctx context.Context, workspaceID, canonical string) (project.Project, bool) {
+	if s.repos == nil || s.projects == nil || canonical == "" {
+		return project.Project{}, false
+	}
+	r, err := s.repos.GetByRemote(ctx, workspaceID, canonical)
+	if err != nil {
+		return project.Project{}, false
+	}
+	p, err := s.projects.GetByID(ctx, r.ProjectID, nil)
+	if err != nil {
+		return project.Project{}, false
+	}
+	if p.WorkspaceID != workspaceID {
+		// Belt-and-braces: the repos lookup is already workspace-scoped,
+		// but defend against a stale repo row whose project moved.
+		return project.Project{}, false
+	}
+	return p, true
 }
 
 // handleProjectContext returns the orientation bundle for the
@@ -1662,25 +1682,7 @@ func (s *Server) handleProjectUpdate(ctx context.Context, req mcpgo.CallToolRequ
 			return mcpgo.NewToolResultError(renameErr.Error()), nil
 		}
 	}
-	// git_remote is updated only when the param is present in the request.
-	// req.GetString returns "" for both absent and explicitly-empty; we
-	// treat any present value (including "") as intentional. mcp-go does
-	// not currently distinguish "absent" from "empty", so callers wanting
-	// to clear a remote must call project_update with git_remote="".
-	if remote, ok := req.GetArguments()["git_remote"]; ok {
-		remoteStr, _ := remote.(string)
-		if remoteStr != updated.GitRemote {
-			next, remoteErr := s.projects.SetGitRemote(ctx, id, remoteStr, now)
-			if remoteErr != nil {
-				if errors.Is(remoteErr, project.ErrDuplicateGitRemote) {
-					return mcpgo.NewToolResultError("project with that git_remote already exists in this workspace"), nil
-				}
-				return mcpgo.NewToolResultError(remoteErr.Error()), nil
-			}
-			updated = next
-		}
-	}
-	// mcp_url override: same present-vs-absent treatment as git_remote.
+	// mcp_url override: present-vs-absent treatment.
 	if mcpURL, ok := req.GetArguments()["mcp_url"]; ok {
 		mcpStr, _ := mcpURL.(string)
 		if mcpStr != updated.MCPURL {

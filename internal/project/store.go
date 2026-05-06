@@ -11,33 +11,20 @@ import (
 // ErrNotFound is returned when a project lookup misses.
 var ErrNotFound = errors.New("project: not found")
 
-// ErrDuplicateGitRemote is returned by Create when the supplied
-// (workspace_id, git_remote) tuple is already taken. The MCP layer maps
-// this to a clear "duplicate remote" error so callers can recover by
-// fetching the existing project rather than silently creating a second
-// row pointing at the same repo.
-var ErrDuplicateGitRemote = errors.New("project: git_remote already registered in workspace")
-
 // Store is the persistence surface for projects. SurrealStore is the
 // production implementation; MemoryStore is the in-process test double.
+//
+// The project↔git-remote binding lives on the per-project repo row
+// (internal/repo). Lookups by remote go through repo.Store.GetByRemote,
+// not this interface. sty_14dfd05b dropped the legacy
+// CreateWithRemote / GetByGitRemote / SetGitRemote surface.
 type Store interface {
 	// Create persists a new Project. The caller supplies ownerUserID +
 	// workspaceID + name; the store mints the id, stamps CreatedAt/UpdatedAt,
 	// and sets Status to StatusActive. An empty workspaceID is permitted at
 	// write time so bootstrap + legacy paths can run; the boot-time backfill
 	// stamps empty rows with the owner's default workspace.
-	//
-	// Deprecated: prefer CreateWithRemote so the canonical (workspace,
-	// git_remote) identity can be enforced. Kept for callers that
-	// intentionally track no remote.
 	Create(ctx context.Context, ownerUserID, workspaceID, name string, now time.Time) (Project, error)
-
-	// CreateWithRemote persists a new Project keyed on (workspace_id,
-	// git_remote). Empty git_remote behaves like Create. A non-empty
-	// git_remote that already exists in workspaceID returns
-	// ErrDuplicateGitRemote — callers should prefer GetByGitRemote in that
-	// case.
-	CreateWithRemote(ctx context.Context, ownerUserID, workspaceID, name, gitRemote string, now time.Time) (Project, error)
 
 	// GetByID returns the project with the given id, or ErrNotFound. When
 	// memberships is non-nil the row must carry a workspace_id that appears
@@ -45,11 +32,6 @@ type Store interface {
 	// missing row would). nil memberships disable scoping (bootstrap and
 	// backfill paths that must see every row).
 	GetByID(ctx context.Context, id string, memberships []string) (Project, error)
-
-	// GetByGitRemote returns the project in workspaceID whose git_remote
-	// matches, or ErrNotFound. Used by repo_add and project_create to
-	// dedupe and by the MCP layer to resolve a remote → project_id.
-	GetByGitRemote(ctx context.Context, workspaceID, gitRemote string) (Project, error)
 
 	// ListByOwner returns the owner's projects, newest-first by CreatedAt.
 	// memberships scoping matches GetByID semantics: nil = no scoping,
@@ -59,11 +41,6 @@ type Store interface {
 	// UpdateName renames an existing project and bumps UpdatedAt. Returns the
 	// updated Project. ErrNotFound on missing id.
 	UpdateName(ctx context.Context, id, name string, now time.Time) (Project, error)
-
-	// SetGitRemote stamps git_remote on an existing project. Returns
-	// ErrDuplicateGitRemote when (workspace_id, git_remote) is already
-	// taken by a different row.
-	SetGitRemote(ctx context.Context, id, gitRemote string, now time.Time) (Project, error)
 
 	// SetMCPURL stamps an explicit mcp_url on an existing project,
 	// overriding the derived form. Pass an empty string to clear the
@@ -96,25 +73,12 @@ func NewMemoryStore() *MemoryStore {
 
 // Create implements Store for MemoryStore.
 func (m *MemoryStore) Create(ctx context.Context, ownerUserID, workspaceID, name string, now time.Time) (Project, error) {
-	return m.CreateWithRemote(ctx, ownerUserID, workspaceID, name, "", now)
-}
-
-// CreateWithRemote implements Store for MemoryStore.
-func (m *MemoryStore) CreateWithRemote(ctx context.Context, ownerUserID, workspaceID, name, gitRemote string, now time.Time) (Project, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if gitRemote != "" {
-		for _, existing := range m.rows {
-			if existing.WorkspaceID == workspaceID && existing.GitRemote == gitRemote && existing.Status == StatusActive {
-				return Project{}, ErrDuplicateGitRemote
-			}
-		}
-	}
 	p := Project{
 		ID:          NewID(),
 		WorkspaceID: workspaceID,
 		Name:        name,
-		GitRemote:   gitRemote,
 		OwnerUserID: ownerUserID,
 		Status:      StatusActive,
 		CreatedAt:   now,
@@ -122,18 +86,6 @@ func (m *MemoryStore) CreateWithRemote(ctx context.Context, ownerUserID, workspa
 	}
 	m.rows[p.ID] = p
 	return p, nil
-}
-
-// GetByGitRemote implements Store for MemoryStore.
-func (m *MemoryStore) GetByGitRemote(ctx context.Context, workspaceID, gitRemote string) (Project, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, p := range m.rows {
-		if p.WorkspaceID == workspaceID && p.GitRemote == gitRemote && p.Status == StatusActive {
-			return p, nil
-		}
-	}
-	return Project{}, ErrNotFound
 }
 
 // GetByID implements Store for MemoryStore.
@@ -194,30 +146,6 @@ func (m *MemoryStore) UpdateName(ctx context.Context, id, name string, now time.
 		return Project{}, ErrNotFound
 	}
 	p.Name = name
-	p.UpdatedAt = now
-	m.rows[id] = p
-	return p, nil
-}
-
-// SetGitRemote implements Store for MemoryStore.
-func (m *MemoryStore) SetGitRemote(ctx context.Context, id, gitRemote string, now time.Time) (Project, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	p, ok := m.rows[id]
-	if !ok {
-		return Project{}, ErrNotFound
-	}
-	if gitRemote != "" {
-		for _, existing := range m.rows {
-			if existing.ID == id {
-				continue
-			}
-			if existing.WorkspaceID == p.WorkspaceID && existing.GitRemote == gitRemote && existing.Status == StatusActive {
-				return Project{}, ErrDuplicateGitRemote
-			}
-		}
-	}
-	p.GitRemote = gitRemote
 	p.UpdatedAt = now
 	m.rows[id] = p
 	return p, nil

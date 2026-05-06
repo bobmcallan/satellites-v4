@@ -11,6 +11,7 @@ import (
 
 	"github.com/bobmcallan/satellites/internal/codeindex"
 	"github.com/bobmcallan/satellites/internal/ledger"
+	"github.com/bobmcallan/satellites/internal/project"
 	"github.com/bobmcallan/satellites/internal/repo"
 )
 
@@ -23,9 +24,17 @@ func (s *Server) handleRepoAdd(ctx context.Context, req mcpgo.CallToolRequest) (
 		return mcpgo.NewToolResultError("repo_add unavailable: repo store not configured"), nil
 	}
 	caller, _ := UserFrom(ctx)
-	gitRemote, err := req.RequireString("git_remote")
+	rawRemote, err := req.RequireString("git_remote")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	// sty_14dfd05b: canonicalise on write so the (workspace, git_remote)
+	// index returns hits regardless of the input shape callers used (ssh,
+	// https, .git suffix). project_set canonicalises on read with the
+	// same helper.
+	gitRemote, err := project.CanonicaliseGitRemote(rawRemote)
+	if err != nil || gitRemote == "" {
+		return mcpgo.NewToolResultError("git_remote_invalid"), nil
 	}
 	defaultBranch := req.GetString("default_branch", "main")
 	memberships := s.resolveCallerMemberships(ctx, caller)

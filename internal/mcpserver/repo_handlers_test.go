@@ -274,6 +274,10 @@ func TestRepoGetFile_ForwardsAndUnavailable(t *testing.T) {
 	}
 }
 
+// TestRepoSearch_ProxyKeyIsGitRemote pins that the proxy passes the
+// stored git_remote (canonical form post-sty_14dfd05b) to the indexer,
+// not the satellites repo_id. Input is ssh shorthand; expected stored +
+// proxied value is the canonical https form.
 func TestRepoSearch_ProxyKeyIsGitRemote(t *testing.T) {
 	t.Parallel()
 	f := newRepoFixture(t)
@@ -288,8 +292,9 @@ func TestRepoSearch_ProxyKeyIsGitRemote(t *testing.T) {
 		"repo_id": repoID,
 		"query":   "x",
 	}))
-	if rec.lastSearchKey != "git@github.com:example/key.git" {
-		t.Errorf("proxy key passed to indexer = %q, want git remote (NOT repo_id)", rec.lastSearchKey)
+	const wantCanonical = "https://github.com/example/key"
+	if rec.lastSearchKey != wantCanonical {
+		t.Errorf("proxy key passed to indexer = %q, want %q (canonical git_remote)", rec.lastSearchKey, wantCanonical)
 	}
 	if strings.HasPrefix(rec.lastSearchKey, "repo_") {
 		t.Errorf("proxy key leaks satellites repo_id prefix: %q", rec.lastSearchKey)

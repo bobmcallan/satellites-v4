@@ -302,8 +302,8 @@ func main() {
 		// explicit action — sty_c975ebeb removed the auto-seeded "Default"
 		// project because it conflated multi-repo scopes with single-repo
 		// stories. Users land on /projects with an empty-state panel until
-		// they create a project (typically via project_create with a
-		// git_remote, or via the portal).
+		// they create a project (project_create + repo_add for code-backed
+		// projects per sty_14dfd05b, or via the portal).
 		authHandlers.OnUserCreated = func(hookCtx context.Context, userID string) {
 			now := time.Now().UTC()
 			if _, err := workspace.EnsureDefault(hookCtx, wsStore, logger, userID, now); err != nil {
@@ -316,6 +316,18 @@ func main() {
 		// — a second invocation finds none active. sty_c975ebeb.
 		if _, err := project.ArchiveLegacyDefaults(ctx, projStore, logger, time.Now().UTC()); err != nil {
 			logger.Warn().Str("error", err.Error()).Msg("archive legacy defaults failed")
+		}
+
+		// sty_14dfd05b: re-canonicalise existing repos.git_remote values,
+		// backfill repo rows from any project still carrying the legacy
+		// projects.git_remote column, then UNSET the column. Idempotent
+		// — second invocation recanonicalises 0 / backfills 0.
+		if conn != nil && repoStore != nil {
+			if recanon, backfilled, mErr := repo.MigrateRemotesCanonical(ctx, conn, repoStore, logger, time.Now().UTC()); mErr != nil {
+				logger.Warn().Str("error", mErr.Error()).Msg("repo remotes canonical migration failed")
+			} else if recanon > 0 || backfilled > 0 {
+				logger.Info().Int("recanonicalised", recanon).Int("backfilled", backfilled).Msg("repo remotes canonical migration complete")
+			}
 		}
 
 		// sty_c6d76a5b retired the lifecycle.validation_mode KV row —

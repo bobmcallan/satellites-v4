@@ -73,7 +73,10 @@ turn. Operators tightening principles or routing rules edit
    `{status: "no_project_for_remote", repo_url_canonical}` on a
    miss.
 3. **On miss** ask the user before creating. If approved,
-   **`project_create({name, git_remote, …})`**.
+   **`project_create({name})`** then **`repo_add({git_remote})`** to
+   register the remote on the project. The project↔remote binding
+   lives on the repo row; `project_create` no longer takes a
+   `git_remote` arg (sty_14dfd05b).
 4. (Optional) **`project_list()`** to find an existing project by
    name when `project_set` fails to canonical-match.
 

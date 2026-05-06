@@ -159,51 +159,6 @@ func TestMemoryStore_OwnerIsolation(t *testing.T) {
 	}
 }
 
-// TestCreateWithRemote_DedupesGitRemote covers sty_c975ebeb AC1: a second
-// CreateWithRemote with the same (workspace_id, git_remote) tuple
-// returns ErrDuplicateGitRemote.
-func TestCreateWithRemote_DedupesGitRemote(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	store := NewMemoryStore()
-	now := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
-
-	first, err := store.CreateWithRemote(ctx, "user_alice", "wksp_alice", "satellites", "git@github.com:foo/bar.git", now)
-	if err != nil {
-		t.Fatalf("first create: %v", err)
-	}
-	if first.GitRemote != "git@github.com:foo/bar.git" {
-		t.Errorf("git_remote = %q, want git@github.com:foo/bar.git", first.GitRemote)
-	}
-	if _, err := store.CreateWithRemote(ctx, "user_alice", "wksp_alice", "satellites-dup", "git@github.com:foo/bar.git", now); err != ErrDuplicateGitRemote {
-		t.Errorf("duplicate create err = %v, want ErrDuplicateGitRemote", err)
-	}
-	// Different workspace must succeed — uniqueness is per workspace.
-	if _, err := store.CreateWithRemote(ctx, "user_bob", "wksp_bob", "satellites", "git@github.com:foo/bar.git", now); err != nil {
-		t.Errorf("cross-workspace duplicate rejected: %v", err)
-	}
-}
-
-// TestGetByGitRemote_ActiveOnly covers the remote→project lookup the MCP
-// handler uses to dedupe: archived rows must not match.
-func TestGetByGitRemote_ActiveOnly(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	store := NewMemoryStore()
-	now := time.Now().UTC()
-
-	p, _ := store.CreateWithRemote(ctx, "user_a", "wksp_a", "satellites", "git@github.com:foo/bar.git", now)
-	if got, err := store.GetByGitRemote(ctx, "wksp_a", "git@github.com:foo/bar.git"); err != nil || got.ID != p.ID {
-		t.Fatalf("active GetByGitRemote = (%+v, %v), want hit", got, err)
-	}
-	if _, err := store.SetStatus(ctx, p.ID, StatusArchived, now); err != nil {
-		t.Fatalf("archive: %v", err)
-	}
-	if _, err := store.GetByGitRemote(ctx, "wksp_a", "git@github.com:foo/bar.git"); err != ErrNotFound {
-		t.Errorf("archived GetByGitRemote err = %v, want ErrNotFound", err)
-	}
-}
-
 // TestArchiveLegacyDefaults_Idempotent covers sty_c975ebeb AC5: legacy
 // per-user "Default" projects are archived once and re-running is a
 // no-op. System-owned rows are untouched.

@@ -1150,7 +1150,7 @@ func (s *Server) handleDocumentGet(ctx context.Context, req mcpgo.CallToolReques
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	id := req.GetString("id", "")
 	if id != "" {
-		doc, err := s.docs.GetByID(ctx, id, memberships)
+		doc, err := getByIDScoped(ctx, s.docs, id, memberships)
 		if err != nil {
 			return mcpgo.NewToolResultError(err.Error()), nil
 		}
@@ -1166,6 +1166,21 @@ func (s *Server) handleDocumentGet(ctx context.Context, req mcpgo.CallToolReques
 	name, err := req.RequireString("name")
 	if err != nil {
 		return mcpgo.NewToolResultError("either id or name is required"), nil
+	}
+	// Try the system tier first (sty_6ee30308). A system-tier hit
+	// returns without resolving a project context — callers without
+	// any owned project (e.g. a fresh user looking up a seed agent)
+	// must still reach scope=system docs by name.
+	if sysDoc, sysErr := s.docs.GetByName(ctx, "", name, nil); sysErr == nil && sysDoc.Scope == document.ScopeSystem {
+		body, _ := json.Marshal(sysDoc)
+		s.logger.Info().
+			Str("method", "tools/call").
+			Str("tool", "document_get").
+			Str("name", name).
+			Str("scope", document.ScopeSystem).
+			Int64("duration_ms", time.Since(start).Milliseconds()).
+			Msg("mcp tool call")
+		return mcpgo.NewToolResultText(string(body)), nil
 	}
 	projectID := req.GetString("project_id", "")
 	resolvedID, err := s.resolveProjectID(ctx, projectID, caller, memberships)
@@ -1340,7 +1355,7 @@ func (s *Server) handleDocumentList(ctx context.Context, req mcpgo.CallToolReque
 	if opts.Limit > 500 {
 		opts.Limit = 500
 	}
-	rows, err := s.docs.List(ctx, opts, memberships)
+	rows, err := listScoped(ctx, s.docs, opts, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -1379,12 +1394,12 @@ func (s *Server) handleDocumentSearch(ctx context.Context, req mcpgo.CallToolReq
 	var rows []document.Document
 	var err error
 	if opts.Query != "" {
-		rows, err = s.docs.SearchSemantic(ctx, opts.Query, opts, memberships)
+		rows, err = searchSemanticScoped(ctx, s.docs, opts.Query, opts, memberships)
 		if errors.Is(err, document.ErrSemanticUnavailable) {
-			rows, err = s.docs.Search(ctx, opts, memberships)
+			rows, err = searchScoped(ctx, s.docs, opts, memberships)
 		}
 	} else {
-		rows, err = s.docs.Search(ctx, opts, memberships)
+		rows, err = searchScoped(ctx, s.docs, opts, memberships)
 	}
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bobmcallan/satellites/internal/document"
+	"github.com/bobmcallan/satellites/internal/story"
 	"github.com/bobmcallan/satellites/internal/task"
 )
 
@@ -169,6 +170,50 @@ func TestTaskAdd_AgentDocDrivesReviewPairing(t *testing.T) {
 	require.Equal(t, task.KindReview, review.Kind)
 	require.Equal(t, task.StatusPlanned, review.Status)
 	require.Equal(t, out["task_id"], review.ParentTaskID)
+}
+
+// TestTaskAdd_SeedAgentResolvesForOtherWorkspaceCaller covers
+// sty_6ee30308's task_add agent-resolver AC: a caller whose only
+// workspace does not contain the seed-tier system rows must still be
+// able to resolve a scope=system agent doc by id and publish a task
+// against it. Mirrors the live multi-user case where each operator
+// has their own personal workspace.
+func TestTaskAdd_SeedAgentResolvesForOtherWorkspaceCaller(t *testing.T) {
+	t.Parallel()
+	f := newOrchestratorFixture(t)
+	devID := agentDocID(t, f.server, "developer_agent")
+
+	// Mint a second user in their own workspace + project so they have
+	// a session but no membership in the seed workspace.
+	otherWS, err := f.server.workspaces.Create(context.Background(), "user_other", "other-tier", f.now)
+	require.NoError(t, err)
+	require.NoError(t, f.server.workspaces.AddMember(context.Background(), otherWS.ID, "user_other", "admin", "system", f.now))
+	otherProj, err := f.server.projects.Create(context.Background(), "user_other", otherWS.ID, "other-proj", f.now)
+	require.NoError(t, err)
+
+	// Create a story in the other user's project so task_add doesn't
+	// try to auto-mint against the default workspace.
+	otherStory, err := f.server.stories.Create(context.Background(), story.Story{
+		WorkspaceID: otherWS.ID,
+		ProjectID:   otherProj.ID,
+		Title:       "other-user story",
+	}, f.now)
+	require.NoError(t, err)
+
+	otherCtx := withCaller(context.Background(), CallerIdentity{UserID: "user_other", Source: "session"})
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"agent_id": devID,
+		"prompt":   "dogfood — sty_6ee30308 resolves seed agent across workspaces",
+		"story_id": otherStory.ID,
+	}
+	res, err := f.server.handleTaskAdd(otherCtx, req)
+	require.NoError(t, err)
+	require.False(t, res.IsError, "task_add rejected seed agent across workspace boundary: %s", errorText(res))
+
+	out := decodeResult(t, res)
+	require.Equal(t, otherStory.ID, out["story_id"])
+	require.Equal(t, task.StatusPublished, out["status"])
 }
 
 // errorText returns the inner text of a tool result regardless of whether

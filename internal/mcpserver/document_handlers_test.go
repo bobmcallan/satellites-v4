@@ -82,14 +82,15 @@ func TestHandleDocumentUpdate_RejectsImmutable(t *testing.T) {
 }
 
 // TestHandleDocumentList_WorkspaceIsolation builds two workspaces with
-// distinct callers, each owning a row; each caller's document_list must
-// see only their own row.
+// distinct callers, each owning a tenant-scoped row; each caller's
+// document_list must see only their own row. Uses scope=workspace
+// (type=role) — scope=system is workspace-blind by design per
+// sty_6ee30308 and would not exercise tenant isolation here.
 func TestHandleDocumentList_WorkspaceIsolation(t *testing.T) {
 	t.Parallel()
 	s := newDocumentTestServer(t)
 	ctx := context.Background()
 
-	// Mint two workspaces, each owned by a distinct user.
 	wsA, err := s.workspaces.Create(ctx, "user_alice", "alpha", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("ws A: %v", err)
@@ -98,29 +99,28 @@ func TestHandleDocumentList_WorkspaceIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ws B: %v", err)
 	}
-	// Seed one principle per workspace directly via the store.
 	if _, err := s.docs.Create(ctx, document.Document{
 		WorkspaceID: wsA.ID,
-		Type:        document.TypePrinciple,
-		Scope:       document.ScopeSystem,
+		Type:        document.TypeRole,
+		Scope:       document.ScopeWorkspace,
 		Name:        "alice-only",
 	}, time.Now().UTC()); err != nil {
-		t.Fatalf("alice principle: %v", err)
+		t.Fatalf("alice role: %v", err)
 	}
 	if _, err := s.docs.Create(ctx, document.Document{
 		WorkspaceID: wsB.ID,
-		Type:        document.TypePrinciple,
-		Scope:       document.ScopeSystem,
+		Type:        document.TypeRole,
+		Scope:       document.ScopeWorkspace,
 		Name:        "bob-only",
 	}, time.Now().UTC()); err != nil {
-		t.Fatalf("bob principle: %v", err)
+		t.Fatalf("bob role: %v", err)
 	}
 
 	aliceCtx := withCaller(ctx, CallerIdentity{UserID: "user_alice", Source: "session"})
 	bobCtx := withCaller(ctx, CallerIdentity{UserID: "user_bob", Source: "session"})
 
-	resA, _ := s.handleDocumentList(aliceCtx, newCallToolReq("document_list", map[string]any{"type": "principle"}))
-	resB, _ := s.handleDocumentList(bobCtx, newCallToolReq("document_list", map[string]any{"type": "principle"}))
+	resA, _ := s.handleDocumentList(aliceCtx, newCallToolReq("document_list", map[string]any{"type": "role"}))
+	resB, _ := s.handleDocumentList(bobCtx, newCallToolReq("document_list", map[string]any{"type": "role"}))
 	rowsA := decodeArray(t, resA)
 	rowsB := decodeArray(t, resB)
 
@@ -152,6 +152,318 @@ func TestHandleDocumentCreate_ScopeSystemRejectsProjectID(t *testing.T) {
 	if !res.IsError {
 		t.Errorf("scope=system + project_id should isError; got %s", firstText(res))
 	}
+}
+
+// TestHandleDocumentList_SystemScopeWorkspaceBlind covers sty_6ee30308:
+// scope=system reads must be visible to every authenticated caller,
+// even when the row was created in a workspace the caller has no
+// membership in. Ensures the substrate's public configuration tier
+// (agents, contracts, principles seeded under config/seed/system/) is
+// reachable by dispatched agents per pr_substrate_provides_context.
+func TestHandleDocumentList_SystemScopeWorkspaceBlind(t *testing.T) {
+	t.Parallel()
+	s := newDocumentTestServer(t)
+	ctx := context.Background()
+
+	wsSeed, err := s.workspaces.Create(ctx, "user_seed", "seed-tier", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("seed ws: %v", err)
+	}
+	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
+		t.Fatalf("other ws: %v", err)
+	}
+
+	if _, err := s.docs.Create(ctx, document.Document{
+		WorkspaceID: wsSeed.ID,
+		Type:        document.TypePrinciple,
+		Scope:       document.ScopeSystem,
+		Name:        "global-principle",
+		Tags:        []string{"system"},
+	}, time.Now().UTC()); err != nil {
+		t.Fatalf("seed principle: %v", err)
+	}
+
+	otherCtx := withCaller(ctx, CallerIdentity{UserID: "user_other", Source: "session"})
+
+	res, _ := s.handleDocumentList(otherCtx, newCallToolReq("document_list", map[string]any{
+		"type":  "principle",
+		"scope": "system",
+	}))
+	rows := decodeArray(t, res)
+	if len(rows) != 1 || nameOf(rows[0]) != "global-principle" {
+		t.Fatalf("user_other list(scope=system) = %+v, want one row global-principle", rows)
+	}
+}
+
+// TestHandleDocumentList_MixedScopeUnion covers the AC: a list call
+// without a scope filter returns the union of scope=system rows
+// (workspace-blind) plus rows in the caller's memberships, deduped by
+// id, with cross-tenant rows hidden.
+func TestHandleDocumentList_MixedScopeUnion(t *testing.T) {
+	t.Parallel()
+	s := newDocumentTestServer(t)
+	ctx := context.Background()
+
+	wsSeed, err := s.workspaces.Create(ctx, "user_seed", "seed-tier", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("seed ws: %v", err)
+	}
+	wsAlice, err := s.workspaces.Create(ctx, "user_alice", "alice-tier", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("alice ws: %v", err)
+	}
+	wsBob, err := s.workspaces.Create(ctx, "user_bob", "bob-tier", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("bob ws: %v", err)
+	}
+
+	mk := func(wsID, scope, name string, projectID *string) {
+		t.Helper()
+		typ := document.TypePrinciple
+		if scope == document.ScopeWorkspace {
+			typ = document.TypeRole
+		}
+		doc := document.Document{
+			WorkspaceID: wsID,
+			Type:        typ,
+			Scope:       scope,
+			Name:        name,
+		}
+		if scope == document.ScopeProject {
+			doc.ProjectID = projectID
+		}
+		if _, err := s.docs.Create(ctx, doc, time.Now().UTC()); err != nil {
+			t.Fatalf("seed %q: %v", name, err)
+		}
+	}
+
+	mk(wsSeed.ID, document.ScopeSystem, "system-row", nil)
+	aliceProj := "proj_alice"
+	mk(wsAlice.ID, document.ScopeProject, "alice-row", &aliceProj)
+	bobProj := "proj_bob"
+	mk(wsBob.ID, document.ScopeProject, "bob-row", &bobProj)
+
+	aliceCtx := withCaller(ctx, CallerIdentity{UserID: "user_alice", Source: "session"})
+	res, _ := s.handleDocumentList(aliceCtx, newCallToolReq("document_list", map[string]any{
+		"type": "principle",
+	}))
+	rows := decodeArray(t, res)
+
+	names := map[string]bool{}
+	for _, r := range rows {
+		names[nameOf(r)] = true
+	}
+	if !names["system-row"] {
+		t.Errorf("system-row missing from union list: %+v", rows)
+	}
+	if !names["alice-row"] {
+		t.Errorf("alice-row missing from union list: %+v", rows)
+	}
+	if names["bob-row"] {
+		t.Errorf("bob-row leaked across tenant boundary: %+v", rows)
+	}
+}
+
+// TestHandleDocumentList_ProjectScopeTenantIsolation covers the
+// negative branch: scope=project reads remain membership-scoped, so a
+// caller with no membership in the target workspace gets an empty
+// result.
+func TestHandleDocumentList_ProjectScopeTenantIsolation(t *testing.T) {
+	t.Parallel()
+	s := newDocumentTestServer(t)
+	ctx := context.Background()
+
+	wsAlice, err := s.workspaces.Create(ctx, "user_alice", "alice-tier", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("alice ws: %v", err)
+	}
+	if _, err := s.workspaces.Create(ctx, "user_bob", "bob-tier", time.Now().UTC()); err != nil {
+		t.Fatalf("bob ws: %v", err)
+	}
+
+	aliceProj := "proj_alice"
+	if _, err := s.docs.Create(ctx, document.Document{
+		WorkspaceID: wsAlice.ID,
+		Type:        document.TypePrinciple,
+		Scope:       document.ScopeProject,
+		ProjectID:   &aliceProj,
+		Name:        "alice-only",
+	}, time.Now().UTC()); err != nil {
+		t.Fatalf("alice principle: %v", err)
+	}
+
+	bobCtx := withCaller(ctx, CallerIdentity{UserID: "user_bob", Source: "session"})
+	res, _ := s.handleDocumentList(bobCtx, newCallToolReq("document_list", map[string]any{
+		"type":       "principle",
+		"scope":      "project",
+		"project_id": aliceProj,
+	}))
+	rows := decodeArray(t, res)
+	if len(rows) != 0 {
+		t.Errorf("bob saw alice's project row: %+v", rows)
+	}
+}
+
+// TestHandleDocumentGet_SystemScopeByID covers the AC: a caller in any
+// workspace can resolve a scope=system row by id.
+func TestHandleDocumentGet_SystemScopeByID(t *testing.T) {
+	t.Parallel()
+	s := newDocumentTestServer(t)
+	ctx := context.Background()
+
+	wsSeed, err := s.workspaces.Create(ctx, "user_seed", "seed-tier", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("seed ws: %v", err)
+	}
+	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
+		t.Fatalf("other ws: %v", err)
+	}
+
+	doc, err := s.docs.Create(ctx, document.Document{
+		WorkspaceID: wsSeed.ID,
+		Type:        document.TypeAgent,
+		Scope:       document.ScopeSystem,
+		Name:        "developer_agent",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+
+	otherCtx := withCaller(ctx, CallerIdentity{UserID: "user_other", Source: "session"})
+	res, _ := s.handleDocumentGet(otherCtx, newCallToolReq("document_get", map[string]any{
+		"id": doc.ID,
+	}))
+	if res.IsError {
+		t.Fatalf("scope=system get-by-id was rejected: %s", firstText(res))
+	}
+	got := decodeOne(t, res)
+	if got["name"] != "developer_agent" {
+		t.Errorf("got name=%v, want developer_agent", got["name"])
+	}
+}
+
+// TestHandleDocumentGet_TenantIsolatedByID covers the negative branch:
+// a workspace-scope row stays invisible to callers without the
+// matching workspace membership.
+func TestHandleDocumentGet_TenantIsolatedByID(t *testing.T) {
+	t.Parallel()
+	s := newDocumentTestServer(t)
+	ctx := context.Background()
+
+	wsAlice, err := s.workspaces.Create(ctx, "user_alice", "alice-tier", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("alice ws: %v", err)
+	}
+	if _, err := s.workspaces.Create(ctx, "user_bob", "bob-tier", time.Now().UTC()); err != nil {
+		t.Fatalf("bob ws: %v", err)
+	}
+
+	doc, err := s.docs.Create(ctx, document.Document{
+		WorkspaceID: wsAlice.ID,
+		Type:        document.TypeRole,
+		Scope:       document.ScopeWorkspace,
+		Name:        "alice-only",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("alice role: %v", err)
+	}
+
+	bobCtx := withCaller(ctx, CallerIdentity{UserID: "user_bob", Source: "session"})
+	res, _ := s.handleDocumentGet(bobCtx, newCallToolReq("document_get", map[string]any{
+		"id": doc.ID,
+	}))
+	if !res.IsError {
+		t.Fatalf("bob resolved alice's workspace-scope row: %s", firstText(res))
+	}
+}
+
+// TestHandleDocumentGet_SystemScopeByName covers the system-tier name
+// resolution path: a caller looking up by name (no project_id) gets
+// the scope=system row even though the handler resolves a project
+// context for the fallback path.
+func TestHandleDocumentGet_SystemScopeByName(t *testing.T) {
+	t.Parallel()
+	s := newDocumentTestServer(t)
+	ctx := context.Background()
+
+	wsSeed, err := s.workspaces.Create(ctx, "user_seed", "seed-tier", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("seed ws: %v", err)
+	}
+	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
+		t.Fatalf("other ws: %v", err)
+	}
+	if _, err := s.docs.Create(ctx, document.Document{
+		WorkspaceID: wsSeed.ID,
+		Type:        document.TypeAgent,
+		Scope:       document.ScopeSystem,
+		Name:        "developer_agent",
+	}, time.Now().UTC()); err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+
+	otherCtx := withCaller(ctx, CallerIdentity{UserID: "user_other", Source: "session"})
+	res, _ := s.handleDocumentGet(otherCtx, newCallToolReq("document_get", map[string]any{
+		"name": "developer_agent",
+	}))
+	if res.IsError {
+		t.Fatalf("get-by-name on system agent failed: %s", firstText(res))
+	}
+	got := decodeOne(t, res)
+	if got["name"] != "developer_agent" {
+		t.Errorf("got name=%v, want developer_agent", got["name"])
+	}
+}
+
+// TestAgentListWrapper_SystemScopeWorkspaceBlind covers the wrapper
+// layer (agent_list → handleDocumentList) end-to-end so a regression
+// in wrapperList that bypassed the helper would surface here.
+func TestAgentListWrapper_SystemScopeWorkspaceBlind(t *testing.T) {
+	t.Parallel()
+	s := newDocumentTestServer(t)
+	s.registerDocumentWrappers()
+	ctx := context.Background()
+
+	wsSeed, err := s.workspaces.Create(ctx, "user_seed", "seed-tier", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("seed ws: %v", err)
+	}
+	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
+		t.Fatalf("other ws: %v", err)
+	}
+	for _, name := range []string{"developer_agent", "releaser_agent", "story_close_agent"} {
+		if _, err := s.docs.Create(ctx, document.Document{
+			WorkspaceID: wsSeed.ID,
+			Type:        document.TypeAgent,
+			Scope:       document.ScopeSystem,
+			Name:        name,
+		}, time.Now().UTC()); err != nil {
+			t.Fatalf("seed %q: %v", name, err)
+		}
+	}
+
+	otherCtx := withCaller(ctx, CallerIdentity{UserID: "user_other", Source: "session"})
+	handler := s.wrapperList(document.TypeAgent)
+	res, _ := handler(otherCtx, newCallToolReq("agent_list", map[string]any{
+		"scope": "system",
+	}))
+	rows := decodeArray(t, res)
+	if len(rows) != 3 {
+		t.Errorf("agent_list(scope=system) = %d rows, want 3 (developer_agent, releaser_agent, story_close_agent)", len(rows))
+	}
+}
+
+func decodeOne(t *testing.T, res *mcpgo.CallToolResult) map[string]any {
+	t.Helper()
+	if res == nil || res.IsError {
+		t.Fatalf("isError or nil: %+v", res)
+	}
+	text := firstText(res)
+	var out map[string]any
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("decode object: %v; raw=%s", err, text)
+	}
+	return out
 }
 
 func firstText(res *mcpgo.CallToolResult) string {

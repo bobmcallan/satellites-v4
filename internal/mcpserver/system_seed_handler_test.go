@@ -52,10 +52,10 @@ func newSystemSeedFixture(t *testing.T) (*Server, string) {
 	})
 
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "agents"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "system", "agents"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "agents", "test.md"), []byte(sampleAgentForSeed), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "system", "agents", "test.md"), []byte(sampleAgentForSeed), 0o644); err != nil {
 		t.Fatalf("write seed: %v", err)
 	}
 	t.Setenv(configseed.SeedDirEnv, dir)

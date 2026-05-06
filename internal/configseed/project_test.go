@@ -159,11 +159,11 @@ func TestDiscoverProjectDirs_MissingSeedDir(t *testing.T) {
 func TestSystemRunNeverTouchesProjectScope(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	// One system contract.
-	if err := os.MkdirAll(filepath.Join(dir, "contracts"), 0o755); err != nil {
+	// One system contract under <dir>/system/contracts/.
+	if err := os.MkdirAll(filepath.Join(dir, SystemSubdir, "contracts"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "contracts", "sample.md"), []byte(sampleContractMD), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, SystemSubdir, "contracts", "sample.md"), []byte(sampleContractMD), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	// A project-id directory with its own contract — the system
@@ -194,10 +194,10 @@ func TestProjectRunNeverTouchesSystemScope(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	// Sibling system contract — should not be touched.
-	if err := os.MkdirAll(filepath.Join(dir, "contracts"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, SystemSubdir, "contracts"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "contracts", "system_only.md"), []byte(sampleContractMD), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, SystemSubdir, "contracts", "system_only.md"), []byte(sampleContractMD), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	pid := "proj_isolated2"

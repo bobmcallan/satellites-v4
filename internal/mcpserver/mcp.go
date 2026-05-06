@@ -650,8 +650,8 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	// handshake (default_agent_process artifact body + agent docs) and
 	// executes `claude -p` via its own Bash tool — the substrate does
 	// not exec subprocesses for dispatch. Configuration over code:
-	// tune dispatch by editing config/seed/artifacts/default_agent_process.md
-	// or config/seed/agents/*.md, then call system_seed_run.
+	// tune dispatch by editing config/seed/system/artifacts/default_agent_process.md
+	// or config/seed/system/agents/*.md, then call system_seed_run.
 
 	if s.tasks != nil {
 		// task_plan is the only remaining bare task-creation MCP verb

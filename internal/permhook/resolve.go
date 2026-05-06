@@ -197,7 +197,7 @@ func deny(reason, source string) Result {
 // exists. story_c08856b2 AC3.
 //
 // Today the system seed is `agent_claude_orchestrator` (loaded by
-// configseed from config/seed/agents/claude_orchestrator.md per
+// configseed from config/seed/system/agents/claude_orchestrator.md per
 // sty_db196ff4). A project can author its own `orchestrator_role`
 // agent to override the seeded baseline. The story AC named a
 // workspace tier; the document substrate restricts workspace-scope to

@@ -283,7 +283,7 @@ func replicateVocabularyToInput(fm Frontmatter, body []byte, workspaceID, actor 
 // Frontmatter carries `name` (required) and `tags`; the body is the
 // artifact content. Used today for the system-scope `default_agent_process`
 // handshake markdown the MCP server returns to connecting clients —
-// authors edit a file under config/seed/artifacts/ instead of patching a
+// authors edit a file under config/seed/system/artifacts/ instead of patching a
 // Go string constant. Sty_6c3f8091.
 func artifactToInput(fm Frontmatter, body []byte, workspaceID, actor string) (document.UpsertInput, error) {
 	name := fm.String("name")

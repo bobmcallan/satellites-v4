@@ -73,9 +73,9 @@ func writeFile(t *testing.T, dir, relPath, content string) {
 func TestRun_CreatesAgentsContractsWorkflows(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeFile(t, dir, "agents/test_agent.md", sampleAgentMD)
-	writeFile(t, dir, "contracts/test_contract.md", sampleContractMD)
-	writeFile(t, dir, "workflows/test_workflow.md", sampleWorkflowMD)
+	writeFile(t, dir, "system/agents/test_agent.md", sampleAgentMD)
+	writeFile(t, dir, "system/contracts/test_contract.md", sampleContractMD)
+	writeFile(t, dir, "system/workflows/test_workflow.md", sampleWorkflowMD)
 
 	docs := document.NewMemoryStore()
 	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
@@ -131,7 +131,7 @@ tags: [test]
 
 Body.
 `
-	writeFile(t, dir, "agents/test_agent_with_instruction.md", agentWithInstructionMD)
+	writeFile(t, dir, "system/agents/test_agent_with_instruction.md", agentWithInstructionMD)
 
 	docs := document.NewMemoryStore()
 	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
@@ -162,7 +162,7 @@ Body.
 }
 
 // TestRun_RealSeedAgentsCarryInstruction (story_b7bf3a5f AC2) — every
-// lifecycle agent shipped in config/seed/agents/ declares an
+// lifecycle agent shipped in config/seed/system/agents/ declares an
 // `instruction` field, the canonical home for agent-level execution
 // guidance now that contracts carry only audit shape.
 func TestRun_RealSeedAgentsCarryInstruction(t *testing.T) {
@@ -205,7 +205,7 @@ func TestRun_RealSeedAgentsCarryInstruction(t *testing.T) {
 func TestRun_ContractStructuredOmitsPermittedActions(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeFile(t, dir, "contracts/test_contract.md", sampleContractMD)
+	writeFile(t, dir, "system/contracts/test_contract.md", sampleContractMD)
 
 	docs := document.NewMemoryStore()
 	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
@@ -238,9 +238,9 @@ func TestRun_ContractStructuredOmitsPermittedActions(t *testing.T) {
 func TestRun_Idempotent(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeFile(t, dir, "agents/test_agent.md", sampleAgentMD)
-	writeFile(t, dir, "contracts/test_contract.md", sampleContractMD)
-	writeFile(t, dir, "workflows/test_workflow.md", sampleWorkflowMD)
+	writeFile(t, dir, "system/agents/test_agent.md", sampleAgentMD)
+	writeFile(t, dir, "system/contracts/test_contract.md", sampleContractMD)
+	writeFile(t, dir, "system/workflows/test_workflow.md", sampleWorkflowMD)
 
 	docs := document.NewMemoryStore()
 	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
@@ -286,8 +286,8 @@ func TestRun_MissingDirIsNoOp(t *testing.T) {
 func TestRun_BadFileRecordedAsError(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeFile(t, dir, "agents/good.md", sampleAgentMD)
-	writeFile(t, dir, "agents/bad.md", "no frontmatter here\n")
+	writeFile(t, dir, "system/agents/good.md", sampleAgentMD)
+	writeFile(t, dir, "system/agents/bad.md", "no frontmatter here\n")
 
 	docs := document.NewMemoryStore()
 	summary, err := Run(context.Background(), docs, dir, "wksp_sys", "system", time.Now().UTC())
@@ -396,7 +396,7 @@ through the loader unchanged and lands in Document.Body.
 func TestPrincipleSeedLoad(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeFile(t, dir, "principles/pr_test_principle.md", samplePrincipleMD)
+	writeFile(t, dir, "system/principles/pr_test_principle.md", samplePrincipleMD)
 
 	docs := document.NewMemoryStore()
 	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
@@ -446,7 +446,7 @@ func TestPrincipleSeedLoad(t *testing.T) {
 }
 
 // TestRun_RealSeedDirShipsAllPrinciples checks the loader's structural
-// contract on the real config/seed/principles/ directory: every .md
+// contract on the real config/seed/system/principles/ directory: every .md
 // file becomes one type=principle scope=system document with a
 // non-empty body. The inventory itself (which principles exist, their
 // names) is content, not loader behaviour, so it isn't pinned here.
@@ -459,12 +459,12 @@ func TestRun_RealSeedDirShipsAllPrinciples(t *testing.T) {
 	if _, err := os.Stat(seedDir); err != nil {
 		t.Fatalf("seed dir %q not found: %v", seedDir, err)
 	}
-	files, err := filepath.Glob(filepath.Join(seedDir, "principles", "*.md"))
+	files, err := filepath.Glob(filepath.Join(seedDir, SystemSubdir, "principles", "*.md"))
 	if err != nil {
 		t.Fatalf("glob principles: %v", err)
 	}
 	if len(files) == 0 {
-		t.Fatalf("no principle files under %s/principles", seedDir)
+		t.Fatalf("no principle files under %s/%s/principles", seedDir, SystemSubdir)
 	}
 
 	docs := document.NewMemoryStore()

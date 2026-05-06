@@ -16,27 +16,34 @@ store. Markdown is the single source of truth.
 ```
 config/
   seed/
-    agents/        *.md  -> type=agent,    scope=system
-    contracts/     *.md  -> type=contract, scope=system
-    workflows/     *.md  -> type=workflow, scope=system
-    principles/    *.md  -> type=principle
-    artifacts/     *.md  -> type=artifact
-    <project_id>/        -> project-tier override (sty_8868eaf4)
-      agents/      *.md  -> type=agent,    scope=project, project_id=<id>
-      contracts/   *.md  -> ...
+    system/                -> system tier (scope=system rows)
+      agents/      *.md
+      contracts/   *.md
+      workflows/   *.md
       principles/  *.md
       artifacts/   *.md
-  help/            *.md  -> type=help
+      story_templates/
+      replicate_vocabulary/
+    <project_id>/          -> project tier (scope=project rows)
+      agents/      *.md
+      contracts/   *.md
+      principles/  *.md
+      artifacts/   *.md
+  help/            *.md    -> type=help
 ```
 
 ## Two tiers, strict isolation
 
-- **System tier** lives directly under `config/seed/<kind>/`. The
-  system loader produces only `scope=system` rows and never touches
+- **System tier** lives under `config/seed/system/<kind>/`. The
+  system loader produces only `scope=system` rows and never walks
   any `proj_*` subdirectory.
 - **Project tier** lives under `config/seed/<project_id>/<kind>/`.
   The project loader produces only `scope=project, project_id=<id>`
-  rows and never touches the system kind dirs at the seed-dir root.
+  rows and never walks the `system/` subtree.
+
+The two trees sit as siblings under `config/seed/` so the boundary
+is visually obvious — there is no chance of a future kind name
+shadowing or being shadowed by a project_id.
 
 A project tier directory whose `<project_id>` does not resolve to an
 existing project row is skipped at boot with a structured warning —

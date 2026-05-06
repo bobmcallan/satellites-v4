@@ -163,7 +163,7 @@ func TestDocumentCRUDVerbs_RoundTrip(t *testing.T) {
 
 	// 6. document_list filtered by type=principle includes the
 	// test-principle alongside the system-seeded principles
-	// (story_ac3dc4d0 added config/seed/principles/ — 9 system rows
+	// (story_ac3dc4d0 added config/seed/system/principles/ — 9 system rows
 	// land at boot). Assert the test row is present rather than a
 	// literal count.
 	plistArr := callToolArray(t, ctx, mcpURL, "key_crud", "document_list", map[string]any{

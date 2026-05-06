@@ -39,9 +39,9 @@ import (
 // body the live reviewer reads instructs it to accept that form.
 func TestReviewerRubric_PostDriftFix(t *testing.T) {
 	root := repoRoot(t)
-	storyReviewer := readSeedFile(t, root, "config/seed/agents/story_reviewer.md")
-	devReviewer := readSeedFile(t, root, "config/seed/agents/development_reviewer.md")
-	planContract := readSeedFile(t, root, "config/seed/contracts/plan.md")
+	storyReviewer := readSeedFile(t, root, "config/seed/system/agents/story_reviewer.md")
+	devReviewer := readSeedFile(t, root, "config/seed/system/agents/development_reviewer.md")
+	planContract := readSeedFile(t, root, "config/seed/system/contracts/plan.md")
 
 	t.Run("TC1_no_deleted_role_concepts_in_reviewer_rubric", func(t *testing.T) {
 		// sty_92218a87 purged required_role, permitted_roles,

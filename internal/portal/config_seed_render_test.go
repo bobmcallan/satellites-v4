@@ -58,13 +58,13 @@ Fixture body.
 `
 
 // writeFixtureSeed places the three sample markdown files in
-// dir/{agents,contracts,workflows}/.
+// dir/system/{agents,contracts,workflows}/.
 func writeFixtureSeed(t *testing.T, dir string) {
 	t.Helper()
 	files := map[string]string{
-		"agents/fixture_agent.md":       fixtureSeedAgent,
-		"contracts/fixture_contract.md": fixtureSeedContract,
-		"workflows/fixture_workflow.md": fixtureSeedWorkflow,
+		"system/agents/fixture_agent.md":       fixtureSeedAgent,
+		"system/contracts/fixture_contract.md": fixtureSeedContract,
+		"system/workflows/fixture_workflow.md": fixtureSeedWorkflow,
 	}
 	for rel, content := range files {
 		full := filepath.Join(dir, rel)

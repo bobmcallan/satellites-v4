@@ -28,6 +28,14 @@ const DefaultSeedDir = "./config/seed"
 // DefaultHelpDir is the analogous default for help.
 const DefaultHelpDir = "./config/help"
 
+// SystemSubdir is the dirname under <seedDir> that holds the system
+// tier's per-kind subdirectories. Sty_8868eaf4 follow-up: separating
+// system-tier directories from project-tier ones (which live under
+// <seedDir>/proj_*/) keeps the two surfaces visually distinct and
+// removes any chance of a future kind name colliding with a
+// project_id prefix.
+const SystemSubdir = "system"
+
 // ResolveSeedDir returns the absolute path of the seed directory,
 // honouring SATELLITES_SEED_DIR.
 func ResolveSeedDir() string {
@@ -61,9 +69,10 @@ func Run(ctx context.Context, docs document.Store, seedDir, workspaceID, actor s
 	if seedDir == "" {
 		seedDir = DefaultSeedDir
 	}
+	systemRoot := filepath.Join(seedDir, SystemSubdir)
 	summary := Summary{}
 	for _, kind := range []Kind{KindAgent, KindContract, KindWorkflow, KindStoryTemplate, KindReplicateVocabulary, KindArtifact} {
-		inputs, errs := LoadDir(seedDir, kind, workspaceID, actor)
+		inputs, errs := LoadDir(systemRoot, kind, workspaceID, actor)
 		summary.Errors = append(summary.Errors, errs...)
 		for _, in := range inputs {
 			summary.Loaded++
@@ -102,7 +111,7 @@ func Run(ctx context.Context, docs document.Store, seedDir, workspaceID, actor s
 // story_ac3dc4d0.
 func runPrinciplePhase(ctx context.Context, docs document.Store, seedDir, workspaceID, actor string, now time.Time) Summary {
 	summary := Summary{}
-	inputs, errs := LoadDir(seedDir, KindPrinciple, workspaceID, actor)
+	inputs, errs := LoadDir(filepath.Join(seedDir, SystemSubdir), KindPrinciple, workspaceID, actor)
 	summary.Errors = append(summary.Errors, errs...)
 	for _, in := range inputs {
 		summary.Loaded++

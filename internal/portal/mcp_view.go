@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,7 +46,17 @@ type mcpComposite struct {
 	HasSnapshot bool
 	SnapshotAt  string
 	ToolCount   int
-	Groups      []mcpGroup
+	// SizeBytes is the size of the tools-array projection that
+	// reaches Claude via tools/list. Approximates the per-turn cost
+	// of the catalogue's instruction surface.
+	SizeBytes int
+	// SizeKB is SizeBytes formatted as "X.X" KB for display.
+	SizeKB string
+	// EstTokens is a rough token estimate using the standard
+	// bytes/4 heuristic. Conservative — actual tokeniser output
+	// varies ±20% on prose-heavy text.
+	EstTokens int
+	Groups    []mcpGroup
 }
 
 type mcpGroup struct {
@@ -121,11 +132,51 @@ func buildMCPComposite(ctx context.Context, docs document.Store) mcpComposite {
 	if err := json.Unmarshal([]byte(doc.Body), &cat); err != nil {
 		return mcpComposite{}
 	}
+	size := catalogueSurfaceSize(cat.Tools)
 	return mcpComposite{
 		HasSnapshot: true,
 		SnapshotAt:  cat.SnapshotAt.UTC().Format(time.RFC3339),
 		ToolCount:   len(cat.Tools),
+		SizeBytes:   size,
+		SizeKB:      formatKB(size),
+		EstTokens:   size / 4,
 		Groups:      groupCatalogue(cat.Tools),
+	}
+}
+
+// catalogueSurfaceSize returns the byte length of the tools-array
+// JSON projection — the shape Claude reads on every turn via
+// tools/list. Excludes the SnapshotAt wrapper field which only the
+// portal sees. Marshalling errors yield 0 (the page header simply
+// hides the figure rather than render a misleading number).
+func catalogueSurfaceSize(tools []mcpserver.CatalogueEntry) int {
+	body, err := json.Marshal(tools)
+	if err != nil {
+		return 0
+	}
+	return len(body)
+}
+
+func formatKB(bytes int) string {
+	kb := float64(bytes) / 1024.0
+	switch {
+	case kb < 10:
+		return fmtFloat(kb, 2)
+	case kb < 100:
+		return fmtFloat(kb, 1)
+	default:
+		return fmtFloat(kb, 0)
+	}
+}
+
+func fmtFloat(v float64, decimals int) string {
+	switch decimals {
+	case 0:
+		return strconv.Itoa(int(v + 0.5))
+	case 1:
+		return strconv.FormatFloat(v, 'f', 1, 64)
+	default:
+		return strconv.FormatFloat(v, 'f', 2, 64)
 	}
 }
 

@@ -107,6 +107,86 @@ func TestMCPPage_EmptyStateWhenNoSnapshot(t *testing.T) {
 	}
 }
 
+func TestMCPPage_HeaderShowsSizeAndTokens(t *testing.T) {
+	t.Parallel()
+	f := newMCPFixture(t)
+	f.seedCatalogue(t, mcpserver.Catalogue{
+		SnapshotAt: time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC),
+		Tools: []mcpserver.CatalogueEntry{
+			{Name: "story_get", Description: "Return a story by id.", Parameters: []mcpserver.CatalogueParam{{Name: "id", Type: "string", Required: true, Description: "Story id."}}},
+		},
+	})
+	rec := f.request(t, "/mcp")
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="mcp-size-kb"`,
+		`data-testid="mcp-est-tokens"`,
+		`KB`,
+		`tokens`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+}
+
+func TestMCPPage_FilterInputPresent(t *testing.T) {
+	t.Parallel()
+	f := newMCPFixture(t)
+	f.seedCatalogue(t, mcpserver.Catalogue{
+		SnapshotAt: time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC),
+		Tools: []mcpserver.CatalogueEntry{
+			{Name: "story_get", Description: "x", Parameters: []mcpserver.CatalogueParam{{Name: "id", Type: "string", Required: true}}},
+		},
+	})
+	rec := f.request(t, "/mcp")
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="mcp-filter-form"`,
+		`data-testid="mcp-filter-input"`,
+		`id="mcp-filter-input"`,
+		`type="search"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+}
+
+func TestBuildMCPComposite_ComputesSizeAndTokens(t *testing.T) {
+	t.Parallel()
+	docs := document.NewMemoryStore()
+	cat := mcpserver.Catalogue{
+		SnapshotAt: time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC),
+		Tools: []mcpserver.CatalogueEntry{
+			{Name: "story_get", Description: "Return a story by id.", Parameters: []mcpserver.CatalogueParam{{Name: "id", Type: "string", Required: true, Description: "Story id."}}},
+			{Name: "task_walk", Description: "Return the task chain for a story.", Parameters: []mcpserver.CatalogueParam{{Name: "story_id", Type: "string", Required: true, Description: "Story id."}}},
+		},
+	}
+	body, _ := json.Marshal(cat)
+	if _, err := docs.Create(context.Background(), document.Document{
+		WorkspaceID: "wksp_system",
+		Type:        document.TypeArtifact,
+		Scope:       document.ScopeSystem,
+		Name:        mcpserver.CatalogueArtifactName,
+		Body:        string(body),
+		Tags:        []string{mcpserver.CatalogueKindTag},
+		Status:      document.StatusActive,
+	}, time.Now().UTC()); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	composite := buildMCPComposite(context.Background(), docs)
+	if composite.SizeBytes <= 0 {
+		t.Errorf("SizeBytes = %d, want > 0", composite.SizeBytes)
+	}
+	if composite.EstTokens != composite.SizeBytes/4 {
+		t.Errorf("EstTokens = %d, want SizeBytes/4 = %d", composite.EstTokens, composite.SizeBytes/4)
+	}
+	if composite.SizeKB == "" {
+		t.Errorf("SizeKB empty")
+	}
+}
+
 func TestMCPPage_RendersGroupedTools(t *testing.T) {
 	t.Parallel()
 	f := newMCPFixture(t)

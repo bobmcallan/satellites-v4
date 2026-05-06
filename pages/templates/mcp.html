@@ -11,6 +11,8 @@
         <span class="panel-header-meta">
           {{if .Composite.HasSnapshot}}
             <code data-testid="mcp-tool-count">({{.Composite.ToolCount}} tools)</code>
+            <code class="tag-chip" data-testid="mcp-size-kb" title="Bytes of the tools-array projection that reaches Claude every turn via tools/list">{{.Composite.SizeKB}} KB</code>
+            <code class="tag-chip" data-testid="mcp-est-tokens" title="Rough estimate using the bytes/4 heuristic; ±20% vs. real tokeniser output">~{{.Composite.EstTokens}} tokens</code>
             <span class="muted" data-testid="mcp-snapshot-at">snapshot {{.Composite.SnapshotAt}}</span>
           {{end}}
         </span>
@@ -21,6 +23,14 @@
             no snapshot yet — check satellites server boot logs
           </p>
         {{else}}
+          <form class="mcp-filter-form" onsubmit="return false" data-testid="mcp-filter-form">
+            <label>
+              <span class="muted">filter</span>
+              <input type="search" id="mcp-filter-input" data-testid="mcp-filter-input"
+                placeholder="agent_, story_, task_walk …" autocomplete="off" autofocus>
+            </label>
+            <span class="muted" id="mcp-filter-count" data-testid="mcp-filter-count"></span>
+          </form>
           {{range .Composite.Groups}}
           <section class="mcp-group" data-testid="mcp-group-{{.Primitive}}">
             <h2 class="mcp-group-heading"><code>{{.Primitive}}</code></h2>
@@ -64,6 +74,38 @@
     </section>
   </main>
   {{template "footer.html" .}}
+  <script>
+    (function () {
+      var input = document.getElementById('mcp-filter-input');
+      var counter = document.getElementById('mcp-filter-count');
+      if (!input) { return; }
+      var rows = Array.prototype.slice.call(document.querySelectorAll('[data-testid^="mcp-tool-row-"]'));
+      var groups = Array.prototype.slice.call(document.querySelectorAll('[data-testid^="mcp-group-"]'));
+      function apply() {
+        var q = input.value.trim().toLowerCase();
+        var visibleRows = 0;
+        rows.forEach(function (row) {
+          var name = (row.getAttribute('data-testid') || '').replace('mcp-tool-row-', '');
+          var match = q === '' || name.toLowerCase().indexOf(q) !== -1;
+          row.style.display = match ? '' : 'none';
+          if (match) { visibleRows++; }
+        });
+        groups.forEach(function (group) {
+          var anyVisible = false;
+          var inGroup = group.querySelectorAll('[data-testid^="mcp-tool-row-"]');
+          for (var i = 0; i < inGroup.length; i++) {
+            if (inGroup[i].style.display !== 'none') { anyVisible = true; break; }
+          }
+          group.style.display = anyVisible ? '' : 'none';
+        });
+        if (counter) {
+          counter.textContent = q === '' ? '' : visibleRows + ' / ' + rows.length + ' tools';
+        }
+      }
+      input.addEventListener('input', apply);
+      apply();
+    })();
+  </script>
 </body>
 </html>
 {{end}}

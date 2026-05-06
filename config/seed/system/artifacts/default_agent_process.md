@@ -39,14 +39,8 @@ intent or principles need a refresh.
 
 ## Fetching context
 
-Beyond the bootstrap, role-, story-, and task-specific context
-is fetched on demand via the `mcp__satellites__*` verbs. The
-full catalogue — names, descriptions, parameters, return shapes
-— is visible to your session in the tool list and is
-authoritative there. Resolve identifiers from the operator's
-prompt against it: a story id maps to `story_get` /
-`story_context`, a task id maps to `task_get`, an agent or
-contract name maps to `agent_get` / `contract_get`.
+Fetch context via the `mcp__satellites__*` verbs in your tool
+list — names and parameters are authoritative there.
 
 ## Operating principle
 

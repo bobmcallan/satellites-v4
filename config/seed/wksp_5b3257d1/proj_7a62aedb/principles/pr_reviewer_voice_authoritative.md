@@ -22,4 +22,4 @@ The autonomous reviewer service runs the rubric the operator (via the seed) has 
 
 ## Citation
 
-This principle backs the orchestrator pre-flight rules in `config/seed/agents/claude_orchestrator.md` and the artifact `config/seed/artifacts/default_agent_process.md` that the substrate surfaces to every Claude session via `story_context.agent_process`. It is paired with `pr_mandate_reviewer_enforced`: that principle covers the floor (`plan` first, `story_close` last); this principle covers the reception of rejections within the floor.
+This principle backs the orchestrator pre-flight rules in the `claude_orchestrator` agent doc and the `default_agent_process` artifact, which the substrate surfaces to every Claude session via `story_context.agent_process`.

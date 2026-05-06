@@ -57,10 +57,3 @@ that don't apply to a particular story. The reviewer judges
 whether the proposed shape is appropriate; the substrate accepts
 whatever the reviewer approves.
 
-## Floor
-
-The mandate principle (`pr_mandate_reviewer_enforced`) requires
-`contract:plan` at the front and `contract:story_close` at the
-end of every story. Everything else is the orchestrator's
-choice. Adding a new mandatory contract is an edit to the
-principle text and the reviewer agent rubrics, not a Go change.

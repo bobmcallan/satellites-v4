@@ -28,7 +28,7 @@ The substrate has no "transition gate document" primitive today. Building one (a
 
 ## How to apply
 
-- **Operator.** When a `story_update_status(done)` call returns 422 with `{"error": ..., "open_task_ids": [...]}`, do not retry the transition. Reconcile the listed tasks first — close them via `task_submit(kind=close)`, cancel them, or cancel the story instead. Then retry.
+- **Operator.** When a `story_update_status(done)` call returns 422 with `{"error": ..., "open_task_ids": [...]}`, do not retry the transition. Reconcile the listed tasks first — close them via `task_update(status=closed)`, cancel them, or cancel the story instead. Then retry.
 - **Orchestrator.** Same as the operator. The pre-flight rule "do not bypass the chain by transitioning to done while open tasks remain" (cited from `pr_reviewer_voice_authoritative`) is now enforced; the rule is no longer honour-system.
 - **Substrate authors.** Internal flows that legitimately need to bypass the gate (the storystatus reconciler) call `UpdateStatusDerived`, which skips both `ValidTransition` and this gate. Adding a new internal flow goes through the same path.
 

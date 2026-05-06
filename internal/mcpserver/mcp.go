@@ -486,7 +486,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		// substrate no longer enforces a per-project workflow shape; the
 		// orchestrator composes per-story plans and the reviewer
 		// (story_reviewer, Gemini-backed) approves them via the
-		// plan-approval loop (now agent-authored via task_submit).
+		// plan-approval loop (now agent-authored via task_add).
 
 		// Unified KV verbs (story_3d392258). Single family taking a
 		// `scope` arg covering the four tiers from epic:kv-scopes.
@@ -561,17 +561,34 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		s.mcp.AddTool(agentSummaryTool, s.handleAgentEphemeralSummary)
 
 		if s.sessions != nil {
-			taskSubmitTool := mcpgo.NewTool("task_submit",
-				mcpgo.WithDescription("Submit an agent-authored task list to a story (sty_c6d76a5b). The orchestrator agent composes the full plan; the substrate validates structural invariants and rejects on violations — it does not silently mutate the list. Modes via `kind`: `plan` (initial plan submission with tasks[]); `close` (close a task; publishes the sibling review task when the closed task is kind=work). Tasks are thin — rich content (plan markdown, evidence, verdicts) lives on linked ledger rows, not task fields. Validators reject `plan_first_task_must_be_plan`, `missing_review_for:<action>`, `invalid_action_format`, `review_action_mismatch`, `task_not_found`, `task_story_mismatch`, `task_already_terminal`, `invalid_outcome`."),
-				mcpgo.WithString("story_id", mcpgo.Required(), mcpgo.Description("Story to submit against.")),
-				mcpgo.WithString("kind", mcpgo.Required(), mcpgo.Description("Submission mode: `plan` | `close`.")),
-				mcpgo.WithString("tasks", mcpgo.Description("JSON array of task descriptors: [{kind, action, description?, agent_id?, priority?}, ...]. Required when kind=plan.")),
-				mcpgo.WithString("plan_markdown", mcpgo.Description("Optional plan markdown — written to the kind:plan ledger row. When omitted, a summary is auto-generated from the action sequence.")),
-				mcpgo.WithString("task_id", mcpgo.Description("Task id to close. Required when kind=close.")),
-				mcpgo.WithString("outcome", mcpgo.Description("`success` (default) | `failure`. Used when kind=close.")),
-				mcpgo.WithString("evidence_ledger_ids", mcpgo.Description("JSON array of ledger row ids referenced as evidence by the close. The agent writes those ledger rows separately (ledger_append) and references them here.")),
+			// task_add (sty_a427368d): mint one task at status=published
+			// for the given agent. Auto-mints a thin ad-hoc story when
+			// story_id is omitted. When the agent doc declares
+			// requires_review=true, mints a paired review task at
+			// status=planned alongside; the review publishes when the
+			// work task closes via task_update(status=closed).
+			taskAddTool := mcpgo.NewTool("task_add",
+				mcpgo.WithDescription("Mint one task at status=published for the given agent. When story_id is omitted, auto-mints a thin ad-hoc story so every task is anchored to a story. When the agent doc declares requires_review=true, mints a paired review task at status=planned alongside the work task; the review publishes when the work task closes via task_update(status=closed). Capability check: when action is shaped contract:<name>, the agent's delivers (kind=work) or reviews (kind=review) list must contain it. Returns {task_id, story_id, story_minted, review_task_id?, status, agent_id}."),
+				mcpgo.WithString("agent_id", mcpgo.Required(), mcpgo.Description("Document id of the agent that should execute this task.")),
+				mcpgo.WithString("prompt", mcpgo.Required(), mcpgo.Description("The task body. Becomes the task's description. The dispatched agent reads this as its primary instruction.")),
+				mcpgo.WithString("story_id", mcpgo.Description("Optional owning story id. When omitted, the substrate auto-mints a thin ad-hoc story (status=backlog, single AC: 'see task body').")),
+				mcpgo.WithString("kind", mcpgo.Description("work (default) | review.")),
+				mcpgo.WithString("action", mcpgo.Description("Optional action string. When shaped contract:<name>, capability is validated against the agent doc. Free-form actions are accepted on the agent doc's authority.")),
+				mcpgo.WithString("priority", mcpgo.Description("critical | high | medium (default) | low.")),
 			)
-			s.mcp.AddTool(taskSubmitTool, s.handleTaskSubmit)
+			s.mcp.AddTool(taskAddTool, s.handleTaskAdd)
+
+			// task_update (sty_a427368d): mutate a task's lifecycle.
+			// Today: status=closed (the agent's close path). Future
+			// updates (priority change, agent reassignment) join here.
+			taskUpdateTool := mcpgo.NewTool("task_update",
+				mcpgo.WithDescription("Mutate a task's lifecycle state. Today the only supported transition is status=closed: closes the task with outcome=success|failure, optionally tags evidence ledger rows, and publishes the paired planned-review sibling when one exists. Validators reject task_not_found, task_already_terminal, invalid_outcome."),
+				mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Task id to update.")),
+				mcpgo.WithString("status", mcpgo.Required(), mcpgo.Description("Target status. Today: closed.")),
+				mcpgo.WithString("outcome", mcpgo.Description("success (default) | failure. Used when status=closed.")),
+				mcpgo.WithString("evidence_ledger_ids", mcpgo.Description("JSON array of ledger row ids referenced as evidence. The agent writes those rows separately (ledger_append) and references them here.")),
+			)
+			s.mcp.AddTool(taskUpdateTool, s.handleTaskUpdate)
 
 			whoamiTool := mcpgo.NewTool("session_whoami",
 				mcpgo.WithDescription("Return the caller's session registry row. session_id resolves from the Mcp-Session-Id header by default (story_31975268); pass session_id as a body arg to override. Returns a structured session_not_registered error when the resolved session is not in the registry."),
@@ -667,9 +684,8 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	if s.tasks != nil {
 		// task_plan is the only remaining bare task-creation MCP verb
 		// (sty_c6d76a5b checkpoint 12 retired task_enqueue + task_publish).
-		// The story-scoped plan path lives in task_submit
-		// (kind=plan); task_plan covers the rare draft case outside a
-		// story chain.
+		// task_plan stages a bare draft at status=planned; task_add is
+		// the single-task creation path that lands at status=published.
 		taskCommonOpts := []mcpgo.ToolOption{
 			mcpgo.WithString("origin", mcpgo.Required(), mcpgo.Description("story_stage | scheduled | story_producing | event")),
 			mcpgo.WithString("workspace_id", mcpgo.Description("Workspace scope. Defaults to caller's first membership.")),
@@ -683,7 +699,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("expected_duration", mcpgo.Description("Optional Go duration string (e.g. \"30s\") used by claim-expiry watchdog.")),
 		}
 
-		planOpts := append([]mcpgo.ToolOption{mcpgo.WithDescription("Write a task at status=planned (the agent-local drafting state). Subscribers do not see planned rows. The story-scoped plan path lives in task_submit (kind=plan); task_plan covers bare drafts outside a story chain. sty_c1200f75.")}, taskCommonOpts...)
+		planOpts := append([]mcpgo.ToolOption{mcpgo.WithDescription("Write a task at status=planned (the agent-local drafting state). Subscribers do not see planned rows. task_plan covers bare drafts staged for later publication; task_add is the single-task creation path that lands at status=published. sty_c1200f75.")}, taskCommonOpts...)
 		s.mcp.AddTool(mcpgo.NewTool("task_plan", planOpts...), s.handleTaskPlan)
 
 		getTaskTool := mcpgo.NewTool("task_get",

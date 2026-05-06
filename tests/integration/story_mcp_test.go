@@ -218,6 +218,8 @@ func TestStoryMCPRoundTrip(t *testing.T) {
 	}
 
 	// Ledger must contain exactly 3 decision rows tagged kind:story.status_change.
+	// The audit middleware also writes type=decision rows for every mcp call,
+	// so the test must filter by tag to isolate the story-status changes.
 	ledgerResp := rpcCall(t, ctx, mcpURL, "key_story", map[string]any{
 		"jsonrpc": "2.0", "id": 30, "method": "tools/call",
 		"params": map[string]any{
@@ -225,6 +227,7 @@ func TestStoryMCPRoundTrip(t *testing.T) {
 			"arguments": map[string]any{
 				"project_id": projID,
 				"type":       ledger.TypeDecision,
+				"tags":       []any{"kind:story.status_change"},
 			},
 		},
 	})

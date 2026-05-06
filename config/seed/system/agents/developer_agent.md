@@ -6,13 +6,12 @@ delivers:
 instruction: |
   Drive the read-and-author phases of the lifecycle: plan and
   develop. In plan, produce a structured readiness assessment
-  (relevance / dependencies / prior_delivery / recommendation),
-  author plan.md + review-criteria.md artefacts, and submit the
-  full task list via task_submit(kind=plan). In develop,
+  (relevance / dependencies / prior_delivery / recommendation)
+  and author plan.md + review-criteria.md artefacts. In develop,
   edit + test + commit code that satisfies the story's ACs and
   bump .version exactly once. Close each task via
-  task_submit(kind=close, evidence_ledger_ids=[…]) — never
-  push, merge, or close the story; those are separate roles.
+  task_update(id=<task_id>, status=closed, evidence_ledger_ids=[…])
+  — never push, merge, or close the story; those are separate roles.
 permission_patterns:
   - "Read:**"
   - "Edit:**"
@@ -53,16 +52,15 @@ assessment, design, and decomposition into role-tagged child tasks.
 
 - **plan** — reads code, git history, and ledger context to produce
   a structured readiness assessment, authors `plan.md` +
-  `review-criteria.md` artefacts, and submits the ordered task list
-  via `task_submit(kind=plan, tasks=[…])`. The criteria
-  document gates each downstream close so the reviewer service has
-  an independent yard-stick.
+  `review-criteria.md` artefacts. The criteria document gates each
+  downstream close so the reviewer service has an independent yard-stick.
 - **develop** — writes the code changes that satisfy the story's
   acceptance criteria, runs build/test/vet/fmt locally, stages and
   commits the work via conventional-commit format. Bumps `.version`
   exactly once per story (single-writer rule). Closes the develop
-  task via `task_submit(kind=close, evidence_ledger_ids=[…])`
-  — the substrate publishes the paired review task automatically.
+  task via `task_update(id=<task_id>, status=closed, evidence_ledger_ids=[…])`
+  — when this agent's doc declares `requires_review: true`, the
+  substrate publishes the paired planned-review sibling automatically.
 
 ## How
 
@@ -78,17 +76,17 @@ Once the orchestrator dispatches this agent on a task:
 
 1. **Claim** — `task_claim(task_id)` to take ownership.
 2. **Work** — for plan: read story + ledger + agent + contract,
-   author `plan.md` + `review-criteria.md`, submit ordered task list
-   via `task_submit(kind=plan, tasks=[…])`. For develop: read the
+   author `plan.md` + `review-criteria.md`. For develop: read the
    accepted plan, edit + build + test + vet + commit, bump
    `.version` exactly once.
 3. **Evidence** — `ledger_append(...)` for every artefact produced
    (plan markdown, review criteria, commit SHA, test output). The
    reviewer reads these against the contract's rubric.
-4. **Close** — `task_submit(kind=close, task_id, outcome,
-   evidence_ledger_ids=[…])`. The substrate publishes the paired
-   review task automatically; do not push, merge, or close the
-   story.
+4. **Close** — `task_update(id=<task_id>, status=closed,
+   outcome=success|failure, evidence_ledger_ids=[…])`. The substrate
+   publishes the paired planned-review sibling automatically when
+   the agent's doc declares `requires_review: true`; do not push,
+   merge, or close the story.
 
 ## Out of scope
 

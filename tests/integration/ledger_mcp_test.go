@@ -108,7 +108,11 @@ func TestLedgerMCPRoundTrip(t *testing.T) {
 
 	// Append 3 entries: 2 of type A, 1 of type B. A small sleep between
 	// calls ensures created_at differs enough for the DESC ORDER BY to be
-	// deterministic across SurrealDB's time-precision floor.
+	// deterministic across SurrealDB's time-precision floor. Each row
+	// carries the tag "test:ledger-smoke" so subsequent ledger_list
+	// assertions can filter out the audit middleware's kind:mcp-call
+	// rows that share project_id + type=decision.
+	const smokeTag = "test:ledger-smoke"
 	for i, spec := range []struct{ etype, content string }{
 		{ledger.TypeDecision, "one"},
 		{ledger.TypeDecision, "two"},
@@ -125,6 +129,7 @@ func TestLedgerMCPRoundTrip(t *testing.T) {
 					"project_id": projID,
 					"type":       spec.etype,
 					"content":    spec.content,
+					"tags":       []any{smokeTag},
 				},
 			},
 		})
@@ -140,13 +145,17 @@ func TestLedgerMCPRoundTrip(t *testing.T) {
 		}
 	}
 
-	// List all (no filter) → 3 entries newest-first.
+	// List all (filtered by smokeTag) → 3 entries newest-first.
+	// The audit middleware also writes rows under this project_id
+	// (one per mcp call); the test's smokeTag isolates the user-
+	// authored rows from the audit rows.
 	allResp := rpcCall(t, ctx, mcpURL, "key_ledger", map[string]any{
 		"jsonrpc": "2.0", "id": 20, "method": "tools/call",
 		"params": map[string]any{
 			"name": "ledger_list",
 			"arguments": map[string]any{
 				"project_id": projID,
+				"tags":       []any{smokeTag},
 			},
 		},
 	})
@@ -162,7 +171,7 @@ func TestLedgerMCPRoundTrip(t *testing.T) {
 		t.Errorf("newest-first broken: got %q at index 0", c)
 	}
 
-	// Type filter.
+	// Type filter (with smokeTag scoping per the comment above).
 	filterResp := rpcCall(t, ctx, mcpURL, "key_ledger", map[string]any{
 		"jsonrpc": "2.0", "id": 21, "method": "tools/call",
 		"params": map[string]any{
@@ -170,6 +179,7 @@ func TestLedgerMCPRoundTrip(t *testing.T) {
 			"arguments": map[string]any{
 				"project_id": projID,
 				"type":       ledger.TypeDecision,
+				"tags":       []any{smokeTag},
 			},
 		},
 	})
@@ -186,7 +196,7 @@ func TestLedgerMCPRoundTrip(t *testing.T) {
 		}
 	}
 
-	// Limit.
+	// Limit (with smokeTag scoping per the comment above).
 	limitResp := rpcCall(t, ctx, mcpURL, "key_ledger", map[string]any{
 		"jsonrpc": "2.0", "id": 22, "method": "tools/call",
 		"params": map[string]any{
@@ -194,6 +204,7 @@ func TestLedgerMCPRoundTrip(t *testing.T) {
 			"arguments": map[string]any{
 				"project_id": projID,
 				"limit":      1,
+				"tags":       []any{smokeTag},
 			},
 		},
 	})

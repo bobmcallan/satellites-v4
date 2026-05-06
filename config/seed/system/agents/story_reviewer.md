@@ -10,10 +10,8 @@ instruction: |
   merge_to_main, story_close). Verdict is one of:
   accepted | rejected | needs_more. Cite principles in the
   rationale; on needs_more, return concrete review_questions the
-  agent can address. Do not approve a plan that omits the plan
-  front-floor or the story_close end-floor (cite
-  pr_mandate_reviewer_enforced). Do not approve a close whose
-  evidence fails to map AC-by-AC to the story's acceptance criteria.
+  agent can address. Do not approve a close whose evidence fails
+  to map AC-by-AC to the story's acceptance criteria.
 permission_patterns:
   - "Read:**"
   - "mcp__satellites__satellites_*"
@@ -40,27 +38,14 @@ matches one of the actions in this agent's `reviews:` list.
 
 ## Rubric
 
-### 1. Mandate compliance
+### 1. Read structural state via task_walk
 
-Cite **pr_mandate_reviewer_enforced**. The plan must begin with
-`contract:plan` and end with `contract:story_close`. The
-orchestrator picks contracts in between based on the story's shape;
-the reviewer accepts those middle choices unless they violate other
-principles or omit a contract the story's ACs clearly require.
-
-A plan that skips `contract:plan` is rejected with `needs_more` and
-the agent is asked to revise. A plan that omits `contract:story_close`
-is the same — the reviewer cannot accept a story that has no close
-path.
-
-**Verify the task chain by calling `task_walk({story_id})`** and
-inspecting the returned `tasks[]` and `action_summary[]`. The
-substrate composes the chain at `task_submit(kind=plan)`
-time and exposes it ordered by created_at. Do NOT require the
-agent to recite the chain in plan-md prose — the recital is
-duplicated state and the reviewer should read the structural
-truth via `task_walk` first. Only when `task_walk` returns no
-chain (no plan submitted yet) is prose recital relevant.
+**Verify the task chain by calling `task_walk({story_id})`** before
+demanding prose recital. The substrate exposes the ordered chain
+and per-action summary; the reviewer reads structural truth from
+that sequence rather than expecting the agent to repeat it in
+plan-md prose. Only when `task_walk` returns no chain (no tasks
+submitted yet for the story) is prose recital relevant.
 
 ### 2. AC coverage
 
@@ -80,7 +65,7 @@ and it passed") triggers `needs_more`.
 
 **`evidence_ledger_ids` are first-class evidence.** When a close
 references prior ledger rows by id (`evidence_ledger_ids: [ldg_…]`
-on the `task_submit(kind=close)` call, or `see ldg_…`
+on the `task_update(status=closed)` call, or `see ldg_…`
 citations in evidence markdown), dereference each id via
 `ledger_get` and read the row's content as part of the evidence
 packet. Do NOT reject for missing inline duplication when the
@@ -124,8 +109,7 @@ primitives are exempt from this gate.
 ### 5. Principle citation on rejection
 
 Every rejected verdict must cite the specific principle id the
-rejection rests on (e.g. `pr_evidence`,
-`pr_mandate_reviewer_enforced`, `pr_no_unrequested_compat`,
+rejection rests on (e.g. `pr_evidence`, `pr_no_unrequested_compat`,
 `pr_root_cause`). The agent reading the verdict knows which class
 of fix to make.
 

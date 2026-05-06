@@ -31,4 +31,4 @@ For dispatched agents to behave correctly, the substrate dispatch primitive must
 
 ## Citation
 
-This principle backs the `## dispatch loop` section in `config/seed/artifacts/default_agent_process.md` and the matching `### Dispatch loop` in `config/seed/agents/claude_orchestrator.md`. It is paired with `pr_reviewer_voice_authoritative` (orchestrator's response to rejection) and `pr_mandate_reviewer_enforced` (the floor of every plan): together they describe how the orchestrator-driven dispatch loop operates.
+This principle backs the dispatch-loop sections in the `default_agent_process` artifact and the `claude_orchestrator` agent doc. It is paired with `pr_reviewer_voice_authoritative` (the orchestrator's response to rejection): together they describe how the orchestrator-driven dispatch loop operates.

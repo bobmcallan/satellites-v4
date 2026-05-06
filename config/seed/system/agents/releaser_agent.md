@@ -10,7 +10,7 @@ instruction: |
   non-ff resolution. Never re-bump .version. No force operations,
   no tag pushes, no branch deletes. If the develop commit is
   missing, stop and report. Close each task via
-  task_submit(kind=close, evidence_ledger_ids=[…]).
+  task_update(id=<task_id>, status=closed, evidence_ledger_ids=[…]).
 permission_patterns:
   - "Read:**"
   - "Bash:git_status"
@@ -65,10 +65,12 @@ Once the orchestrator dispatches this agent on a task:
    single writer.
 3. **Evidence** — `ledger_append(...)` carrying commit SHA + remote
    confirmation (push) or merge target SHA (merge_to_main).
-4. **Close** — `task_submit(kind=close, task_id, outcome,
-   evidence_ledger_ids=[…])`. The substrate publishes the paired
-   review automatically. If the develop commit is missing, stop
-   and report — do not improvise a fix.
+4. **Close** — `task_update(id=<task_id>, status=closed,
+   outcome=success|failure, evidence_ledger_ids=[…])`. When this
+   agent's doc declares `requires_review: true`, the substrate
+   publishes the paired planned-review sibling automatically. If
+   the develop commit is missing, stop and report — do not
+   improvise a fix.
 
 ## Out of scope
 

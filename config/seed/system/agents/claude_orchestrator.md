@@ -12,11 +12,11 @@ plans and dispatch the lifecycle.
 
 ## What it does
 
-- Composes the per-story plan as an ordered list of tasks and
-  submits it via `task_submit(kind=plan, tasks=[…])`. The
-  substrate validates structural invariants (plan first, every
-  work task paired with a review sibling, agents have the right
-  capability) and rejects on violation — it does not silently mutate.
+- Composes the per-story plan as an ordered task chain. Each task
+  is minted via `task_add(agent_id, prompt, story_id?, action?)` —
+  one task at a time, in order. The substrate validates the agent's
+  capability (the `delivers:` / `reviews:` list on the agent doc)
+  at mint time and rejects on mismatch.
 - Carries the `tool_ceiling` that bounds what verbs the session may
   call (today: unrestricted within the orchestrator role).
 - Dispatches the operator's `implement <story_id>` requests by
@@ -33,7 +33,7 @@ plans and dispatch the lifecycle.
 | Story description + acceptance criteria | `satellites_story_get(id)` |
 | User prompt / runtime intent | The current Claude session message stream (the `implement story_xxx` request and any clarifications) |
 | Default workflow document (prose context) | `type=workflow`, scope=system, name=`default` — read for context only; the substrate no longer enforces a slot list. |
-| Active principles | `satellites_principle_list(active_only=true, project_id=...)` — includes `pr_mandate_reviewer_enforced`. |
+| Active principles | `satellites_principle_list(active_only=true, project_id=...)`. |
 | Contracts catalog | `type=contract` documents at scope=system + scope=project, listed via `satellites_document_list(type=contract)` |
 | Agents catalog | `type=agent` documents at scope=system + scope=project. Capability is declared on each agent's `delivers:` / `reviews:` lists; the substrate matches at task-creation time. Reviewer agents (`story_reviewer`, `development_reviewer`) carry the rubrics the autonomous reviewer service reads. |
 | Skills catalog | `type=skill` documents (referenced from contract `skills_required:` lists). |
@@ -43,8 +43,8 @@ plans and dispatch the lifecycle.
 
 | Output | Substrate target |
 |---|---|
-| Per-story plan as an ordered task list | `task_submit(kind=plan, tasks=[{kind, action, description?, agent_id?}, …])`. The substrate writes a `kind:plan` ledger row carrying the markdown + structured payload, persists each task, and returns the new task ids. |
-| Close on a claimed work task | `task_submit(kind=close, task_id=<id>, outcome=success|failure, evidence_ledger_ids=[…])`. The substrate closes the task and publishes the paired planned-review sibling for the reviewer service. |
+| One task at a time, in plan order | `task_add(agent_id, prompt, story_id?, action?, kind?)`. Returns the new `task_id` and (when the agent doc declares `requires_review: true`) the paired `review_task_id` at status=planned. When `story_id` is omitted the substrate auto-mints a thin ad-hoc story so every task is anchored. |
+| Close on a claimed work task | `task_update(id=<task_id>, status=closed, outcome=success|failure, evidence_ledger_ids=[…])`. The substrate closes the task and, when a planned review sibling exists, publishes it for the reviewer service. |
 | Per-task evidence | `ledger_append` rows tagged `task_id:<id>` + `kind:evidence`. The reviewer service picks them up via the parent task linkage on the review task. |
 | Agent dispatch | `agent_dispatch(task_id=<id>, agent_doc=<id>)` — substrate spawns the agent subprocess in a per-task worktree and returns the dispatch result. See `### Dispatch loop` below. |
 
@@ -54,15 +54,15 @@ Three rules apply before every plan submission and every
 work-task close. Reviewer rejections cite violations here.
 
 - **Rule 1 — read contracts before composing evidence.** Before
-  `task_submit(kind=close)` on any work task with
+  `task_update(status=closed)` on any work task with
   `action=contract:<name>`, the orchestrator MUST call
   `document_get(name="contract:<name>")` and treat its
   `evidence_required:` frontmatter as the literal close-evidence
   checklist. The story AC is additive, not substitutive.
-- **Rule 2 — read contracts before composing the plan.** Before
-  `task_submit(kind=plan)`, the orchestrator reads each contract
-  document referenced by the planned actions, so the plan
-  reflects the rubric the reviewer will enforce.
+- **Rule 2 — read contracts before minting a contract task.** Before
+  `task_add(action=contract:<name>, …)`, the orchestrator reads
+  the contract document so the task body reflects the rubric the
+  reviewer will enforce.
 - **Rule 3 — reviewer rejection is operator authority.** When
   the reviewer service rejects (close returns
   `published_review_id`, the substrate spawns a successor work
@@ -105,12 +105,6 @@ The orchestrator's runtime job is dispatch, not work. Citing
 
 ### Constraints
 
-The mandate principle `pr_mandate_reviewer_enforced` is the only
-fixed shape: every story plan must include `plan` at the front and
-`story_close` at the end. The contracts in between are the
-orchestrator's choice based on the story's shape. The
-`story_reviewer` agent rejects plans that omit the floor.
-
 A reviewer rejection is the operator's voice; treat it as
 feedback to address, not friction to bypass. Citing
 `pr_reviewer_voice_authoritative`.
@@ -119,29 +113,28 @@ feedback to address, not friction to bypass. Citing
 
 The flow when a user says `implement story_xxx`:
 
-1. `task_walk(story_id=…)` — confirm the story has no tasks yet.
-2. Compose the plan: read story + ACs + principles + catalogs,
-   produce an ordered list of `(kind, action, agent_id?)` entries
-   that begins with `contract:plan` (kind=work) followed by its
-   `contract:plan` (kind=review) sibling, the body contracts each
-   paired with their own kind=review sibling, and ends with
-   `contract:story_close` paired with its review.
-3. Call `task_submit(kind=plan, story_id, plan_markdown,
-   tasks=[…])`. Validators that may fire:
-   - `plan_first_task_must_be_plan` — tasks[0].action ≠ contract:plan.
-   - `missing_review_for:<action>` — work task has no immediate
-     review sibling.
-   - `review_action_mismatch` / `invalid_action_format` — malformed.
-   - `agent_cannot_deliver` / `agent_cannot_review` — agent_id
-     supplied but its `delivers:` / `reviews:` doesn't cover the
-     action.
-4. The substrate writes the `kind:plan` ledger row + persists tasks.
-   Work tasks at `status=published` (claimable now); review tasks at
-   `status=planned` (gated until the work closes).
-5. Subsequent `task_claim` calls pick the highest-priority published
-   task; the agent allocated to it executes; close via
-   `task_submit(kind=close)` publishes the sibling review;
-   the reviewer service runs autonomously.
+1. `task_walk(story_id=…)` — confirm the story has no in-flight work,
+   or read where the chain currently sits.
+2. For the next step in the plan, choose the agent (by capability —
+   the agent's `delivers:` list must contain the chosen action when
+   the action is `contract:<name>` shaped) and the prompt body.
+3. Call `task_add(agent_id, prompt, story_id, action?, kind?)`.
+   The substrate validates the agent doc, mints the work task at
+   `status=published`, optionally mints a paired review task at
+   `status=planned` when the agent doc declares
+   `requires_review: true`, and returns the new task ids. Possible
+   errors:
+   - `agent_not_found` — agent doc id missing or archived.
+   - `agent_cannot_deliver` / `agent_cannot_review` — capability
+     mismatch when the action is `contract:<name>` shaped.
+4. Dispatch the work task via `bash claude -p 'implement <task_id>'`.
+   The subprocess fetches its own context (agent doc, project
+   intent, principles, story, contract) via MCP using the task id.
+5. On dispatch result, read `task_walk` again. If the work task
+   closed via `task_update(status=closed)`, the substrate has
+   already published the paired review (when one exists). Mint the
+   next plan step via `task_add` if there is one; otherwise the
+   chain is complete.
 
 ### Reviewer routing (autonomous)
 

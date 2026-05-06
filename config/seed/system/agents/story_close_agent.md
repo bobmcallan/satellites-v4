@@ -9,7 +9,7 @@ instruction: |
   outcome=success; write a closing-evidence ledger row tagged
   task_id:<this_close_task> summarising the resolution
   (delivered / plan_only / not_required / duplicate / superseded /
-  failed:*); then call task_submit(kind=close,
+  failed:*); then call task_update(id=<task_id>, status=closed,
   outcome=success, evidence_ledger_ids=[…]). The reviewer service
   picks up the paired review automatically; on accepted verdict
   the story status reconciler walks the story to done.
@@ -33,15 +33,16 @@ reviewer service grades the close against `story_reviewer`'s rubric.
   `kind:evidence`) carrying the resolution (`delivered`,
   `plan_only`, `not_required`, `duplicate`, `superseded`,
   `failed:complexity`, `failed:scope_invalid`, `failed:blocked`).
-- Calls `task_submit(kind=close, task_id=<id>,
-  outcome=success, evidence_ledger_ids=[…])`. The substrate
-  publishes the paired review task automatically; the reviewer
-  service runs `story_reviewer` against it.
+- Calls `task_update(id=<id>, status=closed, outcome=success,
+  evidence_ledger_ids=[…])`. When this agent's doc declares
+  `requires_review: true`, the substrate publishes the paired
+  planned-review sibling automatically; the reviewer service runs
+  `story_reviewer` against it.
 
 ## How
 
 Read-only across the codebase, MCP read + write to the ledger and
-task_submit verbs. No file edits, no git operations.
+the task_update verb. No file edits, no git operations.
 
 ## Lifecycle (claim → work → evidence → close)
 
@@ -56,10 +57,11 @@ Once the orchestrator dispatches this agent on the closing task:
 3. **Evidence** — `ledger_append(...)` writing the closing-evidence
    row tagged `task_id:<this_close_task>` carrying the resolution
    summary.
-4. **Close** — `task_submit(kind=close, task_id, outcome=success,
-   evidence_ledger_ids=[…])`. The substrate publishes the paired
-   review; on accepted verdict the story status reconciler walks
-   the story to `done`.
+4. **Close** — `task_update(id=<task_id>, status=closed,
+   outcome=success, evidence_ledger_ids=[…])`. When this agent's
+   doc declares `requires_review: true`, the substrate publishes
+   the paired planned-review sibling; on accepted verdict the
+   story status reconciler walks the story to `done`.
 
 ## Limitations
 

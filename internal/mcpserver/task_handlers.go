@@ -14,9 +14,9 @@ import (
 
 // handleTaskPlan implements task_plan: write a task at status=planned —
 // the agent's drafting state. Subscribers do not see planned rows.
-// sty_c1200f75. The story-scoped plan path lives in task_submit
-// (kind=plan); task_plan covers the bare draft case used outside a
-// story-task chain.
+// sty_c1200f75. task_plan covers the bare-draft case where a task is
+// staged for later publication; task_add is the single-task creation
+// path that lands at status=published.
 func (s *Server) handleTaskPlan(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	return s.createTask(ctx, req, task.StatusPlanned, "task_plan")
 }

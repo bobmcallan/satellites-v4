@@ -45,8 +45,8 @@ full catalogue — names, descriptions, parameters, return shapes
 — is visible to your session in the tool list and is
 authoritative there. Resolve identifiers from the operator's
 prompt against it: a story id maps to `story_get` /
-`story_context`, a task id maps to `task_get` / `task_context`,
-an agent or contract name maps to `agent_get` / `contract_get`.
+`story_context`, a task id maps to `task_get`, an agent or
+contract name maps to `agent_get` / `contract_get`.
 
 ## Operating principle
 

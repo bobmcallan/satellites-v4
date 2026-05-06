@@ -1,7 +1,7 @@
 ---
 id: pr_reviewer_voice_authoritative
 name: Reviewer rejections are the operator's voice
-scope: system
+scope: project
 tags:
   - process
   - mandate

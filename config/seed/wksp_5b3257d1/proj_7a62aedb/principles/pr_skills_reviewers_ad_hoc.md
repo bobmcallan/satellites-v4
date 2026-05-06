@@ -1,7 +1,7 @@
 ---
 id: pr_skills_reviewers_ad_hoc
 name: Skills and reviewers are ad-hoc, not baseline
-scope: system
+scope: project
 tags:
   - configseed
   - lifecycle

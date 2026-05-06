@@ -1,7 +1,7 @@
 ---
 id: pr_story_terminal_gate
 name: Story terminal-transition gate
-scope: system
+scope: project
 tags:
   - process
   - structural-invariant

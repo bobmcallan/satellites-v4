@@ -1,7 +1,7 @@
 ---
 id: pr_mandate_reviewer_enforced
 name: Mandate enforced by reviewer, not substrate
-scope: system
+scope: project
 tags:
   - process
   - mandate

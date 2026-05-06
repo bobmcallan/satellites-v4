@@ -1,7 +1,7 @@
 ---
 id: pr_substrate_provides_context
 name: Substrate provides context to dispatched agents
-scope: system
+scope: project
 tags:
   - process
   - dispatch

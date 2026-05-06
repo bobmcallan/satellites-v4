@@ -445,42 +445,47 @@ func TestPrincipleSeedLoad(t *testing.T) {
 	}
 }
 
-// TestRun_RealSeedDirShipsAllPrinciples checks the loader's structural
-// contract on the real config/seed/system/principles/ directory: every .md
-// file becomes one type=principle scope=system document with a
-// non-empty body. The inventory itself (which principles exist, their
-// names) is content, not loader behaviour, so it isn't pinned here.
-func TestRun_RealSeedDirShipsAllPrinciples(t *testing.T) {
+// TestRunProject_RealSeedDirShipsSatellitesPrinciples checks the
+// loader's structural contract on the real
+// config/seed/wksp_5b3257d1/proj_7a62aedb/principles/ directory: every
+// .md file becomes one type=principle scope=project document with a
+// non-empty body and project_id stamped on the row. Replaces the
+// pre-sty_8f6b90c8 version that targeted system-tier principles —
+// after the migration, the satellites project owns its principles at
+// project scope and the system principles directory is empty.
+func TestRunProject_RealSeedDirShipsSatellitesPrinciples(t *testing.T) {
 	t.Parallel()
 	seedDir, err := filepath.Abs(filepath.Join("..", "..", "config", "seed"))
 	if err != nil {
 		t.Fatalf("abs seed dir: %v", err)
 	}
-	if _, err := os.Stat(seedDir); err != nil {
-		t.Fatalf("seed dir %q not found: %v", seedDir, err)
-	}
-	files, err := filepath.Glob(filepath.Join(seedDir, SystemSubdir, "principles", "*.md"))
+	const (
+		ws  = "wksp_5b3257d1"
+		pid = "proj_7a62aedb"
+	)
+	files, err := filepath.Glob(filepath.Join(seedDir, ws, pid, "principles", "*.md"))
 	if err != nil {
 		t.Fatalf("glob principles: %v", err)
 	}
 	if len(files) == 0 {
-		t.Fatalf("no principle files under %s/%s/principles", seedDir, SystemSubdir)
+		t.Fatalf("no principle files under %s/%s/%s/principles", seedDir, ws, pid)
 	}
 
 	docs := document.NewMemoryStore()
-	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
-	summary, err := Run(context.Background(), docs, seedDir, "wksp_sys", "system", now)
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	summary, err := RunProject(context.Background(), docs, seedDir, pid, ws, "system", now)
 	if err != nil {
-		t.Fatalf("Run: %v", err)
+		t.Fatalf("RunProject: %v", err)
 	}
 	if len(summary.Errors) != 0 {
 		t.Fatalf("unexpected errors: %v", summary.Errors)
 	}
 
 	principles, err := docs.List(context.Background(), document.ListOptions{
-		Type:  document.TypePrinciple,
-		Scope: document.ScopeSystem,
-		Limit: len(files) * 2,
+		Type:      document.TypePrinciple,
+		Scope:     document.ScopeProject,
+		ProjectID: pid,
+		Limit:     len(files) * 2,
 	}, nil)
 	if err != nil {
 		t.Fatalf("List principles: %v", err)
@@ -492,6 +497,30 @@ func TestRun_RealSeedDirShipsAllPrinciples(t *testing.T) {
 		if p.Body == "" {
 			t.Errorf("principle %q has empty body", p.Name)
 		}
+		if p.ProjectID == nil || *p.ProjectID != pid {
+			t.Errorf("principle %q project_id = %v, want %s", p.Name, p.ProjectID, pid)
+		}
+	}
+}
+
+// TestRun_SystemPrinciplesDirEmpty asserts the post-sty_8f6b90c8
+// state: no principle .md files live under config/seed/system/. The
+// satellites principles all moved to the project tier; any future
+// system-scope principle (truly substrate-generic) would be the first
+// to repopulate this directory — at which point this test would
+// flip to an "at least one" assertion or be retired.
+func TestRun_SystemPrinciplesDirEmpty(t *testing.T) {
+	t.Parallel()
+	seedDir, err := filepath.Abs(filepath.Join("..", "..", "config", "seed"))
+	if err != nil {
+		t.Fatalf("abs seed dir: %v", err)
+	}
+	files, err := filepath.Glob(filepath.Join(seedDir, SystemSubdir, "principles", "*.md"))
+	if err != nil {
+		t.Fatalf("glob principles: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("system principles dir not empty: %v", files)
 	}
 }
 

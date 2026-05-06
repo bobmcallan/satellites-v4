@@ -1,7 +1,7 @@
 ---
 id: pr_root_cause
 name: Root cause, not hack
-scope: system
+scope: project
 tags:
   - quality
   - debugging

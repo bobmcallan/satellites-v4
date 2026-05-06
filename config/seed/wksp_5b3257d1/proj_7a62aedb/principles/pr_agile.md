@@ -1,7 +1,7 @@
 ---
 id: pr_agile
 name: Agile smallest-change delivery
-scope: system
+scope: project
 tags:
   - delivery
   - process

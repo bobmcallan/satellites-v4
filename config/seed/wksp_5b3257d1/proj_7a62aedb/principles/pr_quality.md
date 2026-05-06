@@ -1,7 +1,7 @@
 ---
 id: pr_quality
 name: Quality over speed
-scope: system
+scope: project
 tags:
   - quality
   - process

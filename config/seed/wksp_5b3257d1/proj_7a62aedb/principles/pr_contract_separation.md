@@ -1,7 +1,7 @@
 ---
 id: pr_contract_separation
 name: Lifecycle and project contract separation
-scope: system
+scope: project
 tags:
   - architecture
   - contracts

@@ -1,7 +1,7 @@
 ---
 id: pr_no_unrequested_compat
 name: No unrequested abstractions or backwards-compat layers
-scope: system
+scope: project
 tags:
   - scope
   - architecture

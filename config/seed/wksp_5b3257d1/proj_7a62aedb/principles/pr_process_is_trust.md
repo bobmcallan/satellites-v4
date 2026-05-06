@@ -1,7 +1,7 @@
 ---
 id: pr_process_is_trust
 name: Process is trust
-scope: system
+scope: project
 tags:
   - lifecycle
   - ledger

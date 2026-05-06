@@ -1,12 +1,23 @@
-// Project-scoped seed loader (sty_8868eaf4). Parallel to Run, but the
-// produced documents are scope=project, project_id=<resolved>. Layout:
+// Project-scoped seed loader (sty_8868eaf4 → sty_87e203c1). Parallel
+// to Run, but the produced documents are scope=project,
+// project_id=<resolved>. Layout:
 //
-//	<seedDir>/<project_id>/<kind>/*.md
+//	<seedDir>/<workspace_id>/<project_id>/<kind>/*.md
 //
-// Distinct from system kind subdirs (which sit at <seedDir>/<kind>/)
-// because project_id has the unambiguous proj_ prefix. Discovery walks
-// the seed dir and enumerates proj_* entries; the loader runs once per
-// project at boot (as a goroutine, non-blocking) and on demand via the
+// The workspace prefix mirrors the (workspace_id, project_id) primary
+// key on every project-scope row. Sty_87e203c1 introduced the prefix;
+// before that, project seeds lived at <seedDir>/<project_id>/. Two
+// workspaces could in principle issue projects whose dirs would clash
+// on disk under the older shape, even though the rows are isolated by
+// workspace_id at the substrate layer.
+//
+// System tier stays at <seedDir>/system/<kind>/ — system rows are
+// global-by-design (the workspace stamp at runtime is bookkeeping, not
+// identity), so the path is workspace-less.
+//
+// Discovery is two-pass: enumerate <seedDir>/wksp_*/ entries, then
+// proj_* entries within each. The loader runs once per discovered pair
+// at boot (as a goroutine, non-blocking) and on demand via the
 // project_seed_run MCP verb.
 //
 // Strict isolation: this loader produces only scope=project rows. The
@@ -30,16 +41,33 @@ import (
 )
 
 // ProjectDirPrefix is the canonical prefix every project-id directory
-// carries under <seedDir>. Discovery uses it to distinguish project
-// dirs from system kind subdirs.
+// carries under <seedDir>/<workspace_id>/. Discovery uses it to
+// distinguish project dirs from any other entries a future feature
+// might place under a workspace dir.
 const ProjectDirPrefix = "proj_"
+
+// WorkspaceDirPrefix is the canonical prefix every workspace directory
+// carries directly under <seedDir>. Discovery uses it to enumerate
+// workspaces before walking project_ids beneath them.
+const WorkspaceDirPrefix = "wksp_"
+
+// DiscoveredProject pairs the workspace_id and project_id parsed from
+// a <seedDir>/wksp_*/proj_*/ path. Discovery returns these so callers
+// can either run the loader directly with both ids in hand or feed the
+// project_id into the project_seed_run verb (which independently
+// resolves the canonical workspace from the project store).
+type DiscoveredProject struct {
+	WorkspaceID string
+	ProjectID   string
+}
 
 // projectKinds is the ordered list of Kinds the project loader walks
 // per project_id directory. Mirrors the system loader's list so the
 // directory convention is symmetric: any kind that exists at system
 // scope can also be seeded at project scope by dropping a file under
-// <seedDir>/<project_id>/<kind>/. An empty subdir (or one missing on
-// disk) loads zero rows for that kind — no error, no warning.
+// <seedDir>/<workspace_id>/<project_id>/<kind>/. An empty subdir (or
+// one missing on disk) loads zero rows for that kind — no error, no
+// warning.
 //
 // Kinds that don't make sense at project scope (story_template,
 // replicate_vocabulary as currently shipped) are still walked here,
@@ -56,12 +84,17 @@ var projectKinds = []Kind{
 	KindPrinciple,
 }
 
-// DiscoverProjectDirs returns the project_id values for every
-// <seedDir>/proj_*/ entry found on disk, sorted. Returns nil + nil
-// when the seed dir is missing (cold-boot test fixture). Other read
-// errors come back as the second return; callers typically log and
-// proceed.
-func DiscoverProjectDirs(seedDir string) ([]string, error) {
+// DiscoverProjectDirs walks <seedDir>/wksp_*/proj_*/ and returns the
+// (workspace_id, project_id) pairs found on disk, sorted by
+// workspace_id then project_id. Returns nil + nil when the seed dir is
+// missing (cold-boot test fixture). A workspace dir with no proj_*
+// children contributes zero rows and is not an error. Per-workspace
+// read failures are logged via the returned error slice; callers
+// typically log and proceed.
+//
+// The system tier (<seedDir>/system/) is excluded by the wksp_ prefix
+// filter — discovery only cares about workspace-scoped subtrees.
+func DiscoverProjectDirs(seedDir string) ([]DiscoveredProject, error) {
 	if seedDir == "" {
 		seedDir = DefaultSeedDir
 	}
@@ -72,31 +105,52 @@ func DiscoverProjectDirs(seedDir string) ([]string, error) {
 		}
 		return nil, fmt.Errorf("configseed: read seed dir for project discovery: %w", err)
 	}
-	var out []string
+	var out []DiscoveredProject
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		name := e.Name()
-		if !strings.HasPrefix(name, ProjectDirPrefix) {
+		wsName := e.Name()
+		if !strings.HasPrefix(wsName, WorkspaceDirPrefix) {
 			continue
 		}
-		out = append(out, name)
+		wsRoot := filepath.Join(seedDir, wsName)
+		projEntries, err := os.ReadDir(wsRoot)
+		if err != nil {
+			return out, fmt.Errorf("configseed: read workspace dir %s: %w", wsName, err)
+		}
+		for _, pe := range projEntries {
+			if !pe.IsDir() {
+				continue
+			}
+			pName := pe.Name()
+			if !strings.HasPrefix(pName, ProjectDirPrefix) {
+				continue
+			}
+			out = append(out, DiscoveredProject{WorkspaceID: wsName, ProjectID: pName})
+		}
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].WorkspaceID != out[j].WorkspaceID {
+			return out[i].WorkspaceID < out[j].WorkspaceID
+		}
+		return out[i].ProjectID < out[j].ProjectID
+	})
 	return out, nil
 }
 
-// RunProject loads <seedDir>/<projectID>/<kind>/*.md and upserts each
-// as a scope=project, project_id=projectID document. workspaceID is
-// stamped on every produced row so workspace-scoping reads behave the
-// same as for system rows. Idempotent on body hash via docs.Upsert.
+// RunProject loads <seedDir>/<workspaceID>/<projectID>/<kind>/*.md and
+// upserts each as a scope=project, project_id=projectID document.
+// workspaceID is stamped on every produced row AND used as a path
+// component, so workspace-scoping is consistent on disk and at the row
+// layer. Idempotent on body hash via docs.Upsert.
 //
-// projectID resolution is the caller's responsibility — the loader
-// trusts the supplied id. When invoked from the boot path, main.go
-// looks up each discovered project_id against the project store and
-// skips (with a structured warning) any directory whose id has no
-// project row.
+// projectID + workspaceID resolution is the caller's responsibility —
+// the loader trusts the supplied ids. When invoked from the boot path,
+// main.go enumerates (workspace_id, project_id) pairs from disk and
+// hands them to RunProjectSeed, which independently looks up the
+// project's canonical workspace from the project store before reading
+// the seed dir.
 func RunProject(ctx context.Context, docs document.Store, seedDir, projectID, workspaceID, actor string, now time.Time) (Summary, error) {
 	if docs == nil {
 		return Summary{}, fmt.Errorf("configseed: doc store is nil")
@@ -104,10 +158,13 @@ func RunProject(ctx context.Context, docs document.Store, seedDir, projectID, wo
 	if projectID == "" {
 		return Summary{}, fmt.Errorf("configseed: project_id required")
 	}
+	if workspaceID == "" {
+		return Summary{}, fmt.Errorf("configseed: workspace_id required")
+	}
 	if seedDir == "" {
 		seedDir = DefaultSeedDir
 	}
-	projectRoot := filepath.Join(seedDir, projectID)
+	projectRoot := filepath.Join(seedDir, workspaceID, projectID)
 	if _, err := os.Stat(projectRoot); err != nil {
 		if os.IsNotExist(err) {
 			return Summary{}, nil

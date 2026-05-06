@@ -483,29 +483,31 @@ func main() {
 	if err := mcp.MaterialiseCatalogue(ctx); err != nil {
 		logger.Warn().Str("error", err.Error()).Msg("mcp catalogue snapshot failed (page will render empty-state)")
 	}
-	// sty_8868eaf4: project-tier seed pass. Walks
-	// config/seed/proj_*/<kind>/*.md and upserts each as a scope=project
+	// sty_8868eaf4 / sty_87e203c1: project-tier seed pass. Walks
+	// config/seed/wksp_*/proj_*/<kind>/*.md and upserts each as a scope=project
 	// document. Runs in a goroutine — must not impede startup. Each
 	// project dir whose project_id resolves to an existing project row
 	// produces a kind:project-seed-run ledger row; missing projects log
 	// a warning and skip (no auto-create).
 	go func() {
-		dirs, derr := configseed.DiscoverProjectDirs(configseed.ResolveSeedDir())
+		pairs, derr := configseed.DiscoverProjectDirs(configseed.ResolveSeedDir())
 		if derr != nil {
 			logger.Warn().Str("error", derr.Error()).Msg("project seed discovery failed")
 			return
 		}
-		for _, pid := range dirs {
-			result, perr := mcp.RunProjectSeed(ctx, pid, "system")
+		for _, d := range pairs {
+			result, perr := mcp.RunProjectSeed(ctx, d.ProjectID, "system")
 			if perr != nil {
 				logger.Warn().
-					Str("project_id", pid).
+					Str("workspace_id", d.WorkspaceID).
+					Str("project_id", d.ProjectID).
 					Str("error", perr.Error()).
 					Msg("project seed run failed")
 				continue
 			}
 			logger.Info().
-				Str("project_id", pid).
+				Str("workspace_id", d.WorkspaceID).
+				Str("project_id", d.ProjectID).
 				Int("loaded", result.Loaded).
 				Int("created", result.Created).
 				Int("updated", result.Updated).
@@ -513,7 +515,7 @@ func main() {
 				Int("errors", len(result.Errors)).
 				Msg("project seed run complete")
 			for _, e := range result.Errors {
-				logger.Warn().Str("project_id", pid).Str("path", e.Path).Str("reason", e.Reason).Msg("project seed entry failed")
+				logger.Warn().Str("workspace_id", d.WorkspaceID).Str("project_id", d.ProjectID).Str("path", e.Path).Str("reason", e.Reason).Msg("project seed entry failed")
 			}
 		}
 	}()

@@ -31,7 +31,7 @@ Body for the project-tier seed test.
 
 // newProjectSeedFixture builds a Server with one project row and a
 // fake seed dir carrying one project-scoped artifact under
-// <dir>/<projectID>/artifacts/.
+// <dir>/<workspaceID>/<projectID>/artifacts/ (sty_87e203c1 layout).
 func newProjectSeedFixture(t *testing.T) (*Server, string, string) {
 	t.Helper()
 	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
@@ -58,7 +58,7 @@ func newProjectSeedFixture(t *testing.T) (*Server, string, string) {
 	})
 
 	dir := t.TempDir()
-	subdir := filepath.Join(dir, proj.ID, "artifacts")
+	subdir := filepath.Join(dir, proj.WorkspaceID, proj.ID, "artifacts")
 	if err := os.MkdirAll(subdir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}

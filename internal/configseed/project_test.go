@@ -19,9 +19,9 @@ tags: [kind:project-intent]
 Placeholder body for the project-tier seed test.
 `
 
-func writeProjectSeed(t *testing.T, root, projectID, kind, filename, content string) {
+func writeProjectSeed(t *testing.T, root, workspaceID, projectID, kind, filename, content string) {
 	t.Helper()
-	dir := filepath.Join(root, projectID, kind)
+	dir := filepath.Join(root, workspaceID, projectID, kind)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", dir, err)
 	}
@@ -31,18 +31,19 @@ func writeProjectSeed(t *testing.T, root, projectID, kind, filename, content str
 }
 
 // TestRunProject_ProducesProjectScopedRows is the AC1 anchor: files
-// under <seedDir>/<project_id>/<kind>/*.md upsert as scope=project,
-// project_id=<resolved>, type=<kind> documents — same parsers and
-// frontmatter validation as the system loader.
+// under <seedDir>/<workspace_id>/<project_id>/<kind>/*.md upsert as
+// scope=project, project_id=<resolved>, type=<kind> documents — same
+// parsers and frontmatter validation as the system loader.
 func TestRunProject_ProducesProjectScopedRows(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
+	const ws = "wksp_a"
 	pid := "proj_test01"
-	writeProjectSeed(t, dir, pid, "artifacts", "project_intent.md", sampleProjectArtifactMD)
+	writeProjectSeed(t, dir, ws, pid, "artifacts", "project_intent.md", sampleProjectArtifactMD)
 
 	docs := document.NewMemoryStore()
 	now := time.Now().UTC()
-	summary, err := RunProject(context.Background(), docs, dir, pid, "wksp_a", "system", now)
+	summary, err := RunProject(context.Background(), docs, dir, pid, ws, "system", now)
 	if err != nil {
 		t.Fatalf("RunProject: %v", err)
 	}
@@ -70,15 +71,16 @@ func TestRunProject_ProducesProjectScopedRows(t *testing.T) {
 func TestRunProject_IdempotentOnSameBody(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
+	const ws = "wksp_a"
 	pid := "proj_test02"
-	writeProjectSeed(t, dir, pid, "artifacts", "x.md", sampleProjectArtifactMD)
+	writeProjectSeed(t, dir, ws, pid, "artifacts", "x.md", sampleProjectArtifactMD)
 
 	docs := document.NewMemoryStore()
 	now := time.Now().UTC()
-	if _, err := RunProject(context.Background(), docs, dir, pid, "wksp_a", "system", now); err != nil {
+	if _, err := RunProject(context.Background(), docs, dir, pid, ws, "system", now); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
-	second, err := RunProject(context.Background(), docs, dir, pid, "wksp_a", "system", now.Add(time.Minute))
+	second, err := RunProject(context.Background(), docs, dir, pid, ws, "system", now.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}
@@ -119,25 +121,63 @@ func TestRunProject_RejectsEmptyProjectID(t *testing.T) {
 	}
 }
 
-// TestDiscoverProjectDirs_FindsProjPrefixedDirs asserts the discovery
-// helper returns proj_* entries (sorted) and ignores everything else.
-func TestDiscoverProjectDirs_FindsProjPrefixedDirs(t *testing.T) {
+// TestDiscoverProjectDirs_FindsWkspProjPairs asserts the discovery
+// helper walks <seedDir>/wksp_*/proj_*/ and returns the pairs sorted
+// by workspace then project, ignoring system kind dirs and non-prefix
+// entries at either level.
+func TestDiscoverProjectDirs_FindsWkspProjPairs(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	for _, sub := range []string{"agents", "contracts", "principles", "proj_aaa11111", "proj_bbb22222", "tools"} {
+	// Top-level decoys + two real workspaces.
+	for _, sub := range []string{"system", "agents", "contracts", "principles", "tools"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", sub, err)
+		}
+	}
+	// wksp_b first on disk, but discovery sorts.
+	for _, p := range []string{
+		"wksp_b/proj_bbb22222",
+		"wksp_a/proj_aaa11111",
+		"wksp_a/proj_aaa22222",
+		"wksp_a/not_a_project", // non-prefix child, ignored
+	} {
+		if err := os.MkdirAll(filepath.Join(dir, p), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", p, err)
 		}
 	}
 	out, err := DiscoverProjectDirs(dir)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	if len(out) != 2 {
-		t.Fatalf("got %d dirs, want 2: %v", len(out), out)
+	if len(out) != 3 {
+		t.Fatalf("got %d pairs, want 3: %v", len(out), out)
 	}
-	if out[0] != "proj_aaa11111" || out[1] != "proj_bbb22222" {
-		t.Errorf("unsorted or wrong dirs: %v", out)
+	want := []DiscoveredProject{
+		{WorkspaceID: "wksp_a", ProjectID: "proj_aaa11111"},
+		{WorkspaceID: "wksp_a", ProjectID: "proj_aaa22222"},
+		{WorkspaceID: "wksp_b", ProjectID: "proj_bbb22222"},
+	}
+	for i, w := range want {
+		if out[i] != w {
+			t.Errorf("pair[%d] = %+v, want %+v", i, out[i], w)
+		}
+	}
+}
+
+// TestDiscoverProjectDirs_EmptyWorkspaceDir asserts that a wksp_* dir
+// with no proj_* children contributes zero pairs and is not an error.
+func TestDiscoverProjectDirs_EmptyWorkspaceDir(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "wksp_empty"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	out, err := DiscoverProjectDirs(dir)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(out) != 0 {
+		t.Errorf("got %d pairs from empty workspace dir, want 0: %v", len(out), out)
 	}
 }
 
@@ -166,10 +206,10 @@ func TestSystemRunNeverTouchesProjectScope(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, SystemSubdir, "contracts", "sample.md"), []byte(sampleContractMD), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	// A project-id directory with its own contract — the system
+	// A workspace/project subtree with its own contract — the system
 	// loader must skip this entirely.
 	pid := "proj_isolated"
-	writeProjectSeed(t, dir, pid, "contracts", "project_only.md", sampleContractMD)
+	writeProjectSeed(t, dir, "wksp_a", pid, "contracts", "project_only.md", sampleContractMD)
 
 	docs := document.NewMemoryStore()
 	if _, err := Run(context.Background(), docs, dir, "wksp_a", "system", time.Now().UTC()); err != nil {
@@ -189,7 +229,8 @@ func TestSystemRunNeverTouchesProjectScope(t *testing.T) {
 
 // TestProjectRunNeverTouchesSystemScope is the AC6 anchor (project
 // side). Even with a system kind dir present, RunProject only walks
-// <seedDir>/<projectID>/ and produces only scope=project rows.
+// <seedDir>/<workspaceID>/<projectID>/ and produces only scope=project
+// rows.
 func TestProjectRunNeverTouchesSystemScope(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -200,11 +241,12 @@ func TestProjectRunNeverTouchesSystemScope(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, SystemSubdir, "contracts", "system_only.md"), []byte(sampleContractMD), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+	const ws = "wksp_a"
 	pid := "proj_isolated2"
-	writeProjectSeed(t, dir, pid, "artifacts", "x.md", sampleProjectArtifactMD)
+	writeProjectSeed(t, dir, ws, pid, "artifacts", "x.md", sampleProjectArtifactMD)
 
 	docs := document.NewMemoryStore()
-	if _, err := RunProject(context.Background(), docs, dir, pid, "wksp_a", "system", time.Now().UTC()); err != nil {
+	if _, err := RunProject(context.Background(), docs, dir, pid, ws, "system", time.Now().UTC()); err != nil {
 		t.Fatalf("RunProject: %v", err)
 	}
 	systemRows, err := docs.List(context.Background(), document.ListOptions{Scope: document.ScopeSystem}, nil)
@@ -226,19 +268,23 @@ func TestProjectRunNeverTouchesSystemScope(t *testing.T) {
 // TestRunProject_RealSeedDirSatellitesPlaceholder is the end-to-end
 // AC10 anchor: RunProject against the real config/seed directory
 // loads the placeholder artifact for proj_7a62aedb (the satellites
-// project) and the row comes back with scope=project, project_id set.
+// project) under its canonical workspace and the row comes back with
+// scope=project, project_id set.
 func TestRunProject_RealSeedDirSatellitesPlaceholder(t *testing.T) {
 	t.Parallel()
 	seedDir, err := filepath.Abs(filepath.Join("..", "..", "config", "seed"))
 	if err != nil {
 		t.Fatalf("abs seed dir: %v", err)
 	}
-	const pid = "proj_7a62aedb"
-	if _, statErr := os.Stat(filepath.Join(seedDir, pid)); statErr != nil {
-		t.Fatalf("expected real seed dir for %s: %v", pid, statErr)
+	const (
+		ws  = "wksp_5b3257d1"
+		pid = "proj_7a62aedb"
+	)
+	if _, statErr := os.Stat(filepath.Join(seedDir, ws, pid)); statErr != nil {
+		t.Fatalf("expected real seed dir for %s/%s: %v", ws, pid, statErr)
 	}
 	docs := document.NewMemoryStore()
-	summary, err := RunProject(context.Background(), docs, seedDir, pid, "wksp_a", "system", time.Now().UTC())
+	summary, err := RunProject(context.Background(), docs, seedDir, pid, ws, "system", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("RunProject: %v", err)
 	}

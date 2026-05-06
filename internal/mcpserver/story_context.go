@@ -33,6 +33,13 @@ type storyContextView struct {
 	RecentEvidence []ledger.LedgerEntry `json:"recent_evidence,omitempty"`
 	AgentProcess   string               `json:"agent_process,omitempty"`
 	Template       *story.Template      `json:"template,omitempty"`
+	// IntentBody and Principles mirror project_set / project_context
+	// (sty_31d51494 layer 2) so a session that walked in via a story
+	// id has the same orientation context an agent that bootstrapped
+	// via project_set would. Empty when the project's intent
+	// artifact is missing or no principles apply.
+	IntentBody string           `json:"intent_body,omitempty"`
+	Principles []PrincipleEntry `json:"principles,omitempty"`
 }
 
 // handleStoryContext implements `story_context`. Workspace-scoped via
@@ -63,6 +70,12 @@ func (s *Server) handleStoryContext(ctx context.Context, req mcpgo.CallToolReque
 	if s.projects != nil {
 		if p, err := s.projects.GetByID(ctx, st.ProjectID, memberships); err == nil {
 			view.Project = &p
+			// sty_31d51494 layer 2: include the orientation bundle so
+			// a story-id-first session has the same context a
+			// project_set-first session would.
+			bundle := s.buildOrientation(ctx, p)
+			view.IntentBody = bundle.IntentBody
+			view.Principles = bundle.Principles
 		}
 	}
 

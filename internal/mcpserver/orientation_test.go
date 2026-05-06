@@ -1,0 +1,283 @@
+// Tests for the project orientation bundle (sty_31d51494 layer 2).
+// Cover the bundle helper, project_set's enriched return, project_context
+// (no-arg refresh) and the auto-bind on Mcp-Session-Id.
+package mcpserver
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+
+	satarbor "github.com/bobmcallan/satellites/internal/arbor"
+	"github.com/bobmcallan/satellites/internal/config"
+	"github.com/bobmcallan/satellites/internal/document"
+	"github.com/bobmcallan/satellites/internal/ledger"
+	"github.com/bobmcallan/satellites/internal/project"
+	"github.com/bobmcallan/satellites/internal/session"
+	"github.com/bobmcallan/satellites/internal/story"
+	"github.com/bobmcallan/satellites/internal/workspace"
+)
+
+const sampleProjectIntentBody = "# Project intent test body — what this project is about."
+const sampleSystemPrincipleMD = `---
+name: pr_test_universal
+---
+# Universal principle
+
+Body.`
+
+const sampleProjectPrincipleMD = `---
+name: pr_test_project
+---
+# Project-scope principle
+
+Body.`
+
+func newOrientationFixture(t *testing.T) (*Server, project.Project, string) {
+	t.Helper()
+	cfg := &config.Config{Env: "dev", PublicURL: "https://sat.test"}
+	docs := document.NewMemoryStore()
+	led := ledger.NewMemoryStore()
+	s := New(cfg, satarbor.New("info"), time.Now(), Deps{
+		DocStore:       docs,
+		ProjectStore:   project.NewMemoryStore(),
+		SessionStore:   session.NewMemoryStore(),
+		WorkspaceStore: workspace.NewMemoryStore(),
+		LedgerStore:    led,
+		StoryStore:     story.NewMemoryStore(led),
+	})
+	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	now := time.Now().UTC()
+
+	ws, err := s.workspaces.Create(ctx, "u_alice", "alpha", now)
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	if err := s.workspaces.AddMember(ctx, ws.ID, "u_alice", "admin", "u_alice", now); err != nil {
+		t.Fatalf("member: %v", err)
+	}
+	p, err := s.projects.CreateWithRemote(ctx, "u_alice", ws.ID, "satellites", "https://github.com/owner/repo", now)
+	if err != nil {
+		t.Fatalf("project: %v", err)
+	}
+
+	pid := p.ID
+	if _, err := docs.Create(ctx, document.Document{
+		WorkspaceID: ws.ID,
+		ProjectID:   &pid,
+		Type:        document.TypeArtifact,
+		Scope:       document.ScopeProject,
+		Name:        ProjectIntentArtifactName,
+		Body:        sampleProjectIntentBody,
+		Tags:        []string{"kind:project-intent"},
+		Status:      document.StatusActive,
+	}, now); err != nil {
+		t.Fatalf("seed intent: %v", err)
+	}
+	if _, err := docs.Create(ctx, document.Document{
+		WorkspaceID: ws.ID,
+		Type:        document.TypePrinciple,
+		Scope:       document.ScopeSystem,
+		Name:        "pr_test_universal",
+		Body:        sampleSystemPrincipleMD,
+		Status:      document.StatusActive,
+	}, now); err != nil {
+		t.Fatalf("seed sys principle: %v", err)
+	}
+	if _, err := docs.Create(ctx, document.Document{
+		WorkspaceID: ws.ID,
+		ProjectID:   &pid,
+		Type:        document.TypePrinciple,
+		Scope:       document.ScopeProject,
+		Name:        "pr_test_project",
+		Body:        sampleProjectPrincipleMD,
+		Status:      document.StatusActive,
+	}, now); err != nil {
+		t.Fatalf("seed proj principle: %v", err)
+	}
+	return s, p, ws.ID
+}
+
+func TestBuildOrientation_ReturnsIntentAndPrinciples(t *testing.T) {
+	t.Parallel()
+	s, p, _ := newOrientationFixture(t)
+	bundle := s.buildOrientation(context.Background(), p)
+	if bundle.IntentBody != sampleProjectIntentBody {
+		t.Errorf("IntentBody = %q, want %q", bundle.IntentBody, sampleProjectIntentBody)
+	}
+	scopes := map[string]int{}
+	for _, pr := range bundle.Principles {
+		scopes[pr.Scope]++
+	}
+	if scopes["system"] != 1 {
+		t.Errorf("system principles = %d, want 1", scopes["system"])
+	}
+	if scopes["project"] != 1 {
+		t.Errorf("project principles = %d, want 1", scopes["project"])
+	}
+	for _, pr := range bundle.Principles {
+		if pr.Body == "" {
+			t.Errorf("principle %q has empty body", pr.Name)
+		}
+	}
+}
+
+func TestProjectSet_ReturnsOrientationBundle(t *testing.T) {
+	t.Parallel()
+	s, p, _ := newOrientationFixture(t)
+	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+
+	res, err := s.handleProjectSet(ctx, newCallToolReq("project_set", map[string]any{
+		"repo_url":   "git@github.com:owner/repo.git",
+		"session_id": "sess_xyz",
+	}))
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError: %s", firstText(res))
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(firstText(res)), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["project_id"] != p.ID {
+		t.Errorf("project_id = %v, want %s", body["project_id"], p.ID)
+	}
+	intent, _ := body["intent_body"].(string)
+	if !strings.Contains(intent, "Project intent test body") {
+		t.Errorf("intent_body missing seeded content: %q", intent)
+	}
+	principles, _ := body["principles"].([]any)
+	if len(principles) != 2 {
+		t.Errorf("principles len = %d, want 2 (1 system + 1 project)", len(principles))
+	}
+}
+
+func TestProjectSet_AutoRegistersSessionWhenNotPresent(t *testing.T) {
+	t.Parallel()
+	s, p, _ := newOrientationFixture(t)
+	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+
+	// No session pre-registered. project_set must create the row and
+	// stamp active_project_id on it (auto-bind).
+	if _, err := s.handleProjectSet(ctx, newCallToolReq("project_set", map[string]any{
+		"repo_url":   "https://github.com/owner/repo",
+		"session_id": "sess_fresh",
+	})); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	got, err := s.sessions.Get(ctx, "u_alice", "sess_fresh")
+	if err != nil {
+		t.Fatalf("session lookup: %v — auto-register should have created the row", err)
+	}
+	if got.ActiveProjectID != p.ID {
+		t.Errorf("active_project_id = %q, want %q", got.ActiveProjectID, p.ID)
+	}
+}
+
+func TestProjectContext_ReturnsBundleForBoundSession(t *testing.T) {
+	t.Parallel()
+	s, p, _ := newOrientationFixture(t)
+	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+
+	// Bind via project_set first.
+	if _, err := s.handleProjectSet(ctx, newCallToolReq("project_set", map[string]any{
+		"repo_url":   "https://github.com/owner/repo",
+		"session_id": "sess_bound",
+	})); err != nil {
+		t.Fatalf("project_set: %v", err)
+	}
+
+	// Now project_context() with no repo_url — just the session id.
+	res, err := s.handleProjectContext(ctx, newCallToolReq("project_context", map[string]any{
+		"session_id": "sess_bound",
+	}))
+	if err != nil {
+		t.Fatalf("project_context: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError: %s", firstText(res))
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(firstText(res)), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["project_id"] != p.ID {
+		t.Errorf("project_id = %v, want %s", body["project_id"], p.ID)
+	}
+	intent, _ := body["intent_body"].(string)
+	if !strings.Contains(intent, "Project intent test body") {
+		t.Errorf("intent_body missing")
+	}
+	principles, _ := body["principles"].([]any)
+	if len(principles) != 2 {
+		t.Errorf("principles len = %d, want 2", len(principles))
+	}
+}
+
+func TestProjectContext_NoBoundSessionReturnsError(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newOrientationFixture(t)
+	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	// Register the session but do NOT bind a project.
+	if _, err := s.sessions.Register(ctx, "u_alice", "sess_unbound", session.SourceSessionStart, time.Now().UTC()); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	res, err := s.handleProjectContext(ctx, newCallToolReq("project_context", map[string]any{
+		"session_id": "sess_unbound",
+	}))
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("expected IsError when no project bound; body=%s", firstText(res))
+	}
+	if body := firstText(res); !strings.Contains(body, "no_project_bound") {
+		t.Errorf("expected no_project_bound; got %q", body)
+	}
+}
+
+func TestStoryContext_IncludesOrientationBundle(t *testing.T) {
+	t.Parallel()
+	s, p, wsID := newOrientationFixture(t)
+	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	now := time.Now().UTC()
+
+	st, err := s.stories.Create(ctx, story.Story{
+		WorkspaceID:        wsID,
+		ProjectID:          p.ID,
+		Title:              "test-story",
+		Description:        "desc",
+		AcceptanceCriteria: "AC",
+		Category:           "feature",
+		Priority:           "high",
+		CreatedBy:          "u_alice",
+	}, now)
+	if err != nil {
+		t.Fatalf("story create: %v", err)
+	}
+	res, err := s.handleStoryContext(ctx, newCallToolReq("story_context", map[string]any{
+		"id": st.ID,
+	}))
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError: %s", firstText(res))
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(firstText(res)), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	intent, _ := body["intent_body"].(string)
+	if !strings.Contains(intent, "Project intent test body") {
+		t.Errorf("story_context.intent_body missing seeded content")
+	}
+	principles, _ := body["principles"].([]any)
+	if len(principles) < 1 {
+		t.Errorf("story_context.principles empty; want at least 1")
+	}
+}

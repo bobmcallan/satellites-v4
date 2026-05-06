@@ -311,16 +311,31 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		)
 		s.mcp.AddTool(deleteProjTool, s.handleProjectDelete)
 
-		// project_set — sty_4db7c3a3. The agent's first call when working
-		// in a local repo: takes the canonical git remote, resolves the
-		// existing project by git_remote, and stamps active_project_id on
-		// the session row. Idempotent — never creates a project.
+		// project_set — sty_4db7c3a3 + sty_31d51494 layer 2. The agent's
+		// first call after a user prompt fires when the prompt references
+		// substrate primitives (story, task, contract, agent) or asks
+		// about the project. Resolves the existing project by canonical
+		// git_remote, auto-registers the session row keyed by the
+		// Mcp-Session-Id header (no body arg required), stamps
+		// active_project_id, and returns the orientation bundle —
+		// project + intent_body + principles[] — in one roundtrip.
+		// Idempotent. Never creates a project.
 		setProjTool := mcpgo.NewTool("project_set",
-			mcpgo.WithDescription("Bind the caller's session to the project that owns the given git remote URL. Idempotent — resolves an existing project in the caller's workspace by canonical git_remote, stamps active_project_id on the session row, and returns {project_id, status: \"resolved\", mcp_url}. When no project matches, returns {status: \"no_project_for_remote\", repo_url_canonical: <normalised>} — the agent must call project_create explicitly. Subsequent project-scoped verbs may default to the bound project when project_id is omitted."),
-			mcpgo.WithString("repo_url", mcpgo.Required(), mcpgo.Description("Git remote URL — accepts ssh, https, or git:// forms. Normalised server-side via the same canonicaliser project_create uses.")),
-			mcpgo.WithString("session_id", mcpgo.Description("Optional caller session id. When set, project_set stamps active_project_id on the session row so subsequent verbs can default to the bound project.")),
+			mcpgo.WithDescription("Bootstrap call after a user prompt fires when the prompt references substrate primitives (story id, task id, contract name, agent name) or asks about the project. Binds the caller's session to the project that owns the given git remote URL. Auto-registers the session row keyed by the Mcp-Session-Id header — no explicit session_register required. Returns the orientation bundle: {project_id, status: \"resolved\", mcp_url, intent_body, principles[]}. When no project matches, returns {status: \"no_project_for_remote\", repo_url_canonical}. Subsequent project-scoped verbs may default to the bound project. Idempotent."),
+			mcpgo.WithString("repo_url", mcpgo.Required(), mcpgo.Description("Git remote URL — accepts ssh, https, or git:// forms. Normalised server-side via the same canonicaliser project_create uses. Typically `git remote get-url origin` from the working directory.")),
+			mcpgo.WithString("session_id", mcpgo.Description("Optional explicit session id. Streamable HTTP callers should let the Mcp-Session-Id header carry the id; this arg is for stdio/test callers that can't set the header.")),
 		)
 		s.mcp.AddTool(setProjTool, s.handleProjectSet)
+
+		// project_context — sty_31d51494 layer 2. No-arg refresh of the
+		// orientation bundle for sessions that have already been bound
+		// via project_set. Returns the same shape minus the bind-related
+		// fields. Use this for principle / intent refresh on subsequent
+		// turns without re-resolving the repo URL.
+		ctxProjTool := mcpgo.NewTool("project_context",
+			mcpgo.WithDescription("Return the orientation bundle for the session-bound project: {project_id, intent_body, principles[]}. No args — reads the project bound by an earlier project_set call (via the Mcp-Session-Id header). Returns a structured no_project_bound error when the session has no active project. Use for refreshing project intent + principles on later turns without re-resolving the repo URL."),
+		)
+		s.mcp.AddTool(ctxProjTool, s.handleProjectContext)
 	}
 
 	if s.ledger != nil {
@@ -1541,20 +1556,29 @@ func (s *Server) handleProjectSet(ctx context.Context, req mcpgo.CallToolRequest
 			Msg("mcp tool call")
 		return mcpgo.NewToolResultText(string(body)), nil
 	}
-	// Stamp active_project_id on the session row when the caller passed
-	// an explicit session_id. The session need not exist yet — failing
-	// silently here keeps the verb usable from non-registered contexts
-	// (e.g. boot scripts) while still wiring the binding when present.
-	if sessID := req.GetString("session_id", ""); sessID != "" && s.sessions != nil {
-		_, _ = s.sessions.SetActiveProject(ctx, caller.UserID, sessID, p.ID, time.Now().UTC())
+	// sty_31d51494 layer 2: auto-bind on the MCP protocol session id.
+	// resolveSessionID prefers the explicit body arg (test/stdio path)
+	// and falls back to the Mcp-Session-Id header that mcp-go's
+	// Streamable HTTP transport attaches to the request context.
+	// Register the session row if missing — first call creates it,
+	// subsequent calls refresh LastSeenAt — then stamp active_project_id.
+	// All silent on failure; the bind is best-effort, the orientation
+	// bundle still returns either way.
+	now := time.Now().UTC()
+	if sessID := resolveSessionID(ctx, req.GetString("session_id", "")); sessID != "" && s.sessions != nil {
+		_, _ = s.sessions.Register(ctx, caller.UserID, sessID, session.SourceSessionStart, now)
+		_, _ = s.sessions.SetActiveProject(ctx, caller.UserID, sessID, p.ID, now)
 	}
 	view := s.buildProjectView(ctx, p)
+	bundle := s.buildOrientation(ctx, p)
 	body, _ := json.Marshal(map[string]any{
 		"project_id":         p.ID,
 		"status":             "resolved",
 		"mcp_url":            view.MCPURL,
 		"mcp_config":         view.MCPConfig,
 		"repo_url_canonical": canonical,
+		"intent_body":        bundle.IntentBody,
+		"principles":         bundle.Principles,
 	})
 	s.logger.Info().
 		Str("method", "tools/call").
@@ -1564,6 +1588,53 @@ func (s *Server) handleProjectSet(ctx context.Context, req mcpgo.CallToolRequest
 		Str("repo_url_canonical", canonical).
 		Int64("duration_ms", time.Since(start).Milliseconds()).
 		Msg("mcp tool call")
+	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+// handleProjectContext returns the orientation bundle for the
+// session-bound project. sty_31d51494 layer 2 — the no-arg refresh
+// surface for the bootstrap bundle. Reads the active_project_id from
+// the caller's session row (keyed by the Mcp-Session-Id header by
+// default; body session_id arg accepted for stdio / test callers).
+// Returns a structured no_project_bound error when the session has
+// not bound a project via project_set.
+func (s *Server) handleProjectContext(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	caller, _ := UserFrom(ctx)
+	if caller.UserID == "" {
+		return mcpgo.NewToolResultError("no caller identity"), nil
+	}
+	if s.sessions == nil || s.projects == nil {
+		body, _ := json.Marshal(map[string]any{"error": "session_or_project_store_not_wired"})
+		return mcpgo.NewToolResultError(string(body)), nil
+	}
+	sessID := resolveSessionID(ctx, req.GetString("session_id", ""))
+	if sessID == "" {
+		body, _ := json.Marshal(map[string]any{
+			"error":   "session_id_required",
+			"message": "project_context needs a session id — supply via Mcp-Session-Id header or body session_id arg",
+		})
+		return mcpgo.NewToolResultError(string(body)), nil
+	}
+	sess, err := s.sessions.Get(ctx, caller.UserID, sessID)
+	if err != nil || sess.ActiveProjectID == "" {
+		body, _ := json.Marshal(map[string]any{
+			"error":   "no_project_bound",
+			"message": "no active project on this session — call project_set(repo_url) first",
+		})
+		return mcpgo.NewToolResultError(string(body)), nil
+	}
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	p, err := s.projects.GetByID(ctx, sess.ActiveProjectID, memberships)
+	if err != nil {
+		body, _ := json.Marshal(map[string]any{"error": "project_not_found"})
+		return mcpgo.NewToolResultError(string(body)), nil
+	}
+	bundle := s.buildOrientation(ctx, p)
+	body, _ := json.Marshal(map[string]any{
+		"project_id":  p.ID,
+		"intent_body": bundle.IntentBody,
+		"principles":  bundle.Principles,
+	})
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 

@@ -60,7 +60,7 @@ and runs:
 **Satellites contribution this phase:** the
 `default_agent_process` artifact, returned as the `instructions`
 field. Sourced from
-`config/seed/artifacts/default_agent_process.md`.
+`config/seed/system/artifacts/default_agent_process.md`.
 
 ### Phase 4 — Tool + skill registration
 
@@ -126,20 +126,40 @@ not infer from training.
 
 **Owner:** Satellites MCP (per call) + Claude (deciding which call to make).
 
-Model invokes verbs against the satellites MCP server. Each
-call returns a response payload; the model reads it as context
-for the next step. Today there is no single context-bundle
-verb, so a typical session stitches:
+Model invokes verbs against the satellites MCP server. The
+agent process artifact (Phase 3) directs the agent: when the
+prompt references substrate primitives, **`project_set(repo_url=<git remote get-url origin>)` is the first call**. It binds the
+session to the project, auto-registers the session row keyed by
+the `Mcp-Session-Id` header, and returns the orientation bundle
+in one roundtrip:
 
-- `project_set(repo_url)` or `project_list({})` — project
-  row(s).
-- `story_get` / `story_list` / `story_context` /
-  `task_context` (target — see "Target verb shape") — story or
-  task plus (sometimes) project plus recent ledger.
-- `agent_get(name)` + `principle_list(project_id)` +
-  `document_get(name="contract:…")` — each separately.
+```
+{ project_id, status: "resolved", mcp_url,
+  intent_body, principles[] }
+```
 
-Each is a separate roundtrip the model orchestrates.
+That single call replaces what used to be three separate fetches
+(project row + intent + principles). On later turns,
+`project_context()` returns the same bundle without
+re-resolving the repo URL — useful when intent or principles
+need a refresh.
+
+Beyond the bootstrap, role-, story-, and task-specific context
+is fetched on demand:
+
+- `story_context(id)` — story + project + recent ledger +
+  resolved agent_process artifact + category template, in one
+  roundtrip.
+- `task_get(id)` / `task_walk(story_id)` — task chain plus
+  prior verdicts.
+- `agent_get(name)` / `contract_get(name)` /
+  `principle_list(project_id)` — fetched only when the
+  orientation bundle alone doesn't carry enough context for
+  the work at hand.
+
+For prompts unrelated to substrate primitives ("what's in this
+file", a quick code question), the bootstrap is unnecessary —
+the artifact in the system context already orients the model.
 
 **Sessions — protocol vs registry.** Two layers are easy to
 conflate:
@@ -150,21 +170,15 @@ conflate:
   explicit step.
 - The **satellites session registry** is a substrate-level
   binding of user/agent identity to that protocol session.
-  Opt-in. `session_register({})` adds the binding;
-  `session_whoami({})` queries it.
+  Auto-attached by `project_set` (the bootstrap call) — no
+  separate `session_register` roundtrip needed for the typical
+  flow.
 
-Most verbs are project-scoped or take explicit IDs and run
-fine without a session-registry binding. `session_register` is
-**conditional** — called only when:
-
-- A verb returns the structured `session_not_registered` error
-  (the error names the recovery action).
-- The agent is about to do role-gated work (claim a task,
-  submit a plan, close a contract).
-
-A speculative `session_whoami({})` early in a session is
-common but generally unnecessary — a wasted roundtrip unless
-identity binding is actually required for the work.
+`session_register` and `session_whoami` exist for callers that
+skip the bootstrap (a worker that takes a `task_id` directly,
+or a stdio test harness that can't set the session header).
+The handshake's instructions don't direct the agent to call
+them speculatively.
 
 ### Phase 6.4 — Synthesise and act
 
@@ -195,9 +209,14 @@ Phase 6   first user prompt
 
 | Document | Phase | Seed source | How it arrives in the model |
 |---|---|---|---|
-| `default_agent_process` artifact | 3 | `config/seed/artifacts/default_agent_process.md` | Returned verbatim as the satellites MCP server's `instructions` field; surfaced as a `<system-reminder>` block, repeated every turn |
+| `default_agent_process` artifact | 3 | `config/seed/system/artifacts/default_agent_process.md` | Returned verbatim as the satellites MCP server's `instructions` field; surfaced as a `<system-reminder>` block, repeated every turn |
 
-That is the entire list. One markdown file.
+That is the entire startup payload. One markdown file. Project
+intent, active principles, and per-story/task context are not
+loaded at startup — they're fetched after Phase 6 fires. The
+first post-prompt call (`project_set` for substrate prompts)
+returns the orientation bundle that brings intent + principles
+into the model's working context.
 
 ## What satellites cannot influence at startup
 
@@ -215,16 +234,24 @@ That is the entire list. One markdown file.
   Phase 3 contribution).
 - The verbs (and their descriptions) the artifact directs
   callers to use after Phase 6 fires — `project_set`,
-  `story_context`, `task_context`, `agent_get`,
-  `principle_list`, `document_get`. Tool descriptions
-  registered in `internal/mcpserver/` are themselves
-  instruction prose read by the model on every turn — see
-  `sty_cd8b89c6` for the operator view onto that surface.
+  `project_context`, `story_context`, `story_get`, `task_get`,
+  `agent_get`, `contract_get`, `principle_list`. Tool
+  descriptions registered in `internal/mcpserver/` are
+  themselves instruction prose read by the model on every turn,
+  rendered into the portal's MCP verb map page for operator
+  inspection.
+- The orientation bundle's contents — `project_set` /
+  `project_context` return whatever scope=project artifact
+  named `project_intent` exists for the bound project, plus
+  every active scope=system + scope=project type=principle row
+  (filtered by workspace at the row layer). Editing the seed
+  files reshapes what every agent sees on Phase 6.3.
 
-Anything role-specific, project-specific, or task-specific must
-be fetched after the first prompt arrives. The startup blob is
-one size for all readers — orchestrator, dispatched subprocess,
-reviewer, ad-hoc operator query.
+Anything role-specific, project-specific, or task-specific
+beyond intent + principles must be fetched after the first
+prompt arrives. The startup blob is one size for all readers —
+orchestrator, dispatched subprocess, reviewer, ad-hoc operator
+query.
 
 ## Implication for design
 
@@ -240,18 +267,20 @@ Because the same blob serves every reader, it must be:
 ## Prompt examples
 
 How common operator prompts map onto the satellites verb
-catalogue (Phase 6.2's mapping work):
+catalogue (Phase 6.2's mapping work). For substrate prompts the
+bootstrap `project_set(repo_url)` typically runs first, then
+the prompt-specific verb:
 
-| Operator prompt | Identifier extracted | Verb |
+| Operator prompt | Identifier extracted | Verb after bootstrap |
 |---|---|---|
 | `implement sty_a03449d1` | story id `sty_a03449d1` | `story_context(id)` |
 | `run sty_cf8ff98b` | story id `sty_cf8ff98b` | `story_context(id)` |
-| `do task_b3a91e` | task id `task_b3a91e` | `task_context(id)` (target — `sty_38bec58f`) |
-| `what's in this repo` | (resolves repo url via `git remote get-url origin`) | `project_set(repo_url)` |
-| `list stories in this project` | project id (from session) | `story_list(project_id)` |
+| `do task_b3a91e` | task id `task_b3a91e` | `task_get(id)` |
+| `what's in this repo` | (resolves repo url via `git remote get-url origin`) | `project_set(repo_url)` returns intent + principles directly — no follow-up needed |
+| `list stories in this project` | project id (from bound session) | `story_list(project_id)` |
 | `show me contract:develop` | contract name `develop` | `contract_get(name)` |
 | `which agent reviews story_close work?` | agent name (looked up by capability) | `agent_get(name)` |
-| `which principles apply here` | project id (from session) | `principle_list(project_id)` |
+| `which principles apply here` | project id (from bound session) | The bootstrap bundle's `principles[]` covers it; `principle_list(project_id)` only if more detail is needed |
 
 The handshake doesn't carry a verb table — Claude already has
 the full catalogue from the MCP `tools/list` response, with
@@ -260,47 +289,23 @@ just orients the agent on what kinds of identifiers it might
 parse and what primitives those identifiers point at; the
 catalogue answers "which verb."
 
-## Target verb shape — what has to land
-
-Even though the handshake no longer carries a verb table, the
-epic's stories shape **the catalogue itself** — adding verbs
-that don't exist today and tightening the return payloads of
-ones that do. Each row below is the target shape and the story
-that lands it.
-
-| Verb / behaviour | Today | Closes via |
-|---|---|---|
-| `project_set(repo_url)` returns project + intent | Returns project only; no intent prose | `sty_31d51494` layer 2 |
-| `project_get(id)` returns project + intent + principles | Returns project only | Same |
-| `story_context(id)` includes project intent in the bundle | Returns story + project + ledger + template — no intent | Same |
-| `task_context(id)` exists | **Does not exist** | `sty_38bec58f` |
-| `agent_get` / `contract_get` / `principle_get` enforce type on read | Forwards to generic handler — no type filter | `sty_7cfe5e29` |
-| Project-scoped seed loader | System-only seeds today | `sty_8868eaf4` |
-
-Sequencing matters: seed the slim handshake only after the
-catalogue verbs it implicitly relies on (`task_context`,
-type-safe `_get`) have landed — otherwise prompts of the shapes
-in the table above resolve to the wrong verbs or silently
-mistype.
-
 ## Concrete example
 
-A trace of one operator prompt as it flows through the satellites
-MCP surface. Calls to other MCP servers in the session are out of
-scope and excluded — this walkthrough covers the satellites
-contribution only.
+A trace of one operator prompt as it flows through the
+satellites MCP surface. Calls to other MCP servers in the
+session are out of scope and excluded.
 
 | Step | Phase | Owner | Call / action |
 |---|---|---|---|
-| 1 | 6 | Operator | Typed: *"review existing stories. Is there one which removes the changelog…"* |
-| 2 | 6.1 | Claude | Parsed prompt — no identifiers, intent = "find story matching X" |
-| 3 | 6.3 | Satellites MCP | `session_whoami({})` → `session_not_registered` |
-| 4 | 6.3 | Satellites MCP | `project_list({})` — 4 projects returned |
-| 5 | 6.3 | Satellites MCP | `story_list(project_id=…)` — 643KB overflow, fell to file |
-| 6 | 6.3 | Satellites MCP | `story_get(id=sty_cf8ff98b)` — returned the candidate |
-| 7 | 6.4 | Claude | Synthesised + answered |
+| 1 | 6 | Operator | Typed: *"validate sty_14dfd05b"* |
+| 2 | 6.1 | Claude | Parsed prompt — story id `sty_14dfd05b` extracted |
+| 3 | 6.3 | Satellites MCP | `project_set(repo_url="git@github.com:bobmcallan/satellites.git")` → `{project_id, status:resolved, intent_body, principles[]}` — bootstrap done in one roundtrip, session auto-registered |
+| 4 | 6.3 | Satellites MCP | `story_context(id=sty_14dfd05b)` → story + project + recent ledger + agent_process + category template |
+| 5 | 6.4 | Claude | Synthesised + acted (verified ACs against on-disk code, reported result) |
 
-Of these, three (steps 3–5) are satellites context-stitching that
-the target shape (`story_context` with project intent +
-`task_context` for task work) would deliver in one or two
-roundtrips.
+Two roundtrips for a substrate-prompt — bootstrap (which
+carries intent + principles) and the prompt-specific bundle.
+The orientation bundle and `story_context` collapse the
+stitching into the substrate so the agent doesn't have to
+fetch project, intent, principles, story, ledger, and agent
+process as separate calls.

@@ -43,6 +43,24 @@ reviewer service grades the close against `story_reviewer`'s rubric.
 Read-only across the codebase, MCP read + write to the ledger and
 task_submit verbs. No file edits, no git operations.
 
+## Lifecycle (claim → work → evidence → close)
+
+Once the orchestrator dispatches this agent on the closing task:
+
+1. **Claim** — `task_claim(task_id)` to take ownership of the
+   `kind=work` story_close task.
+2. **Work** — `task_walk(story_id)` to read the chain; verify
+   every prior `kind=work` task closed with `outcome=success`;
+   pick the resolution code (`delivered`, `plan_only`,
+   `not_required`, `duplicate`, `superseded`, `failed:*`).
+3. **Evidence** — `ledger_append(...)` writing the closing-evidence
+   row tagged `task_id:<this_close_task>` carrying the resolution
+   summary.
+4. **Close** — `task_submit(kind=close, task_id, outcome=success,
+   evidence_ledger_ids=[…])`. The substrate publishes the paired
+   review; on accepted verdict the story status reconciler walks
+   the story to `done`.
+
 ## Limitations
 
 - Cannot bypass the close gate. If the reviewer returns rejected,

@@ -22,51 +22,54 @@ satellites server, the server returns an `instructions` block in
 its `initialize` response. The harness surfaces that block into
 the model's system context on every turn.
 
-**Source of the block:** `config/seed/artifacts/default_agent_process.md`
+**Source of the block:** `config/seed/system/artifacts/default_agent_process.md`
 (the seeded `default_agent_process` artifact). **seed.**
 
-Content carried into the session: the substrate fundamentals
-(story = unit of work, story = task chain, configuration over
-code, …), the **pre-flight rules** (read contracts before
-composing evidence + before composing the plan; reviewer
-rejection is operator authority), the dispatch loop description,
-and the routing rules.
+Content carried into the session: substrate identity
+(configuration-over-code, multi-agent orchestration), the five
+primitives (projects, stories, tasks, documents, ledger), the
+bootstrap directive (`project_set` is the first call when the
+prompt references substrate primitives), a fetch map naming the
+verbs callers use to get more context (`story_context`,
+`task_get`, `agent_get`, `contract_get`), and the operating
+principle (act on prose, write evidence, fetch rules don't
+infer them). ~30 lines total — universal to every reader
+(orchestrator + every dispatched role + ad-hoc operator query).
 
-> The session has the rules in context BEFORE any verb fires. Every
-> later call is in service of those rules — not a discovery of them.
+Orchestrator-specific content — pre-flight rules, dispatch
+loop, plan composition, routing rules — does **not** live in
+this artifact. It lives in `config/seed/system/agents/claude_orchestrator.md`,
+composed into the orchestrator session via `agent_get` plus the
+substrate's session-start agent profile inheritance. Reading an
+orchestrator concern in this walkthrough? Cite the orchestrator
+agent doc, not the agent_process artifact.
 
----
-
-## Step 1 — session bootstrap
-
-### 1a. `session_register({})`
-
-```json
-// request
-{}
-
-// response — runtime
-{
-  "session_id": "mcp-session-4b2b4406-…",
-  "user_id": "u_google:operator@example.com",
-  "registered_at": "2026-05-05T08:02:45Z",
-  "last_seen_at": "2026-05-05T08:02:45Z",
-  "resumed": false
-}
-```
-
-The server mints a UUIDv4 and returns it via the
-`Mcp-Session-Id` response header on the `initialize` call;
-spec-compliant clients echo it on every subsequent request. The
-body argument is an override path for stdio / test callers.
-
-**Response: runtime.** The session row is fresh database state.
+> The session has the substrate fundamentals in context BEFORE
+> any verb fires. Every later call is in service of those
+> fundamentals — not a discovery of them.
 
 ---
 
-## Step 2 — project context
+## Step 1 — bootstrap into a project
 
-### 2a. shell — `git remote get-url origin`
+The handshake's bootstrap directive: when the prompt references
+substrate primitives, `project_set(repo_url=<git remote get-url
+origin>)` is the first call.
+
+`project_set` does three things in one roundtrip:
+
+1. **Resolves** the git remote to a project row via
+   `repos.GetByRemote(workspace, canonical)` →
+   `repo.project_id` → `projects.GetByID(...)`. (The legacy
+   `projects.git_remote` column is gone — sty_14dfd05b.)
+2. **Registers the session** — auto-attaches the substrate
+   session row keyed by the `Mcp-Session-Id` header. No separate
+   `session_register({})` call needed; that verb exists for
+   stdio / test callers that can't set the header.
+3. **Returns the orientation bundle** — project row + intent
+   prose + active principles in one payload.
+
+### 1a. shell — `git remote get-url origin`
 
 ```
 git@github.com:bobmcallan/satellites.git
@@ -74,31 +77,40 @@ git@github.com:bobmcallan/satellites.git
 
 Not an MCP call.
 
-### 2b. `project_set({ repo_url })`
+### 1b. `project_set({ repo_url })`
 
 ```json
 // request
 { "repo_url": "git@github.com:bobmcallan/satellites.git" }
 
-// response — runtime
+// response — mixed: runtime + seed
 {
   "project_id": "proj_7a62aedb",
   "status": "resolved",
   "mcp_url": "https://satellites-pprod.fly.dev/mcp?project_id=proj_7a62aedb",
   "repo_url_canonical": "https://github.com/bobmcallan/satellites",
-  "intent_body": "# what satellites is …",
-  "principles": [{"name": "…", "scope": "system", "body": "…"}]
+  "intent_body": "# Satellites — project intent …",
+  "principles": [
+    {"name": "Pipeline integrity", "scope": "project", "body": "…"},
+    {"name": "Quality over speed", "scope": "project", "body": "…"},
+    {"name": "Evidence must be verifiable", "scope": "project", "body": "…"}
+  ]
 }
 ```
 
-The remote→project binding lives on the per-project repo row; the
-lookup walks `repos.GetByRemote(workspace, canonical)` →
-`repo.project_id` → `projects.GetByID(...)`. sty_14dfd05b dropped the
-legacy `projects.git_remote` column.
+`intent_body` carries the body of the `project_intent` artifact
+seeded under `config/seed/<workspace_id>/<project_id>/artifacts/`
+(per the path layout from sty_87e203c1); `principles[]` is every
+active type=principle row scoped to the project plus any active
+scope=system principles.
 
-**Response: runtime.** The project row keys the rest of the
-session; subsequent project-scoped verbs default to this id when
-omitted.
+**Response: mixed seed + runtime.** Bodies are seed prose; the
+membership / scope filtering is computed at request time. The
+project row keys the rest of the session; subsequent
+project-scoped verbs default to this id when omitted. The
+bundle's intent + principles are the same content
+`project_context()` returns on later turns when the agent needs
+a refresh without re-resolving the repo URL.
 
 If the repo isn't registered the response is
 `{"status":"no_project_for_remote", "repo_url_canonical": "…"}` —
@@ -107,12 +119,13 @@ the orchestrator must ask the operator before calling
 
 ---
 
-## Step 3 — operator types `implement sty_a03449d1`
+## Step 2 — operator types `implement sty_a03449d1`
 
 The first MCP call after this prompt is **always**
-`story_get` (or `story_context` for a single-roundtrip variant).
+`story_context` (single-roundtrip orientation), or `story_get`
+when the agent only needs the row and not the full bundle.
 
-### 3a. `story_context({ id })`
+### 2a. `story_context({ id })`
 
 Returns story row + project row + recent ledger evidence + the
 resolved agent_process instruction markdown + category template.
@@ -135,9 +148,9 @@ resolved agent_process instruction markdown + category template.
     "fields": {}                              // template-driven, runtime values
   },
   "project": { "id": "proj_7a62aedb", … },     // runtime
-  "agent_process":                              // seed: config/seed/artifacts/default_agent_process.md
-    "# satellites · agent process\n\n## fundamentals\n\n…",
-  "template": {                                 // seed: config/seed/story_templates/bug.md
+  "agent_process":                              // seed: config/seed/system/artifacts/default_agent_process.md
+    "# satellites · agent process\n\n## Primitives\n\n## Bootstrap\n\n…",
+  "template": {                                 // seed: config/seed/system/story_templates/bug.md
     "category": "bug",
     "fields": [
       { "name": "repro",    "type": "text", "required": true,  … },
@@ -155,11 +168,11 @@ resolved agent_process instruction markdown + category template.
 
 **`story.*` and `project.*` are runtime.** **`agent_process`
 is seed** (the `default_agent_process` artifact body). **`template`
-is seed** (e.g. `config/seed/story_templates/bug.md` — the body
+is seed** (e.g. `config/seed/system/story_templates/bug.md` — the body
 shipped with the substrate; the row's structured payload is
 loaded from disk on boot).
 
-### 3b. `task_walk({ story_id })`
+### 2b. `task_walk({ story_id })`
 
 ```json
 // request
@@ -179,7 +192,7 @@ session is the orchestrator and owns the plan composition.
 
 ---
 
-## Step 4 — read contracts (pre-flight Rule 2)
+## Step 3 — read contracts (pre-flight Rule 2)
 
 > Before `task_submit(kind=plan)`, the orchestrator reads each
 > contract document referenced by the planned actions, so the plan
@@ -189,13 +202,13 @@ The orchestrator typically loads the three lifecycle floors
 (plan / develop / story_close) plus any extras a story's shape
 calls for.
 
-### 4a. `document_get({ name: "contract:plan" })`
+### 3a. `document_get({ name: "contract:plan" })`
 
 ```json
 // request
 { "name": "contract:plan" }
 
-// response — seed: config/seed/contracts/plan.md
+// response — seed: config/seed/system/contracts/plan.md
 {
   "id":   "doc_…",
   "type": "contract",
@@ -215,19 +228,19 @@ calls for.
 }
 ```
 
-**Response: seed** — `config/seed/contracts/plan.md`.
+**Response: seed** — `config/seed/system/contracts/plan.md`.
 
-### 4b. `document_get({ name: "contract:develop" })`
+### 3b. `document_get({ name: "contract:develop" })`
 
-Returns `config/seed/contracts/develop.md`. **seed.**
+Returns `config/seed/system/contracts/develop.md`. **seed.**
 
 The body's `evidence_required` block is the develop contract
 rubric. Read here so the **plan** lays out an evidence model the
 develop close will satisfy.
 
-### 4c. `document_get({ name: "contract:story_close" })`
+### 3c. `document_get({ name: "contract:story_close" })`
 
-Returns `config/seed/contracts/story_close.md`. **seed.**
+Returns `config/seed/system/contracts/story_close.md`. **seed.**
 
 Required because every plan must end in `contract:story_close`
 per `pr_mandate_reviewer_enforced`. The story_reviewer rejects
@@ -235,7 +248,7 @@ plans that omit this floor.
 
 ---
 
-## Step 5 — read principles (constraints, not options)
+## Step 4 — read principles (constraints, not options)
 
 ### `principle_list({ project_id, active_only: true })`
 
@@ -245,7 +258,7 @@ plans that omit this floor.
 
 // response — array of mixed rows
 [
-  {                                              // body = seed: config/seed/principles/pr_evidence.md
+  {                                              // body = seed: config/seed/wksp_5b3257d1/proj_7a62aedb/principles/pr_evidence.md
     "id":     "pr_evidence",
     "type":   "principle",
     "name":   "pr_evidence",
@@ -276,23 +289,23 @@ plans that omit this floor.
 ]
 ```
 
-**Each row's `body` is seed** (`config/seed/principles/<name>.md`).
+**Each row's `body` is seed** (`config/seed/wksp_5b3257d1/proj_7a62aedb/principles/<name>.md`).
 The wrapper (id, status, updated_at) is runtime — operators can
 deactivate a principle without re-seeding.
 
 ---
 
-## Step 6 — read agent capability + reviewer rubrics
+## Step 5 — read agent capability + reviewer rubrics
 
 The plan submission passes `agent_id` for each task, and the
 substrate validates capability via the agent's `delivers:` /
 `reviews:` lists at `task_submit` time. To pick the right ids
 the orchestrator reads the agent catalog.
 
-### 6a. `agent_get({ name: "developer_agent" })` (or `agent_list`)
+### 5a. `agent_get({ name: "developer_agent" })` (or `agent_list`)
 
 ```json
-// response — seed: config/seed/agents/developer_agent.md
+// response — seed: config/seed/system/agents/developer_agent.md
 {
   "id":   "agent_…",
   "type": "agent",
@@ -307,31 +320,31 @@ the orchestrator reads the agent catalog.
 }
 ```
 
-**Response: seed** — `config/seed/agents/developer_agent.md`.
+**Response: seed** — `config/seed/system/agents/developer_agent.md`.
 
 The `delivers:` list confirms `developer_agent` is the right
 `agent_id` for both `contract:plan` and `contract:develop` work
 tasks.
 
-### 6b. `agent_get({ name: "story_reviewer" })`
+### 5b. `agent_get({ name: "story_reviewer" })`
 
-Returns `config/seed/agents/story_reviewer.md`. **seed.**
+Returns `config/seed/system/agents/story_reviewer.md`. **seed.**
 
 The body IS the reviewer rubric the autonomous reviewer service
 runs against the plan / story_close close evidence. Reading it
 before composing the plan tells the orchestrator what shape of
 evidence will be accepted.
 
-### 6c. `agent_get({ name: "story_close_agent" })`
+### 5c. `agent_get({ name: "story_close_agent" })`
 
-Returns `config/seed/agents/story_close_agent.md`. **seed.**
+Returns `config/seed/system/agents/story_close_agent.md`. **seed.**
 
 `delivers: ["contract:story_close"]` — this is the agent for
 the closing task pair.
 
 ---
 
-## Step 7 — submit the plan
+## Step 6 — submit the plan
 
 The orchestrator now has everything: the story AC, the contract
 rubrics, the active principles, the agent capability map, and
@@ -391,7 +404,7 @@ two evidence rows, and close the plan task.
 
 ---
 
-## Step 8 — claim the plan task
+## Step 7 — claim the plan task
 
 ### `task_claim({ task_id })`
 
@@ -420,13 +433,13 @@ two evidence rows, and close the plan task.
 
 ---
 
-## Step 9 — write plan-task evidence (two ledger rows)
+## Step 8 — write plan-task evidence (two ledger rows)
 
 The plan contract's `evidence_required` (read in step 4a) lists
 two artifacts: `plan.md` and `review-criteria.md`, both ledger
 rows tagged `task_id:<plan_task>`, `kind:evidence`.
 
-### 9a. `ledger_append({ … plan.md … })`
+### 8a. `ledger_append({ … plan.md … })`
 
 ```json
 // request
@@ -456,7 +469,7 @@ rows tagged `task_id:<plan_task>`, `kind:evidence`.
 **Response: runtime.** The row is appended; the substrate emits
 a `ledger.created` event the portal subscribes to.
 
-### 9b. `ledger_append({ … review-criteria.md … })`
+### 8b. `ledger_append({ … review-criteria.md … })`
 
 Same shape, different artifact:
 
@@ -476,7 +489,7 @@ the plan close.
 
 ---
 
-## Step 10 — close the plan task
+## Step 9 — close the plan task
 
 ### `task_submit({ kind: "close", task_id, outcome, evidence_ledger_ids })`
 
@@ -538,21 +551,21 @@ walkthrough is out of scope for this doc.
 
 | Step | Verb | Source |
 |---|---|---|
-| 0 | MCP `instructions` block (handshake) | **seed** — `config/seed/artifacts/default_agent_process.md` |
+| 0 | MCP `instructions` block (handshake) | **seed** — `config/seed/system/artifacts/default_agent_process.md` |
 | 1a | `session_register` | **runtime** — session row |
 | 2b | `project_set` | **runtime** — project row |
 | 3a | `story_context` — `story` + `project` | **runtime** — story / project rows |
-| 3a | `story_context` — `agent_process` | **seed** — `config/seed/artifacts/default_agent_process.md` |
-| 3a | `story_context` — `template` | **seed** — `config/seed/story_templates/<category>.md` |
+| 3a | `story_context` — `agent_process` | **seed** — `config/seed/system/artifacts/default_agent_process.md` |
+| 3a | `story_context` — `template` | **seed** — `config/seed/system/story_templates/<category>.md` |
 | 3b | `task_walk` | **runtime** — task rows |
-| 4a | `document_get(contract:plan)` | **seed** — `config/seed/contracts/plan.md` |
-| 4b | `document_get(contract:develop)` | **seed** — `config/seed/contracts/develop.md` |
-| 4c | `document_get(contract:story_close)` | **seed** — `config/seed/contracts/story_close.md` |
-| 5 | `principle_list` row bodies | **seed** — `config/seed/principles/<name>.md` |
+| 4a | `document_get(contract:plan)` | **seed** — `config/seed/system/contracts/plan.md` |
+| 4b | `document_get(contract:develop)` | **seed** — `config/seed/system/contracts/develop.md` |
+| 4c | `document_get(contract:story_close)` | **seed** — `config/seed/system/contracts/story_close.md` |
+| 5 | `principle_list` row bodies | **seed** — `config/seed/wksp_5b3257d1/proj_7a62aedb/principles/<name>.md` |
 | 5 | `principle_list` row status / wrapper | **runtime** — principle metadata |
-| 6a | `agent_get(developer_agent)` | **seed** — `config/seed/agents/developer_agent.md` |
-| 6b | `agent_get(story_reviewer)` | **seed** — `config/seed/agents/story_reviewer.md` |
-| 6c | `agent_get(story_close_agent)` | **seed** — `config/seed/agents/story_close_agent.md` |
+| 6a | `agent_get(developer_agent)` | **seed** — `config/seed/system/agents/developer_agent.md` |
+| 6b | `agent_get(story_reviewer)` | **seed** — `config/seed/system/agents/story_reviewer.md` |
+| 6c | `agent_get(story_close_agent)` | **seed** — `config/seed/system/agents/story_close_agent.md` |
 | 7 | `task_submit(kind=plan)` | **runtime** — writes ledger row + task rows |
 | 8 | `task_claim` | **runtime** — task row update |
 | 9a/b | `ledger_append` | **runtime** — ledger row |

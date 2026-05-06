@@ -72,6 +72,24 @@ needs. Capability is declared via the `delivers:` frontmatter list
 task-creation time so the orchestrator can supply this agent's id
 on either kind=work task without a separate alias table.
 
+## Lifecycle (claim → work → evidence → close)
+
+Once the orchestrator dispatches this agent on a task:
+
+1. **Claim** — `task_claim(task_id)` to take ownership.
+2. **Work** — for plan: read story + ledger + agent + contract,
+   author `plan.md` + `review-criteria.md`, submit ordered task list
+   via `task_submit(kind=plan, tasks=[…])`. For develop: read the
+   accepted plan, edit + build + test + vet + commit, bump
+   `.version` exactly once.
+3. **Evidence** — `ledger_append(...)` for every artefact produced
+   (plan markdown, review criteria, commit SHA, test output). The
+   reviewer reads these against the contract's rubric.
+4. **Close** — `task_submit(kind=close, task_id, outcome,
+   evidence_ledger_ids=[…])`. The substrate publishes the paired
+   review task automatically; do not push, merge, or close the
+   story.
+
 ## Out of scope
 
 - `git push` — that belongs to the **releaser** role.

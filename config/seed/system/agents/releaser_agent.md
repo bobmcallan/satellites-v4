@@ -53,6 +53,23 @@ phases need. Read-only access across the codebase plus the MCP
 ledger surface for evidence; no edit/write of source files (those
 belong to the **developer** role).
 
+## Lifecycle (claim → work → evidence → close)
+
+Once the orchestrator dispatches this agent on a task:
+
+1. **Claim** — `task_claim(task_id)` to take ownership.
+2. **Work** — for push: confirm the develop commit is present, run
+   `git push` (non-force) on the current branch's upstream. For
+   merge_to_main: fast-forward merge into local `main`; reject any
+   non-ff resolution. Never re-bump `.version` — develop is the
+   single writer.
+3. **Evidence** — `ledger_append(...)` carrying commit SHA + remote
+   confirmation (push) or merge target SHA (merge_to_main).
+4. **Close** — `task_submit(kind=close, task_id, outcome,
+   evidence_ledger_ids=[…])`. The substrate publishes the paired
+   review automatically. If the develop commit is missing, stop
+   and report — do not improvise a fix.
+
 ## Out of scope
 
 - File edits, tests, builds — those belong to the **developer** role.

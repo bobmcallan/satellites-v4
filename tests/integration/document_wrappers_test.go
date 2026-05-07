@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,6 +143,24 @@ func TestDocumentWrappers_Registered_AndPrincipleHappyPath(t *testing.T) {
 		m, _ := row.(map[string]any)
 		if m["type"] != "principle" {
 			t.Errorf("principle_list returned non-principle row: %+v", m)
+		}
+	}
+
+	// sty_690b1653: the system-tier lifecycle contracts (plan,
+	// story_close) must be reachable by name via contract_get and each
+	// must declare a `## Review policy` heading. The api-key caller has
+	// no wksp_5b3257d1 membership, so workspace-tier contracts (develop,
+	// push, merge_to_main, review) fall through to the system tier and
+	// return ErrNotFound on this surface — their loader-side coverage
+	// lives in TestRunWorkspace_RealSeedShipsFourLifecycleContracts.
+	for _, name := range []string{"plan", "story_close"} {
+		got := callTool(t, ctx, mcpURL, "key_wrap", "contract_get", map[string]any{"name": name})
+		if scope, _ := got["scope"].(string); scope != "system" {
+			t.Errorf("contract_get(name=%q) scope=%q, want system", name, scope)
+		}
+		body, _ := got["body"].(string)
+		if !strings.Contains(body, "## Review policy") {
+			t.Errorf("contract_get(name=%q) body missing ## Review policy heading; body=%q", name, body)
 		}
 	}
 }

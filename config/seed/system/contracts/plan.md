@@ -1,8 +1,6 @@
 ---
 name: plan
 category: plan
-delivers_by: developer_agent
-reviewed_by: story_reviewer
 evidence_required: |
   Two ledger artifacts recorded on the plan task (tagged
   task_id:<plan_task>):
@@ -10,9 +8,10 @@ evidence_required: |
   - review-criteria.md  (per-AC verify / evidence / pass-fail boundary)
 
   Plus an ordered downstream task list authored by the plan agent
-  covering each contract the story will execute, every kind=work
-  paired with its kind=review sibling. The plan task itself is the
-  first work entry; its review sibling is the second.
+  covering each contract the story will execute. Judgment-shape
+  contracts (develop, story_close) carry a kind=review sibling on
+  the chain; execution-shape contracts (push, merge_to_main) do
+  not. plan and review are base cases (no recursion).
 tags: [v4, lifecycle, system]
 ---
 # Plan Contract
@@ -35,16 +34,23 @@ readiness assessment.
   before the implementing agent begins so the criteria are
   independent of the implementing agent's choices. Same tagging.
 - **Task list** — the plan agent authors the ordered downstream
-  task list, every `kind=work` paired with its `kind=review`
-  sibling. The substrate validates structure (plan first, every
-  work has a review, agents match capability) and rejects on
-  violation.
+  task list. Judgment-shape contracts (develop, story_close) carry
+  a `kind=review` sibling on the chain; execution-shape contracts
+  (push, merge_to_main) do not. plan and review are base cases
+  (no recursion).
 
 ## How
 
 Read-only investigation plus ledger writes plus the task-list
 authoring call. The plan agent inspects the codebase and reasons
 about the change shape; it never edits a file or runs a build.
+
+## Review policy
+
+Plan has no reviewer dispatch. The plan agent's output (plan.md +
+review-criteria.md) is the review yardstick for every downstream
+contract; meta-review of the plan happens implicitly when the
+develop reviewer cites plan-induced gaps in its verdict.
 
 ## Limitations
 

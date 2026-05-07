@@ -22,6 +22,23 @@ a structural drift the contract refuses to paper over.
 Read-only inspection + `git merge --ff-only`. No commit
 authoring; the merge is an updated ref pointer, not new history.
 
+## Pre-merge gate
+
+Before running the merge, call `task_walk(story_id=<story>)` and
+verify the chain shape:
+
+- (a) the develop task whose branch is being merged closed with
+  `outcome=success`;
+- (b) every `kind=review` successor of that develop task closed;
+- (c) no open `kind=work` task on the chain has
+  `prior_task_id=<develop_task_id>` (no in-flight retry develop).
+
+On any of these failing, the contract aborts and the operator
+reconciles before re-attempting. The substrate verb is
+`task_walk(story_id)`; no new helper is required — the chain
+shape is already present in the returned `tasks[]` and
+`action_summary`.
+
 ## Evidence required
 
 - The source ref being merged (branch name or SHA).
@@ -29,6 +46,16 @@ authoring; the merge is an updated ref pointer, not new history.
 - The post-merge SHA of local main.
 - `git status` clean after the merge.
 - Explicit confirmation that the merge resolved fast-forward.
+- Chain-shape attestation: a ledger row capturing the
+  `task_walk(story_id)` excerpt with `review_total`,
+  `review_open`, and the per-task `prior_task_id` / `status` rows
+  for the develop task and any successors.
+
+## Review policy
+
+Merge is execution-shape. No reviewer is dispatched. The
+chain-shape gate IS the structural integrity check; reviewer
+judgment was applied earlier in the chain.
 
 ## Limitations
 

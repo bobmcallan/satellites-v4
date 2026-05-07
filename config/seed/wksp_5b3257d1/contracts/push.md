@@ -31,6 +31,12 @@ amends, no new commits.
 - Confirmation that no force, branch deletion, or unrelated tag
   push occurred.
 
+## Review policy
+
+Push is execution-shape. No reviewer is dispatched. The remote's
+accept/reject (non-fast-forward, hook failure, refusal) is the
+only judgment that runs.
+
 ## Limitations
 
 - No force push under any circumstance.

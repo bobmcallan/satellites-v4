@@ -1,10 +1,10 @@
 // Package mcpserver — task_update MCP verb (sty_a427368d).
 //
 // task_update mutates a task's lifecycle state. The first supported
-// transition is status=closed: closes the task, optionally records
-// evidence ledger ids, and publishes the paired planned-review sibling
-// (when one exists, e.g. minted at task_add time for an agent that
-// declares requires_review=true).
+// transition is status=closed: closes the target task and optionally
+// records evidence ledger ids. Closure mutates exactly the target row;
+// any successor task (review, retry) is authored by the reviewer's
+// contract prose via task_add.
 //
 // task_update replaces the close path on the retired task_submit
 // (kind=close) verb. Future updates (priority change, agent
@@ -55,8 +55,9 @@ func (s *Server) handleTaskUpdate(ctx context.Context, req mcpgo.CallToolRequest
 	}
 }
 
-// taskUpdateClose closes a task, optionally tagging evidence rows, and
-// publishes the paired planned-review sibling when one exists.
+// taskUpdateClose closes a task and optionally tags evidence rows.
+// Closure mutates exactly the target row; no other task is published
+// or rewritten as a side effect.
 func (s *Server) taskUpdateClose(ctx context.Context, req mcpgo.CallToolRequest, current task.Task, caller CallerIdentity, memberships []string, start time.Time) (*mcpgo.CallToolResult, error) {
 	outcome := req.GetString("outcome", task.OutcomeSuccess)
 	if outcome != task.OutcomeSuccess && outcome != task.OutcomeFailure {
@@ -72,23 +73,6 @@ func (s *Server) taskUpdateClose(ctx context.Context, req mcpgo.CallToolRequest,
 		return mcpgo.NewToolResultError(fmt.Sprintf("task close: %v", err)), nil
 	}
 
-	publishedReviewID := ""
-	if current.Kind == task.KindWork {
-		sibling := s.findPlannedReviewSibling(ctx, current, memberships)
-		if sibling != "" {
-			pub, perr := s.tasks.Publish(ctx, sibling, now, memberships)
-			if perr == nil {
-				publishedReviewID = pub.ID
-			} else {
-				s.logger.Warn().
-					Str("task_id", current.ID).
-					Str("sibling_id", sibling).
-					Err(perr).
-					Msg("task_update close: sibling review publish failed")
-			}
-		}
-	}
-
 	rawEvidence := req.GetString("evidence_ledger_ids", "")
 	evidenceIDs := parseStringArray(rawEvidence)
 
@@ -96,7 +80,6 @@ func (s *Server) taskUpdateClose(ctx context.Context, req mcpgo.CallToolRequest,
 		"task_id":             closed.ID,
 		"status":              closed.Status,
 		"outcome":             closed.Outcome,
-		"published_review_id": publishedReviewID,
 		"evidence_ledger_ids": evidenceIDs,
 	})
 	s.logger.Info().
@@ -105,32 +88,10 @@ func (s *Server) taskUpdateClose(ctx context.Context, req mcpgo.CallToolRequest,
 		Str("status", task.StatusClosed).
 		Str("task_id", current.ID).
 		Str("outcome", outcome).
-		Str("published_review_id", publishedReviewID).
 		Int64("duration_ms", time.Since(start).Milliseconds()).
 		Msg("mcp tool call")
 	_ = caller
 	return mcpgo.NewToolResultText(string(body)), nil
-}
-
-// findPlannedReviewSibling returns the task id of the planned review
-// task whose ParentTaskID is `parent.ID`. task_add stamps that linkage
-// when the agent doc declares requires_review=true. Empty when no
-// matching planned review exists.
-func (s *Server) findPlannedReviewSibling(ctx context.Context, parent task.Task, memberships []string) string {
-	siblings, err := s.tasks.List(ctx, task.ListOptions{
-		StoryID: parent.StoryID,
-		Kind:    task.KindReview,
-		Status:  task.StatusPlanned,
-	}, memberships)
-	if err != nil {
-		return ""
-	}
-	for _, sib := range siblings {
-		if sib.ParentTaskID == parent.ID {
-			return sib.ID
-		}
-	}
-	return ""
 }
 
 // parseStringArray decodes a JSON array argument as a string slice.

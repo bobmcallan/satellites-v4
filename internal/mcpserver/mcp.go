@@ -563,12 +563,11 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		if s.sessions != nil {
 			// task_add (sty_a427368d): mint one task at status=published
 			// for the given agent. Auto-mints a thin ad-hoc story when
-			// story_id is omitted. When the agent doc declares
-			// requires_review=true, mints a paired review task at
-			// status=planned alongside; the review publishes when the
-			// work task closes via task_update(status=closed).
+			// story_id is omitted. Mints exactly one task — review
+			// pairing, when a contract requires it, is authored by the
+			// reviewer's contract prose via task_add(prior_task_id=…).
 			taskAddTool := mcpgo.NewTool("task_add",
-				mcpgo.WithDescription("Mint one task at status=published for the given agent. When story_id is omitted, auto-mints a thin ad-hoc story so every task is anchored to a story. When the agent doc declares requires_review=true, mints a paired review task at status=planned alongside the work task; the review publishes when the work task closes via task_update(status=closed). Capability check: when action is shaped contract:<name>, the agent's delivers (kind=work) or reviews (kind=review) list must contain it. Returns {task_id, story_id, story_minted, review_task_id?, status, agent_id}."),
+				mcpgo.WithDescription("Mint one task at status=published for the given agent. When story_id is omitted, auto-mints a thin ad-hoc story so every task is anchored to a story. Mints exactly one task — review pairing, when a contract requires it, is authored by the reviewer's contract prose via task_add(prior_task_id=…). Capability check: when action is shaped contract:<name>, the agent's delivers (kind=work) or reviews (kind=review) list must contain it. Returns {task_id, story_id, story_minted, status, agent_id}."),
 				mcpgo.WithString("agent_id", mcpgo.Required(), mcpgo.Description("Document id of the agent that should execute this task.")),
 				mcpgo.WithString("prompt", mcpgo.Required(), mcpgo.Description("The task body. Becomes the task's description. The dispatched agent reads this as its primary instruction.")),
 				mcpgo.WithString("story_id", mcpgo.Description("Optional owning story id. When omitted, the substrate auto-mints a thin ad-hoc story (status=backlog, single AC: 'see task body').")),
@@ -582,7 +581,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			// Today: status=closed (the agent's close path). Future
 			// updates (priority change, agent reassignment) join here.
 			taskUpdateTool := mcpgo.NewTool("task_update",
-				mcpgo.WithDescription("Mutate a task's lifecycle state. Today the only supported transition is status=closed: closes the task with outcome=success|failure, optionally tags evidence ledger rows, and publishes the paired planned-review sibling when one exists. Validators reject task_not_found, task_already_terminal, invalid_outcome."),
+				mcpgo.WithDescription("Mutate a task's lifecycle state. Today the only supported transition is status=closed: closes the target task with outcome=success|failure and optionally tags evidence ledger rows. Closure mutates exactly the target row; any successor task (review, retry) is authored by the reviewer's contract prose via task_add. Validators reject task_not_found, task_already_terminal, invalid_outcome."),
 				mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Task id to update.")),
 				mcpgo.WithString("status", mcpgo.Required(), mcpgo.Description("Target status. Today: closed.")),
 				mcpgo.WithString("outcome", mcpgo.Description("success (default) | failure. Used when status=closed.")),
@@ -693,7 +692,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("kind", mcpgo.Description("Optional task kind discriminator. Today: \"review\" (consumed by the embedded reviewer service) vs \"work\" (everything else).")),
 			mcpgo.WithString("agent_id", mcpgo.Description("Document id of the agent that should execute this task. Stamped on the task row; used to authorise claim and to route the conversation. Inherited from parent_task_id when omitted.")),
 			mcpgo.WithString("parent_task_id", mcpgo.Description("Anchors this task to the conversation thread it extends — typically the implement task whose close emitted this successor. The substrate inherits project_id / agent_id from the parent when those args are omitted.")),
-			mcpgo.WithString("prior_task_id", mcpgo.Description("Links a fresh implement task to the prior implement task it succeeds in the rejection-append loop. Distinct from parent_task_id (the conversation anchor): prior_task_id is the same-slot retry pointer.")),
+			mcpgo.WithString("prior_task_id", mcpgo.Description("Links a fresh implement task to the prior implement task it succeeds in the same-slot retry chain authored by the reviewer's contract prose. Distinct from parent_task_id (the conversation anchor): prior_task_id is the same-slot retry pointer.")),
 			mcpgo.WithString("priority", mcpgo.Description("critical | high | medium (default) | low")),
 			mcpgo.WithString("trigger", mcpgo.Description("Free-form JSON trigger payload.")),
 			mcpgo.WithString("expected_duration", mcpgo.Description("Optional Go duration string (e.g. \"30s\") used by claim-expiry watchdog.")),

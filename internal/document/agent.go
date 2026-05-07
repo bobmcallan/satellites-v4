@@ -44,13 +44,6 @@ type AgentSettings struct {
 	// previously consumed this field; routing is now orchestrator-side).
 	// Empty list means "this agent doesn't do reviews."
 	Reviews []string `json:"reviews,omitempty"`
-
-	// RequiresReview (sty_a427368d): when true, task_add mints a paired
-	// review task (kind=review, status=planned) alongside the work task
-	// it creates for this agent. The review is published when the work
-	// task closes via task_update(status=closed). When false, task_add
-	// produces a single work task with no review pairing.
-	RequiresReview bool `json:"requires_review,omitempty"`
 }
 
 // CanDeliver reports whether the agent's Delivers list contains the

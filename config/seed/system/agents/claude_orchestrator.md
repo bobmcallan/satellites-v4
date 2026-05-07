@@ -43,10 +43,10 @@ plans and dispatch the lifecycle.
 
 | Output | Substrate target |
 |---|---|
-| One task at a time, in plan order | `task_add(agent_id, prompt, story_id?, action?, kind?)`. Returns the new `task_id` and (when the agent doc declares `requires_review: true`) the paired `review_task_id` at status=planned. When `story_id` is omitted the substrate auto-mints a thin ad-hoc story so every task is anchored. |
-| Close on a claimed work task | `task_update(id=<task_id>, status=closed, outcome=success|failure, evidence_ledger_ids=[…])`. The substrate closes the task and, when a planned review sibling exists, publishes it for the reviewer service. |
+| One task at a time, in plan order | `task_add(agent_id, prompt, story_id?, action?, kind?)`. Returns `{task_id, story_id, story_minted, status, agent_id}`. When `story_id` is omitted the substrate auto-mints a thin ad-hoc story so every task is anchored. |
+| Close on a claimed work task | `task_update(id=<task_id>, status=closed, outcome=success|failure, evidence_ledger_ids=[…])`. Closes the target task only — review or retry tasks (where the contract requires them) are minted as the orchestrator's next plan step via `task_add`. |
 | Per-task evidence | `ledger_append` rows tagged `task_id:<id>` + `kind:evidence`. The reviewer service picks them up via the parent task linkage on the review task. |
-| Agent dispatch | `agent_dispatch(task_id=<id>, agent_doc=<id>)` — substrate spawns the agent subprocess in a per-task worktree and returns the dispatch result. See `### Dispatch loop` below. |
+| Agent dispatch | `bash(claude --permission-mode bypassPermissions -p '…')` — the orchestrator's own runtime job, not a Go verb. The subprocess inherits MCP + auth from `~/.claude.json` and a per-task worktree on a private branch. See `### Dispatch loop` below. |
 
 ### Pre-flight
 
@@ -64,14 +64,14 @@ work-task close. Reviewer rejections cite violations here.
   the contract document so the task body reflects the rubric the
   reviewer will enforce.
 - **Rule 3 — reviewer rejection is operator authority.** When
-  the reviewer service rejects (close returns
-  `published_review_id`, the substrate spawns a successor work
-  + planned-review pair carrying `prior_task_id`), the
-  orchestrator's response is to read the verdict ledger row,
+  the reviewer rejects, the reviewer's contract prose mints a
+  successor `kind=work` task via
+  `task_add(action=contract:<name>, prior_task_id=<rejected_work>)`.
+  The orchestrator's response is to read the verdict ledger row,
   address each cited gap in a fresh evidence row tagged for the
-  iter-2 work task, and submit the retry close. The
-  orchestrator does NOT bypass the chain by transitioning the
-  story to `done` while open work tasks remain. Citing
+  iter-N+1 work task, and dispatch that retry. The orchestrator
+  does NOT bypass the chain by transitioning the story to `done`
+  while open work tasks remain. Citing
   `pr_reviewer_voice_authoritative`.
 
 ### Dispatch loop
@@ -80,11 +80,14 @@ The orchestrator's runtime job is dispatch, not work. Citing
 `pr_substrate_provides_context`.
 
 - **agents do not do work themselves.** Each `kind=work` task
-  is dispatched to the agent that delivers its action via
-  `agent_dispatch(task_id, agent_doc)`. The dispatch primitive
-  spawns `bash(claude -p ...)` in a per-task git worktree at
+  is dispatched to the agent that delivers its action by the
+  orchestrator running
+  `bash(claude --permission-mode bypassPermissions -p '…')` in
+  a per-task git worktree at
   `<repo>/.satellites-agents/<task_id>` on a private branch
-  named `agent-<task_id>-from-<short(base_sha)>`.
+  named `agent-<task_id>-from-<short(base_sha)>`. There is no
+  Go `agent_dispatch` verb — dispatch is the orchestrator's own
+  runtime job.
 - **Each dispatch carries a permission envelope.** The agent's
   `permission_patterns` translate to `--allowedTools` on the
   CLI plus `PreToolUse` hooks in the worktree's
@@ -100,8 +103,10 @@ The orchestrator's runtime job is dispatch, not work. Citing
   closes the task. Review tasks are dispatched the same way
   with read-only + ledger-write permissions.
 - **The orchestrator awaits and routes.** On dispatch result,
-  dispatch the next claimable task or — on rejection — read
-  the verdict and dispatch an iter-N+1 retry per Rule 3.
+  poll `task_walk(story_id)`. When the reviewer's contract
+  prose has minted a fresh iter-N+1 `kind=work` task with
+  `prior_task_id` set, dispatch that retry per Rule 3.
+  Otherwise dispatch the next claimable task.
 
 ### Constraints
 
@@ -119,10 +124,9 @@ The flow when a user says `implement story_xxx`:
    the agent's `delivers:` list must contain the chosen action when
    the action is `contract:<name>` shaped) and the prompt body.
 3. Call `task_add(agent_id, prompt, story_id, action?, kind?)`.
-   The substrate validates the agent doc, mints the work task at
-   `status=published`, optionally mints a paired review task at
-   `status=planned` when the agent doc declares
-   `requires_review: true`, and returns the new task ids. Possible
+   The substrate validates the agent doc, mints exactly one task
+   at `status=published`, and returns
+   `{task_id, story_id, story_minted, status, agent_id}`. Possible
    errors:
    - `agent_not_found` — agent doc id missing or archived.
    - `agent_cannot_deliver` / `agent_cannot_review` — capability
@@ -131,25 +135,30 @@ The flow when a user says `implement story_xxx`:
    The subprocess fetches its own context (agent doc, project
    intent, principles, story, contract) via MCP using the task id.
 5. On dispatch result, read `task_walk` again. If the work task
-   closed via `task_update(status=closed)`, the substrate has
-   already published the paired review (when one exists). Mint the
-   next plan step via `task_add` if there is one; otherwise the
-   chain is complete.
+   closed via `task_update(status=closed)`, closure mutated only
+   that row. Mint the next plan step (a reviewer dispatch where
+   the contract requires one, or the next work task) via
+   `task_add` if there is one; otherwise the chain is complete.
 
-### Reviewer routing (autonomous)
+### Reviewer routing
 
-Reviewer agents declare capability via `reviews:` lists on their
-agent doc structured settings. The autonomous reviewer service
-(`internal/reviewer/service`) listens for `kind:review` task emits,
-resolves the rubric by capability match (first agent whose
-`reviews:` contains `contract:<name>`), runs the reviewer against
-the rubric + evidence (sourced from `task_id:<parent_work>` ledger
-rows), writes a `kind:verdict` ledger row tagged to the review
-task, closes the review task with success/failure, and on rejection
-spawns a successor `kind=work` + paired planned-`kind=review` task
-pair carrying `prior_task_id` on the work.
+Review is a contract-policy decision. The `develop` and
+`story_close` contracts dispatch reviewers; `plan`, `push`, and
+`merge_to_main` do not. Reviewer agents declare capability via
+`reviews:` lists on their agent doc structured settings; the
+orchestrator picks the first agent whose `reviews:` contains
+`contract:<name>` when minting the review task.
 
-The orchestrator never invokes any reviewer verb — there isn't one.
+Where a contract requires review, the orchestrator's next plan
+step after the work task closes is a `task_add(kind=review,
+agent_id=<reviewer>, action=contract:<name>,
+parent_task_id=<work>)` call, dispatched the same way as any
+other task. The reviewer writes a `kind:verdict` ledger row
+tagged to the review task and closes the review task with
+success/failure. On rejection the reviewer's contract prose
+mints a successor `kind=work` task via
+`task_add(action=contract:<name>, prior_task_id=<rejected_work>)`;
+the orchestrator dispatches that retry.
 
 ### Agent picking (per task)
 

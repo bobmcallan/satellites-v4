@@ -128,11 +128,13 @@ Same as `story_reviewer`:
 
 - `accepted` — rationale cites ACs + principles honoured.
 - `rejected` — rationale cites failing principle + the gap. The
-  reviewer service spawns a successor work + paired planned-review
-  pair carrying `prior_task_id`. needs_more is coerced to rejected
-  on the task path; the questions are appended to the rationale and
-  posted as `kind:review-question` ledger rows tagged to the parent
-  work task so the next iteration can address them.
+  reviewer's verdict ledger row is the close-criteria checklist;
+  the orchestrator (per `pr_reviewer_voice_authoritative`) reads
+  the verdict and mints the iter-N+1 work task via
+  `task_add(prior_task_id=…)`. needs_more is coerced to rejected
+  on the task path; the questions are appended to the rationale
+  and posted as `kind:review-question` ledger rows tagged to the
+  parent work task so the next iteration can address them.
 
 ## Limitations
 

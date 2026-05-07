@@ -118,12 +118,14 @@ of fix to make.
 - `accepted` — rationale cites the ACs satisfied and any principles
   honoured.
 - `rejected` — rationale cites the failing principle + the AC or
-  evidence gap. The reviewer service spawns a successor work +
-  paired planned-review pair carrying `prior_task_id`; the
-  orchestrator dispatches a fresh attempt. There is no
-  needs_more loop on the task path — needs_more is coerced to
-  rejected with the questions appended to the rationale and posted
-  as `kind:review-question` ledger rows tagged to the parent work
+  evidence gap. The reviewer's verdict ledger row is the
+  close-criteria checklist; the orchestrator (per
+  `pr_reviewer_voice_authoritative`) reads the verdict and mints
+  the iter-N+1 work task via `task_add(prior_task_id=…)`, then
+  dispatches that fresh attempt. There is no needs_more loop on
+  the task path — needs_more is coerced to rejected with the
+  questions appended to the rationale and posted as
+  `kind:review-question` ledger rows tagged to the parent work
   task so the next iteration can address them.
 
 ## Limitations

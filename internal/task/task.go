@@ -137,11 +137,11 @@ func PriorityRank(p string) int {
 // artifact content lives on linked ledger rows.
 //
 // Iteration is the lap number for tasks of the same Action on the same
-// story (rejection-append loop). First work-task on (story_id, action)
-// gets iteration=1; successor work tasks spawned by the reviewer
-// service on rejection bump it. Surfaced on task_list / task_walk so
-// renderers can show "develop #2" without joining anywhere.
-// sty_c6d76a5b.
+// story (the same-slot retry chain). First work-task on (story_id,
+// action) gets iteration=1; successor work tasks minted via
+// task_add(prior_task_id=…) by the reviewer's contract prose bump it.
+// Surfaced on task_list / task_walk so renderers can show "develop #2"
+// without joining anywhere. sty_c6d76a5b.
 type Task struct {
 	ID          string `json:"id"`
 	WorkspaceID string `json:"workspace_id"`
@@ -169,8 +169,9 @@ type Task struct {
 	// review tasks: the persistent reviewer agent's id.
 	AgentID string `json:"agent_id,omitempty"`
 	// PriorTaskID links a fresh implement task to the prior implement
-	// task it succeeds in the rejection-append loop (sty_c6d76a5b).
-	// Empty for the first attempt.
+	// task it succeeds in the same-slot retry chain authored by the
+	// reviewer's contract prose via task_add(prior_task_id=…)
+	// (sty_c6d76a5b). Empty for the first attempt.
 	PriorTaskID string `json:"prior_task_id,omitempty"`
 	// ParentTaskID anchors this task to the conversation thread it
 	// extends — typically the implement task whose close emitted this

@@ -7,11 +7,12 @@ import "errors"
 //
 // Blocked is a non-terminal escalation state introduced by
 // epic:v4-lifecycle-refactor (sty_bbe732af). When the review-iteration
-// cap is hit on a contract, the rejection-append path flips the story
-// to blocked instead of appending another retry — the user must resolve
-// the impasse before work resumes (typically by relaxing the AC,
-// splitting the story, or amending the plan). Blocked → in_progress
-// resumes; blocked → cancelled gives up.
+// cap is hit on a contract, the retry chain authored by the reviewer's
+// contract prose flips the story to blocked instead of appending
+// another retry — the user must resolve the impasse before work
+// resumes (typically by relaxing the AC, splitting the story, or
+// amending the plan). Blocked → in_progress resumes; blocked →
+// cancelled gives up.
 const (
 	StatusBacklog    = "backlog"
 	StatusReady      = "ready"

@@ -3,9 +3,9 @@
 // task_add mints one task at status=published for the given agent. When
 // story_id is omitted the substrate auto-mints a thin ad-hoc story so
 // every task is anchored to a story (project intent: "no work outside
-// a story"). When the agent doc declares requires_review=true, a
-// paired review task at status=planned is minted alongside; the review
-// publishes when the work task closes via task_update(status=closed).
+// a story"). task_add mints exactly one task — review pairing, when a
+// contract requires it, is authored by the reviewer's contract prose
+// via a follow-up task_add(prior_task_id=…) call.
 //
 // task_add replaces the plan-DAG path on the retired task_submit
 // (kind=plan) verb. The orchestrator that wants a multi-task chain
@@ -221,40 +221,12 @@ func (s *Server) handleTaskAdd(ctx context.Context, req mcpgo.CallToolRequest) (
 		CreatedBy:  caller.UserID,
 	}, now)
 
-	// Optional paired review task. Minted at status=planned with
-	// parent_task_id pointing at the work task; task_update(status=
-	// closed) on the work task publishes it.
-	reviewID := ""
-	if kind == task.KindWork && settings.RequiresReview {
-		review, rerr := s.tasks.Enqueue(ctx, task.Task{
-			WorkspaceID:  st.WorkspaceID,
-			ProjectID:    st.ProjectID,
-			StoryID:      st.ID,
-			Kind:         task.KindReview,
-			Action:       action,
-			Description:  fmt.Sprintf("review of task %s", work.ID),
-			ParentTaskID: work.ID,
-			Origin:       task.OriginStoryStage,
-			Priority:     priority,
-			Status:       task.StatusPlanned,
-		}, now)
-		if rerr == nil {
-			reviewID = review.ID
-		} else {
-			s.logger.Warn().
-				Str("work_task_id", work.ID).
-				Err(rerr).
-				Msg("task_add: paired review enqueue failed")
-		}
-	}
-
 	body, _ := json.Marshal(map[string]any{
-		"task_id":        work.ID,
-		"story_id":       st.ID,
-		"story_minted":   storyMinted,
-		"review_task_id": reviewID,
-		"status":         work.Status,
-		"agent_id":       agentID,
+		"task_id":      work.ID,
+		"story_id":     st.ID,
+		"story_minted": storyMinted,
+		"status":       work.Status,
+		"agent_id":     agentID,
 	})
 	s.logger.Info().
 		Str("method", "tools/call").
@@ -262,7 +234,6 @@ func (s *Server) handleTaskAdd(ctx context.Context, req mcpgo.CallToolRequest) (
 		Str("story_id", st.ID).
 		Str("task_id", work.ID).
 		Bool("story_minted", storyMinted).
-		Str("review_task_id", reviewID).
 		Int64("duration_ms", time.Since(start).Milliseconds()).
 		Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil

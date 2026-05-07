@@ -7,7 +7,6 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/task"
 )
 
@@ -45,34 +44,37 @@ func TestTaskUpdate_ClosesWorkTask(t *testing.T) {
 	require.Equal(t, task.OutcomeSuccess, out["outcome"])
 }
 
-func TestTaskUpdate_PublishesPairedReviewSibling(t *testing.T) {
+// TestTaskUpdate_CloseHasNoSideEffects locks AC #3 of sty_9f3562b8:
+// task_update(closed) mutates exactly the target row. An unrelated
+// planned task in the same story stays untouched — closure no longer
+// has a publish-on-close side effect.
+func TestTaskUpdate_CloseHasNoSideEffects(t *testing.T) {
 	t.Parallel()
 	f := newOrchestratorFixture(t)
-	settings, _ := document.MarshalAgentSettings(document.AgentSettings{
-		Delivers:       []string{task.ContractAction("develop")},
-		RequiresReview: true,
-	})
-	doc, err := f.server.docs.Create(context.Background(), document.Document{
-		Type:       document.TypeAgent,
-		Scope:      document.ScopeSystem,
-		Name:       "needs_review_agent",
-		Body:       "x",
-		Status:     document.StatusActive,
-		Structured: settings,
-	}, f.now)
-	require.NoError(t, err)
+	devID := agentDocID(t, f.server, "developer_agent")
 
 	addRes := callAddHandler(t, f, map[string]any{
-		"agent_id": doc.ID,
-		"prompt":   "do work",
+		"agent_id": devID,
+		"prompt":   "develop work",
 		"story_id": f.storyID,
 		"action":   task.ContractAction("develop"),
 	})
-	require.False(t, addRes.IsError)
-	addOut := decodeResult(t, addRes)
-	workID := addOut["task_id"].(string)
-	plannedReviewID := addOut["review_task_id"].(string)
-	require.NotEmpty(t, plannedReviewID, "review must have been minted at task_add time")
+	require.False(t, addRes.IsError, errorText(addRes))
+	workID := decodeResult(t, addRes)["task_id"].(string)
+
+	// Pre-stage an unrelated planned task in the same story.
+	unrelated, err := f.taskStore.Enqueue(context.Background(), task.Task{
+		WorkspaceID: f.wsID,
+		ProjectID:   f.projectID,
+		StoryID:     f.storyID,
+		Kind:        task.KindWork,
+		Action:      task.ContractAction("develop"),
+		AgentID:     devID,
+		Origin:      task.OriginStoryStage,
+		Priority:    task.PriorityMedium,
+		Status:      task.StatusPlanned,
+	}, f.now)
+	require.NoError(t, err)
 
 	res := callUpdateHandler(t, f, map[string]any{
 		"id":     workID,
@@ -80,12 +82,15 @@ func TestTaskUpdate_PublishesPairedReviewSibling(t *testing.T) {
 	})
 	require.False(t, res.IsError, errorText(res))
 	out := decodeResult(t, res)
-	require.Equal(t, plannedReviewID, out["published_review_id"])
+	require.Equal(t, task.StatusClosed, out["status"])
+	_, hasPublished := out["published_review_id"]
+	require.False(t, hasPublished, "task_update response must not advertise published_review_id")
 
-	// Confirm the review is now published.
-	review, err := f.taskStore.GetByID(context.Background(), plannedReviewID, nil)
+	// The unrelated planned row is unchanged.
+	after, err := f.taskStore.GetByID(context.Background(), unrelated.ID, nil)
 	require.NoError(t, err)
-	require.Equal(t, task.StatusPublished, review.Status)
+	require.Equal(t, task.StatusPlanned, after.Status, "unrelated planned task must not be published")
+	require.Equal(t, "", after.ClaimedBy, "unrelated planned task must not be claimed")
 }
 
 func TestTaskUpdate_RejectsTerminalTask(t *testing.T) {

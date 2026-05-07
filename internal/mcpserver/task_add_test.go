@@ -60,7 +60,8 @@ func TestTaskAdd_HappyPath_StoryAttached(t *testing.T) {
 	require.Equal(t, f.storyID, out["story_id"])
 	require.Equal(t, false, out["story_minted"])
 	require.Equal(t, task.StatusPublished, out["status"])
-	require.Equal(t, "", out["review_task_id"])
+	_, hasReviewID := out["review_task_id"]
+	require.False(t, hasReviewID, "task_add response must not advertise review_task_id")
 	require.NotEmpty(t, out["task_id"])
 
 	// Confirm the row landed.
@@ -136,40 +137,72 @@ func TestTaskAdd_RequiresPrompt(t *testing.T) {
 	require.Contains(t, errorText(res), "prompt must not be empty")
 }
 
-func TestTaskAdd_AgentDocDrivesReviewPairing(t *testing.T) {
+// TestTaskAdd_MintsExactlyOneTask locks AC #2 of sty_9f3562b8: task_add
+// mints exactly one task per call regardless of agent doc shape, story
+// origin, or structured payload. The substrate no longer auto-pairs a
+// review sibling — pairing, when a contract requires it, is authored
+// by the reviewer's contract prose.
+func TestTaskAdd_MintsExactlyOneTask(t *testing.T) {
 	t.Parallel()
 	f := newOrchestratorFixture(t)
-	// Mint a fresh agent that declares requires_review=true.
+	devID := agentDocID(t, f.server, "developer_agent")
+
+	// Variant A — plain agent + explicit story.
+	resA := callAddHandler(t, f, map[string]any{
+		"agent_id": devID,
+		"prompt":   "variant A: explicit story",
+		"story_id": f.storyID,
+		"action":   task.ContractAction("develop"),
+	})
+	require.False(t, resA.IsError, errorText(resA))
+	outA := decodeResult(t, resA)
+
+	// Variant B — story_id omitted (auto-mint path).
+	resB := callAddHandler(t, f, map[string]any{
+		"agent_id": devID,
+		"prompt":   "variant B: ad-hoc story",
+		"action":   task.ContractAction("develop"),
+	})
+	require.False(t, resB.IsError, errorText(resB))
+	outB := decodeResult(t, resB)
+	storyB := outB["story_id"].(string)
+
+	// Variant C — fresh agent with arbitrary structured payload.
 	settings, _ := document.MarshalAgentSettings(document.AgentSettings{
-		Delivers:       []string{task.ContractAction("develop")},
-		RequiresReview: true,
+		Delivers: []string{task.ContractAction("develop")},
 	})
 	doc, err := f.server.docs.Create(context.Background(), document.Document{
 		Type:       document.TypeAgent,
 		Scope:      document.ScopeSystem,
-		Name:       "review_required_agent",
+		Name:       "extra_agent",
 		Body:       "agent body",
 		Status:     document.StatusActive,
 		Structured: settings,
 	}, f.now)
 	require.NoError(t, err)
-
-	res := callAddHandler(t, f, map[string]any{
+	resC := callAddHandler(t, f, map[string]any{
 		"agent_id": doc.ID,
-		"prompt":   "do the work",
+		"prompt":   "variant C: arbitrary settings",
 		"story_id": f.storyID,
 		"action":   task.ContractAction("develop"),
 	})
-	require.False(t, res.IsError, errorText(res))
-	out := decodeResult(t, res)
-	reviewID := out["review_task_id"].(string)
-	require.NotEmpty(t, reviewID, "expected paired review task")
+	require.False(t, resC.IsError, errorText(resC))
 
-	review, err := f.taskStore.GetByID(context.Background(), reviewID, nil)
-	require.NoError(t, err)
-	require.Equal(t, task.KindReview, review.Kind)
-	require.Equal(t, task.StatusPlanned, review.Status)
-	require.Equal(t, out["task_id"], review.ParentTaskID)
+	// No variant should advertise a review_task_id, and no review row
+	// should appear on any of the involved stories.
+	for _, out := range []map[string]any{outA, outB, decodeResult(t, resC)} {
+		_, hasReviewID := out["review_task_id"]
+		require.False(t, hasReviewID, "task_add response advertised review_task_id: %v", out)
+	}
+
+	for _, sid := range []string{f.storyID, storyB} {
+		reviews, err := f.taskStore.List(context.Background(), task.ListOptions{
+			StoryID: sid,
+			Kind:    task.KindReview,
+		}, nil)
+		require.NoError(t, err)
+		require.Empty(t, reviews, "story %s has unexpected review rows: %+v", sid, reviews)
+	}
 }
 
 // TestTaskAdd_SeedAgentResolvesForOtherWorkspaceCaller covers

@@ -444,8 +444,9 @@ function storyPanel() {
         // sty_a03449d1 retired contract_instance.* events (the rows
         // are gone) and consumes task.<status> events instead — the
         // task chain IS the workflow, so each task transition patches
-        // the matching <tr> in place. New tasks (rejection-append
-        // retries) are appended in created_at order.
+        // the matching <tr> in place. Successor tasks minted with
+        // prior_task_id (the retry chain) are appended in created_at
+        // order.
         _applyEvent(ev, projectID) {
             if (!ev || !ev.Kind) { return; }
             if (ev.Kind.indexOf('story.') === 0) {

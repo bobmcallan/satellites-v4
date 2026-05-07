@@ -59,7 +59,7 @@ func TestStoryWalk_LoopGroupsByContractName(t *testing.T) {
 		t.Fatalf("story create: %v", err)
 	}
 
-	// Three develop work tasks (rejection-append loop) + one push.
+	// Three develop work tasks (retry chain via prior_task_id) + one push.
 	dev1, err := tasks.Enqueue(ctx, task.Task{
 		WorkspaceID: "ws", ProjectID: proj.ID, StoryID: st.ID,
 		Kind: task.KindWork, Action: task.ContractAction("develop"),

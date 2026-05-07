@@ -24,10 +24,10 @@ closed with `outcome=success`.
 - Writes a closing-evidence ledger row capturing the resolution.
 - Closes its own task via `task_update(id=<story_close_task>,
   status=closed, outcome=success, evidence_ledger_ids=[…])`. The
-  substrate publishes the paired review task; the autonomous
-  reviewer service grades the close against `story_reviewer`'s
-  rubric. On accepted verdict the story status reconciler walks
-  the story to done.
+  orchestrator's next plan step (per the story_close contract's
+  review policy) is to mint a `kind=review` task for
+  `story_reviewer`. On accepted verdict the story status
+  reconciler walks the story to done.
 
 ## How
 
@@ -37,9 +37,10 @@ task itself.
 
 ## Limitations
 
-- Cannot bypass the close gate. On rejected verdict the substrate
-  spawns a successor work task with `prior_task_id` set; the
-  orchestrator dispatches a fresh close attempt.
+- Cannot bypass the close gate. On rejected verdict the
+  reviewer's contract prose mints a successor work task via
+  `task_add(prior_task_id=…)`; the orchestrator dispatches a
+  fresh close attempt.
 - Cannot retroactively edit prior tasks to make the close pass.
 - One terminal transition per story; once `done` or `cancelled`,
   the story is immutable.

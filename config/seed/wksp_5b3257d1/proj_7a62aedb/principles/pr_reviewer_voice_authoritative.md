@@ -12,7 +12,7 @@ Reviewer rejections are the operator's voice; the orchestrator's response is to 
 
 ## What this means
 
-The autonomous reviewer service runs the rubric the operator (via the seed) has codified. When it rejects a work-task close, the rejection carries the operator's standard for "done" — it is not noise to be routed around. The substrate's rejection-append loop spawns a successor `kind=work` + paired planned-`kind=review` pair carrying `prior_task_id`; the orchestrator's job is to dispatch a fresh attempt that addresses each gap the verdict cited.
+The autonomous reviewer service runs the rubric the operator (via the seed) has codified. When it rejects a work-task close, the rejection carries the operator's standard for "done" — it is not noise to be routed around. The substrate is append-only: a rejection is rendered as a fresh `kind=work` task minted by the reviewer's contract prose via `task_add(prior_task_id=…)`, and the chain on `task_walk(story_id)` is the audit-of-record. The orchestrator's job is to dispatch that fresh attempt and address each gap the verdict cited.
 
 ## What it forbids
 

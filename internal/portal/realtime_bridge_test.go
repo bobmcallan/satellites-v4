@@ -7,8 +7,9 @@
 // sty_a03449d1 added WS-driven task-row patching: the bridge listens
 // for task.<status> events scoped to a visible story, patches the
 // matching <tr data-task-id=…> in place, and appends a skeleton row
-// for fresh tasks (the rejection-append loop). The JS source is
-// asserted alongside the SSR markup to keep both ends in lockstep.
+// for fresh tasks minted with prior_task_id (the retry chain). The JS
+// source is asserted alongside the SSR markup to keep both ends in
+// lockstep.
 package portal
 
 import (

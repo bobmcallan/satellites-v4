@@ -66,11 +66,10 @@ Once the orchestrator dispatches this agent on a task:
 3. **Evidence** — `ledger_append(...)` carrying commit SHA + remote
    confirmation (push) or merge target SHA (merge_to_main).
 4. **Close** — `task_update(id=<task_id>, status=closed,
-   outcome=success|failure, evidence_ledger_ids=[…])`. When this
-   agent's doc declares `requires_review: true`, the substrate
-   publishes the paired planned-review sibling automatically. If
-   the develop commit is missing, stop and report — do not
-   improvise a fix.
+   outcome=success|failure, evidence_ledger_ids=[…])`. The push
+   and merge_to_main contracts are review-free, so closure
+   mutates only the target task. If the develop commit is
+   missing, stop and report — do not improvise a fix.
 
 ## Out of scope
 

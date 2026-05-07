@@ -58,9 +58,9 @@ assessment, design, and decomposition into role-tagged child tasks.
   acceptance criteria, runs build/test/vet/fmt locally, stages and
   commits the work via conventional-commit format. Bumps `.version`
   exactly once per story (single-writer rule). Closes the develop
-  task via `task_update(id=<task_id>, status=closed, evidence_ledger_ids=[…])`
-  — when this agent's doc declares `requires_review: true`, the
-  substrate publishes the paired planned-review sibling automatically.
+  task via `task_update(id=<task_id>, status=closed, evidence_ledger_ids=[…])`;
+  reviewer dispatch (where the contract requires one) is the
+  orchestrator's next plan step, not a side effect of closure.
 
 ## How
 
@@ -83,10 +83,10 @@ Once the orchestrator dispatches this agent on a task:
    (plan markdown, review criteria, commit SHA, test output). The
    reviewer reads these against the contract's rubric.
 4. **Close** — `task_update(id=<task_id>, status=closed,
-   outcome=success|failure, evidence_ledger_ids=[…])`. The substrate
-   publishes the paired planned-review sibling automatically when
-   the agent's doc declares `requires_review: true`; do not push,
-   merge, or close the story.
+   outcome=success|failure, evidence_ledger_ids=[…])`. Closure
+   mutates only the target task; reviewer dispatch (where the
+   contract requires one) is the orchestrator's next plan step.
+   Do not push, merge, or close the story.
 
 ## Out of scope
 

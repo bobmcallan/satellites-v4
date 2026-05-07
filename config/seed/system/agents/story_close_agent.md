@@ -10,9 +10,9 @@ instruction: |
   task_id:<this_close_task> summarising the resolution
   (delivered / plan_only / not_required / duplicate / superseded /
   failed:*); then call task_update(id=<task_id>, status=closed,
-  outcome=success, evidence_ledger_ids=[…]). The reviewer service
-  picks up the paired review automatically; on accepted verdict
-  the story status reconciler walks the story to done.
+  outcome=success, evidence_ledger_ids=[…]). Reviewer dispatch is
+  the orchestrator's next plan step; on accepted verdict the
+  story status reconciler walks the story to done.
 permission_patterns:
   - "Read:**"
   - "mcp__satellites__satellites_*"
@@ -34,10 +34,10 @@ reviewer service grades the close against `story_reviewer`'s rubric.
   `plan_only`, `not_required`, `duplicate`, `superseded`,
   `failed:complexity`, `failed:scope_invalid`, `failed:blocked`).
 - Calls `task_update(id=<id>, status=closed, outcome=success,
-  evidence_ledger_ids=[…])`. When this agent's doc declares
-  `requires_review: true`, the substrate publishes the paired
-  planned-review sibling automatically; the reviewer service runs
-  `story_reviewer` against it.
+  evidence_ledger_ids=[…])`. Closure mutates only the close task
+  itself; reviewer dispatch (a `kind=review` task for
+  `story_reviewer`) is the orchestrator's next plan step under
+  the story_close contract's review policy.
 
 ## How
 
@@ -58,15 +58,17 @@ Once the orchestrator dispatches this agent on the closing task:
    row tagged `task_id:<this_close_task>` carrying the resolution
    summary.
 4. **Close** — `task_update(id=<task_id>, status=closed,
-   outcome=success, evidence_ledger_ids=[…])`. When this agent's
-   doc declares `requires_review: true`, the substrate publishes
-   the paired planned-review sibling; on accepted verdict the
-   story status reconciler walks the story to `done`.
+   outcome=success, evidence_ledger_ids=[…])`. Closure mutates
+   only the close task itself; the orchestrator's next plan
+   step (per the story_close contract's review policy) mints a
+   `kind=review` task for `story_reviewer`. On accepted verdict
+   the story status reconciler walks the story to `done`.
 
 ## Limitations
 
-- Cannot bypass the close gate. If the reviewer returns rejected,
-  the substrate spawns a successor work task with `prior_task_id`
-  set; the orchestrator dispatches a fresh close attempt.
+- Cannot bypass the close gate. If the reviewer rejects, the
+  reviewer's contract prose mints a successor work task via
+  `task_add(prior_task_id=…)`; the orchestrator dispatches a
+  fresh close attempt.
 - Cannot modify earlier tasks to retroactively make a delivery
   conform.

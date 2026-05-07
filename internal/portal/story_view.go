@@ -6,7 +6,8 @@
 //
 // sty_a03449d1 wired TaskChain to the task store so the project-detail
 // stories panel and the /stories/{id} composite both render the live
-// task chain (work + review siblings, retries via prior_task_id).
+// task chain (work + review siblings, successor tasks minted with
+// prior_task_id).
 package portal
 
 import (
@@ -68,9 +69,9 @@ type sourceDocLink struct {
 // taskChainCard is one task on the story's chain rendered in
 // /stories panels. Sequence is the 1-based row index in
 // created_at order; Iteration is the lap among same-action peers
-// (1 for the first attempt, >1 for rejection-append retries).
-// VerdictExcerpt carries a short preview of the verdict ledger row
-// when one exists for the row's task_id.
+// (1 for the first attempt, >1 for successor tasks minted with
+// prior_task_id). VerdictExcerpt carries a short preview of the
+// verdict ledger row when one exists for the row's task_id.
 type taskChainCard struct {
 	ID             string `json:"id"`
 	Sequence       int    `json:"sequence"`

@@ -165,13 +165,12 @@ func TestBuildMCPComposite_ComputesSizeAndTokens(t *testing.T) {
 	}
 	body, _ := json.Marshal(cat)
 	if _, err := docs.Create(context.Background(), document.Document{
-		WorkspaceID: "wksp_system",
-		Type:        document.TypeArtifact,
-		Scope:       document.ScopeSystem,
-		Name:        mcpserver.CatalogueArtifactName,
-		Body:        string(body),
-		Tags:        []string{mcpserver.CatalogueKindTag},
-		Status:      document.StatusActive,
+		Type:   document.TypeArtifact,
+		Scope:  document.ScopeSystem,
+		Name:   mcpserver.CatalogueArtifactName,
+		Body:   string(body),
+		Tags:   []string{mcpserver.CatalogueKindTag},
+		Status: document.StatusActive,
 	}, time.Now().UTC()); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -287,13 +286,12 @@ func TestBuildMCPComposite_VisibleAcrossWorkspaces(t *testing.T) {
 	}
 	body, _ := json.Marshal(cat)
 	if _, err := docs.Create(context.Background(), document.Document{
-		WorkspaceID: "wksp_system",
-		Type:        document.TypeArtifact,
-		Scope:       document.ScopeSystem,
-		Name:        mcpserver.CatalogueArtifactName,
-		Body:        string(body),
-		Tags:        []string{mcpserver.CatalogueKindTag},
-		Status:      document.StatusActive,
+		Type:   document.TypeArtifact,
+		Scope:  document.ScopeSystem,
+		Name:   mcpserver.CatalogueArtifactName,
+		Body:   string(body),
+		Tags:   []string{mcpserver.CatalogueKindTag},
+		Status: document.StatusActive,
 	}, time.Now().UTC()); err != nil {
 		t.Fatalf("seed catalogue: %v", err)
 	}

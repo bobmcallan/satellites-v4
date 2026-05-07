@@ -273,6 +273,17 @@ func main() {
 			logger.Info().Int("archived", archived).Msg("orphan system principles archived")
 		}
 
+		// sty_e2512dbd: clear workspace_id on every scope=system row.
+		// The system tier is non-tenant; pre-existing rows seeded with
+		// the boot user's default workspace are stale. New seed rows
+		// already write workspace_id=""; this pass migrates legacy
+		// data. Idempotent.
+		if cleared, err := docStore.ClearSystemWorkspaceIDs(ctx, time.Now().UTC()); err != nil {
+			logger.Warn().Str("error", err.Error()).Msg("system workspace_id clear failed")
+		} else if cleared > 0 {
+			logger.Info().Int("rows", cleared).Msg("scope=system workspace_id cleared")
+		}
+
 		// sty_c1200f75: migrate any pre-existing tasks at status=enqueued
 		// to status=published. The substrate now distinguishes planned
 		// (agent-local) from published (queue-visible); existing rows

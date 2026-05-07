@@ -26,13 +26,12 @@ func TestStoryContext_HappyPath(t *testing.T) {
 	// resolves to non-empty (the resolver walks project override → system
 	// default → "").
 	if _, err := s.docs.Create(ctx, document.Document{
-		WorkspaceID: "system",
-		Type:        document.TypeArtifact,
-		Scope:       document.ScopeSystem,
-		Name:        agentprocess.SystemDefaultName,
-		Status:      document.StatusActive,
-		Tags:        []string{agentprocess.KindTag},
-		Body:        "# how to act\nfollow the contract.",
+		Type:   document.TypeArtifact,
+		Scope:  document.ScopeSystem,
+		Name:   agentprocess.SystemDefaultName,
+		Status: document.StatusActive,
+		Tags:   []string{agentprocess.KindTag},
+		Body:   "# how to act\nfollow the contract.",
 	}, now); err != nil {
 		t.Fatalf("seed agent_process: %v", err)
 	}

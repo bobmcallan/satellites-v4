@@ -135,8 +135,15 @@ func (d Document) Validate() error {
 			return errors.New("document: project_id required when scope=project")
 		}
 	case ScopeSystem:
+		// sty_e2512dbd: system tier is non-tenant — neither workspace
+		// nor project. Stamping a workspace makes the row look
+		// tenant-owned and pulls downstream readers (e.g. task_add)
+		// into that tenancy when they shouldn't.
 		if d.ProjectID != nil && *d.ProjectID != "" {
 			return errors.New("document: project_id must be nil when scope=system")
+		}
+		if d.WorkspaceID != "" {
+			return errors.New("document: workspace_id must be empty when scope=system")
 		}
 	case ScopeWorkspace:
 		if d.Type != TypeRole && d.Type != TypeWorkflow {

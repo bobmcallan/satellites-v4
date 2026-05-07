@@ -178,12 +178,14 @@ func RunProject(ctx context.Context, docs document.Store, seedDir, projectID, wo
 		inputs, errs := LoadDir(projectRoot, kind, workspaceID, actor)
 		summary.Errors = append(summary.Errors, prefixedErrors(errs, projectID)...)
 		for _, in := range inputs {
-			// Override scope + project_id. The per-kind parsers stamp
-			// scope=system unconditionally; we re-target the input to
-			// the project tier here so the same parsers + frontmatter
-			// validation cover both surfaces.
+			// Override scope + project_id + workspace_id. The per-kind
+			// parsers stamp scope=system + WorkspaceID="" unconditionally
+			// (sty_e2512dbd: system tier is non-tenant); we re-target
+			// the input to the project tier here so the same parsers +
+			// frontmatter validation cover both surfaces.
 			in.Scope = document.ScopeProject
 			in.ProjectID = &pid
+			in.WorkspaceID = workspaceID
 			summary.Loaded++
 			res, err := docs.Upsert(ctx, in, now)
 			if err != nil {

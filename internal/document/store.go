@@ -151,6 +151,13 @@ type Store interface {
 	// projectID whose workspace_id is empty. Idempotent.
 	BackfillWorkspaceID(ctx context.Context, projectID, workspaceID string, now time.Time) (int, error)
 
+	// ClearSystemWorkspaceIDs sets workspace_id="" on every scope=system
+	// row whose workspace_id is currently non-empty (sty_e2512dbd:
+	// system tier is non-tenant, so any stamped workspace is stale).
+	// Idempotent: a second invocation on a clean DB finds zero rows to
+	// update. Returns the number of rows mutated.
+	ClearSystemWorkspaceIDs(ctx context.Context, now time.Time) (int, error)
+
 	// ListVersions returns prior versions of the document with id
 	// documentID, in DESC version order. The live document.Document
 	// itself is not included in the result. Workspace scoping reuses
@@ -635,6 +642,23 @@ func (m *MemoryStore) ListVersions(ctx context.Context, documentID string, membe
 	out := make([]DocumentVersion, len(src))
 	copy(out, src)
 	return out, nil
+}
+
+// ClearSystemWorkspaceIDs implements Store for MemoryStore.
+func (m *MemoryStore) ClearSystemWorkspaceIDs(ctx context.Context, now time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for k, d := range m.rows {
+		if d.Scope != ScopeSystem || d.WorkspaceID == "" {
+			continue
+		}
+		d.WorkspaceID = ""
+		d.UpdatedAt = now
+		m.rows[k] = d
+		n++
+	}
+	return n, nil
 }
 
 // BackfillWorkspaceID implements Store for MemoryStore.

@@ -154,6 +154,82 @@ func TestHandleDocumentCreate_ScopeSystemRejectsProjectID(t *testing.T) {
 	}
 }
 
+// TestHandleDocumentCreate_ScopeSystemDropsWorkspaceID covers
+// sty_e2512dbd: when the caller creates a scope=system row, the
+// handler MUST NOT stamp the caller's workspace on it. The system
+// tier is non-tenant; a stamped workspace would violate Validate()
+// and pull downstream readers into the wrong tenancy.
+func TestHandleDocumentCreate_ScopeSystemDropsWorkspaceID(t *testing.T) {
+	t.Parallel()
+	s := newDocumentTestServer(t)
+	ctx := withCaller(context.Background(), CallerIdentity{UserID: "user_creator", Source: "session"})
+
+	res, err := s.handleDocumentCreate(ctx, newCallToolReq("document_create", map[string]any{
+		"type":  "principle",
+		"scope": "system",
+		"name":  "sample-principle",
+	}))
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("create scope=system rejected: %s", firstText(res))
+	}
+	got := decodeOne(t, res)
+	if ws, _ := got["workspace_id"].(string); ws != "" {
+		t.Errorf("scope=system row stamped with workspace_id=%q, want empty", ws)
+	}
+}
+
+// TestTaskAddSystemAgent_PlacesTaskInCallerProject covers sty_e2512dbd:
+// task_add against a scope=system agent must ignore the agent's
+// stamped tenancy (which should be empty post-migration; ignored
+// defensively) and use the caller's project. Mirrors the live single-
+// task-flow gap that surfaced sty_e2512dbd.
+func TestTaskAddSystemAgent_PlacesTaskInCallerProject(t *testing.T) {
+	t.Parallel()
+	// Use the orchestrator fixture which already seeds developer_agent
+	// at scope=system. The caller's project is f.projectID.
+	f := newOrchestratorFixture(t)
+	devID := agentDocID(t, f.server, "developer_agent")
+
+	doc, err := f.server.docs.GetByID(context.Background(), devID, nil)
+	if err != nil {
+		t.Fatalf("agent get: %v", err)
+	}
+	if doc.WorkspaceID != "" {
+		t.Fatalf("seed fixture created system agent with workspace_id=%q (sty_e2512dbd violation)", doc.WorkspaceID)
+	}
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"agent_id": devID,
+		"prompt":   "place me in the caller's project",
+	}
+	res, err := f.server.handleTaskAdd(f.callerCtx(), req)
+	if err != nil {
+		t.Fatalf("task_add: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("task_add rejected: %s", firstText(res))
+	}
+	out := decodeOne(t, res)
+	taskID, _ := out["task_id"].(string)
+	if taskID == "" {
+		t.Fatalf("task_add returned empty task_id: %+v", out)
+	}
+	row, err := f.taskStore.GetByID(context.Background(), taskID, nil)
+	if err != nil {
+		t.Fatalf("task GetByID: %v", err)
+	}
+	if row.ProjectID != f.projectID {
+		t.Errorf("task placed in project %q, want caller's project %q", row.ProjectID, f.projectID)
+	}
+	if row.WorkspaceID != f.wsID {
+		t.Errorf("task placed in workspace %q, want caller's workspace %q", row.WorkspaceID, f.wsID)
+	}
+}
+
 // TestHandleDocumentList_SystemScopeWorkspaceBlind covers sty_6ee30308:
 // scope=system reads must be visible to every authenticated caller,
 // even when the row was created in a workspace the caller has no
@@ -165,20 +241,16 @@ func TestHandleDocumentList_SystemScopeWorkspaceBlind(t *testing.T) {
 	s := newDocumentTestServer(t)
 	ctx := context.Background()
 
-	wsSeed, err := s.workspaces.Create(ctx, "user_seed", "seed-tier", time.Now().UTC())
-	if err != nil {
-		t.Fatalf("seed ws: %v", err)
-	}
 	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
 		t.Fatalf("other ws: %v", err)
 	}
 
+	// sty_e2512dbd: scope=system rows are non-tenant — no workspace_id.
 	if _, err := s.docs.Create(ctx, document.Document{
-		WorkspaceID: wsSeed.ID,
-		Type:        document.TypePrinciple,
-		Scope:       document.ScopeSystem,
-		Name:        "global-principle",
-		Tags:        []string{"system"},
+		Type:  document.TypePrinciple,
+		Scope: document.ScopeSystem,
+		Name:  "global-principle",
+		Tags:  []string{"system"},
 	}, time.Now().UTC()); err != nil {
 		t.Fatalf("seed principle: %v", err)
 	}
@@ -204,10 +276,6 @@ func TestHandleDocumentList_MixedScopeUnion(t *testing.T) {
 	s := newDocumentTestServer(t)
 	ctx := context.Background()
 
-	wsSeed, err := s.workspaces.Create(ctx, "user_seed", "seed-tier", time.Now().UTC())
-	if err != nil {
-		t.Fatalf("seed ws: %v", err)
-	}
 	wsAlice, err := s.workspaces.Create(ctx, "user_alice", "alice-tier", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("alice ws: %v", err)
@@ -217,6 +285,7 @@ func TestHandleDocumentList_MixedScopeUnion(t *testing.T) {
 		t.Fatalf("bob ws: %v", err)
 	}
 
+	// sty_e2512dbd: scope=system rows have no workspace_id; tenant rows do.
 	mk := func(wsID, scope, name string, projectID *string) {
 		t.Helper()
 		typ := document.TypePrinciple
@@ -224,10 +293,12 @@ func TestHandleDocumentList_MixedScopeUnion(t *testing.T) {
 			typ = document.TypeRole
 		}
 		doc := document.Document{
-			WorkspaceID: wsID,
-			Type:        typ,
-			Scope:       scope,
-			Name:        name,
+			Type:  typ,
+			Scope: scope,
+			Name:  name,
+		}
+		if scope != document.ScopeSystem {
+			doc.WorkspaceID = wsID
 		}
 		if scope == document.ScopeProject {
 			doc.ProjectID = projectID
@@ -237,7 +308,7 @@ func TestHandleDocumentList_MixedScopeUnion(t *testing.T) {
 		}
 	}
 
-	mk(wsSeed.ID, document.ScopeSystem, "system-row", nil)
+	mk("", document.ScopeSystem, "system-row", nil)
 	aliceProj := "proj_alice"
 	mk(wsAlice.ID, document.ScopeProject, "alice-row", &aliceProj)
 	bobProj := "proj_bob"
@@ -311,19 +382,14 @@ func TestHandleDocumentGet_SystemScopeByID(t *testing.T) {
 	s := newDocumentTestServer(t)
 	ctx := context.Background()
 
-	wsSeed, err := s.workspaces.Create(ctx, "user_seed", "seed-tier", time.Now().UTC())
-	if err != nil {
-		t.Fatalf("seed ws: %v", err)
-	}
 	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
 		t.Fatalf("other ws: %v", err)
 	}
 
 	doc, err := s.docs.Create(ctx, document.Document{
-		WorkspaceID: wsSeed.ID,
-		Type:        document.TypeAgent,
-		Scope:       document.ScopeSystem,
-		Name:        "developer_agent",
+		Type:  document.TypeAgent,
+		Scope: document.ScopeSystem,
+		Name:  "developer_agent",
 	}, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("seed agent: %v", err)
@@ -386,18 +452,13 @@ func TestHandleDocumentGet_SystemScopeByName(t *testing.T) {
 	s := newDocumentTestServer(t)
 	ctx := context.Background()
 
-	wsSeed, err := s.workspaces.Create(ctx, "user_seed", "seed-tier", time.Now().UTC())
-	if err != nil {
-		t.Fatalf("seed ws: %v", err)
-	}
 	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
 		t.Fatalf("other ws: %v", err)
 	}
 	if _, err := s.docs.Create(ctx, document.Document{
-		WorkspaceID: wsSeed.ID,
-		Type:        document.TypeAgent,
-		Scope:       document.ScopeSystem,
-		Name:        "developer_agent",
+		Type:  document.TypeAgent,
+		Scope: document.ScopeSystem,
+		Name:  "developer_agent",
 	}, time.Now().UTC()); err != nil {
 		t.Fatalf("seed agent: %v", err)
 	}
@@ -424,19 +485,14 @@ func TestAgentListWrapper_SystemScopeWorkspaceBlind(t *testing.T) {
 	s.registerDocumentWrappers()
 	ctx := context.Background()
 
-	wsSeed, err := s.workspaces.Create(ctx, "user_seed", "seed-tier", time.Now().UTC())
-	if err != nil {
-		t.Fatalf("seed ws: %v", err)
-	}
 	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
 		t.Fatalf("other ws: %v", err)
 	}
 	for _, name := range []string{"developer_agent", "releaser_agent", "story_close_agent"} {
 		if _, err := s.docs.Create(ctx, document.Document{
-			WorkspaceID: wsSeed.ID,
-			Type:        document.TypeAgent,
-			Scope:       document.ScopeSystem,
-			Name:        name,
+			Type:  document.TypeAgent,
+			Scope: document.ScopeSystem,
+			Name:  name,
 		}, time.Now().UTC()); err != nil {
 			t.Fatalf("seed %q: %v", name, err)
 		}

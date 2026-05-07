@@ -39,23 +39,21 @@ func TestSweepOrphanedSystemPrinciples_ArchivesUnmatched(t *testing.T) {
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 
 	if _, err := docs.Upsert(ctx, document.UpsertInput{
-		WorkspaceID: "wksp_a",
-		Type:        document.TypePrinciple,
-		Scope:       document.ScopeSystem,
-		Name:        "Sample principle",
-		Body:        []byte("kept body"),
-		Actor:       "system",
+		Type:  document.TypePrinciple,
+		Scope: document.ScopeSystem,
+		Name:  "Sample principle",
+		Body:  []byte("kept body"),
+		Actor: "system",
 	}, now); err != nil {
 		t.Fatalf("seed kept: %v", err)
 	}
 
 	orphan, err := docs.Upsert(ctx, document.UpsertInput{
-		WorkspaceID: "wksp_b",
-		Type:        document.TypePrinciple,
-		Scope:       document.ScopeSystem,
-		Name:        "Orphan principle",
-		Body:        []byte("orphan body"),
-		Actor:       "system",
+		Type:  document.TypePrinciple,
+		Scope: document.ScopeSystem,
+		Name:  "Orphan principle",
+		Body:  []byte("orphan body"),
+		Actor: "system",
 	}, now)
 	if err != nil {
 		t.Fatalf("seed orphan: %v", err)
@@ -107,12 +105,11 @@ func TestSweepOrphanedSystemPrinciples_Idempotent(t *testing.T) {
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 
 	if _, err := docs.Upsert(ctx, document.UpsertInput{
-		WorkspaceID: "wksp_a",
-		Type:        document.TypePrinciple,
-		Scope:       document.ScopeSystem,
-		Name:        "Stale principle",
-		Body:        []byte("body"),
-		Actor:       "system",
+		Type:  document.TypePrinciple,
+		Scope: document.ScopeSystem,
+		Name:  "Stale principle",
+		Body:  []byte("body"),
+		Actor: "system",
 	}, now); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -144,12 +141,11 @@ func TestSweepOrphanedSystemPrinciples_MissingDirNoError(t *testing.T) {
 	for i, name := range []string{"a", "b", "c"} {
 		_ = i
 		if _, err := docs.Upsert(ctx, document.UpsertInput{
-			WorkspaceID: "wksp_a",
-			Type:        document.TypePrinciple,
-			Scope:       document.ScopeSystem,
-			Name:        name,
-			Body:        []byte("body"),
-			Actor:       "system",
+			Type:  document.TypePrinciple,
+			Scope: document.ScopeSystem,
+			Name:  name,
+			Body:  []byte("body"),
+			Actor: "system",
 		}, now); err != nil {
 			t.Fatalf("seed %s: %v", name, err)
 		}

@@ -120,14 +120,12 @@ func TestResolve_RejectsWrongTypeOrInactive(t *testing.T) {
 	now := time.Now().UTC()
 	// Right name, but type=principle — must not be returned.
 	if _, err := store.Create(ctx, document.Document{
-		WorkspaceID: "wksp_a",
-		ProjectID:   nil,
-		Type:        document.TypePrinciple,
-		Scope:       document.ScopeSystem,
-		Name:        SystemDefaultName,
-		Body:        "WRONG_TYPE",
-		Status:      document.StatusActive,
-		Tags:        []string{KindTag},
+		Type:   document.TypePrinciple,
+		Scope:  document.ScopeSystem,
+		Name:   SystemDefaultName,
+		Body:   "WRONG_TYPE",
+		Status: document.StatusActive,
+		Tags:   []string{KindTag},
 	}, now); err != nil {
 		t.Fatalf("seed wrong-type: %v", err)
 	}
@@ -138,19 +136,20 @@ func TestResolve_RejectsWrongTypeOrInactive(t *testing.T) {
 
 // seedSystemDefault is a test helper that creates a system-scope
 // default_agent_process artifact directly with the supplied body.
-// Production seeding goes through configseed.Run.
+// Production seeding goes through configseed.Run. The ws parameter
+// is preserved for signature stability with prior callers; system
+// rows are non-tenant per sty_e2512dbd and ignore it.
 func seedSystemDefault(t *testing.T, ctx context.Context, store document.Store, ws, body string, now time.Time) {
 	t.Helper()
+	_ = ws
 	if _, err := store.Create(ctx, document.Document{
-		WorkspaceID: ws,
-		ProjectID:   nil,
-		Type:        document.TypeArtifact,
-		Scope:       document.ScopeSystem,
-		Name:        SystemDefaultName,
-		Body:        body,
-		Status:      document.StatusActive,
-		Tags:        []string{KindTag, "v4", "seed"},
-		CreatedBy:   "system",
+		Type:      document.TypeArtifact,
+		Scope:     document.ScopeSystem,
+		Name:      SystemDefaultName,
+		Body:      body,
+		Status:    document.StatusActive,
+		Tags:      []string{KindTag, "v4", "seed"},
+		CreatedBy: "system",
 	}, now); err != nil {
 		t.Fatalf("seed system default: %v", err)
 	}

@@ -84,14 +84,25 @@ func (s *Server) handleTaskAdd(ctx context.Context, req mcpgo.CallToolRequest) (
 
 	now := s.nowUTC()
 
-	// Resolve or auto-mint the owning story. Project + workspace come
-	// from the agent doc; for system-scope agents the project is
-	// derived from the caller's session-bound project (best effort).
+	// Resolve the owning project + workspace.
+	//
+	// sty_e2512dbd: agent definitions live at scope=system (non-tenant),
+	// but operations (tasks) live at the project tier. For a
+	// scope=system agent the task lands in the CALLER's project, not
+	// the agent's stamped tenancy (which should be empty for system
+	// rows post-migration; ignored here defensively for legacy rows
+	// that haven't been swept yet).
+	//
+	// For scope=project agents the agent's stamped project is the
+	// owning tenancy — the agent IS the project's worker.
 	projectID := ""
-	if doc.ProjectID != nil {
-		projectID = *doc.ProjectID
+	workspaceID := ""
+	if doc.Scope != document.ScopeSystem {
+		if doc.ProjectID != nil {
+			projectID = *doc.ProjectID
+		}
+		workspaceID = doc.WorkspaceID
 	}
-	workspaceID := doc.WorkspaceID
 	if projectID == "" {
 		projectID = s.callerActiveProjectID(ctx, caller)
 	}

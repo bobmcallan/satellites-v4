@@ -90,12 +90,11 @@ func newOrientationFixture(t *testing.T) (*Server, project.Project, string) {
 		t.Fatalf("seed intent: %v", err)
 	}
 	if _, err := docs.Create(ctx, document.Document{
-		WorkspaceID: ws.ID,
-		Type:        document.TypePrinciple,
-		Scope:       document.ScopeSystem,
-		Name:        "pr_test_universal",
-		Body:        sampleSystemPrincipleMD,
-		Status:      document.StatusActive,
+		Type:   document.TypePrinciple,
+		Scope:  document.ScopeSystem,
+		Name:   "pr_test_universal",
+		Body:   sampleSystemPrincipleMD,
+		Status: document.StatusActive,
 	}, now); err != nil {
 		t.Fatalf("seed sys principle: %v", err)
 	}

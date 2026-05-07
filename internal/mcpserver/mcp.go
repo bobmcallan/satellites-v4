@@ -1256,6 +1256,10 @@ func (s *Server) handleDocumentCreate(ctx context.Context, req mcpgo.CallToolReq
 		if requestedProject != "" {
 			return mcpgo.NewToolResultError("scope=system does not accept project_id"), nil
 		}
+		// sty_e2512dbd: system tier is non-tenant. Drop the
+		// caller-stamped workspace; Validate() rejects non-empty
+		// workspace_id at scope=system.
+		doc.WorkspaceID = ""
 	}
 	if binding := req.GetString("contract_binding", ""); binding != "" {
 		doc.ContractBinding = document.StringPtr(binding)
@@ -1326,6 +1330,12 @@ func (s *Server) handleDocumentUpdate(ctx context.Context, req mcpgo.CallToolReq
 		fields.ContractBinding = &s
 	}
 	memberships := s.resolveCallerMemberships(ctx, caller)
+	// sty_e2512dbd: system tier rows have no workspace; membership-
+	// scoped writes would 404 them. Read the row workspace-blind to
+	// learn its scope, then drop memberships for system-scope writes.
+	if existing, gerr := s.docs.GetByID(ctx, id, nil); gerr == nil && existing.Scope == document.ScopeSystem {
+		memberships = nil
+	}
 	updated, err := s.docs.Update(ctx, id, fields, caller.UserID, time.Now().UTC(), memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -1425,6 +1435,12 @@ func (s *Server) handleDocumentDelete(ctx context.Context, req mcpgo.CallToolReq
 	}
 	mode := document.DeleteMode(req.GetString("mode", string(document.DeleteArchive)))
 	memberships := s.resolveCallerMemberships(ctx, caller)
+	// sty_e2512dbd: system tier rows have no workspace; drop
+	// memberships when deleting one so the membership predicate
+	// doesn't 404 it.
+	if existing, gerr := s.docs.GetByID(ctx, id, nil); gerr == nil && existing.Scope == document.ScopeSystem {
+		memberships = nil
+	}
 
 	if err := s.docs.Delete(ctx, id, mode, memberships); err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil

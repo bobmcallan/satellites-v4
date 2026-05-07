@@ -12,6 +12,12 @@ import (
 // permission_patterns + skill_refs flow into AgentSettings; any other
 // keys (e.g. tool_ceiling for the orchestrator) are merged into the
 // raw JSON structured payload alongside.
+//
+// sty_e2512dbd: parsers stamp every system-tier UpsertInput with
+// WorkspaceID="" — the system tier is non-tenant. RunProject
+// overrides WorkspaceID/ProjectID/Scope when re-targeting the same
+// inputs at the project tier; the workspaceID parameter is preserved
+// only for signature symmetry with that retargeting path.
 func agentToInput(fm Frontmatter, body []byte, workspaceID, actor string) (document.UpsertInput, error) {
 	name := fm.String("name")
 	if name == "" {
@@ -33,7 +39,7 @@ func agentToInput(fm Frontmatter, body []byte, workspaceID, actor string) (docum
 		return document.UpsertInput{}, fmt.Errorf("agent %q: merge: %w", name, err)
 	}
 	return document.UpsertInput{
-		WorkspaceID: workspaceID,
+		WorkspaceID: "",
 		ProjectID:   nil,
 		Type:        document.TypeAgent,
 		Name:        name,
@@ -68,7 +74,7 @@ func contractToInput(fm Frontmatter, body []byte, workspaceID, actor string) (do
 		return document.UpsertInput{}, fmt.Errorf("contract %q: marshal: %w", name, err)
 	}
 	return document.UpsertInput{
-		WorkspaceID: workspaceID,
+		WorkspaceID: "",
 		ProjectID:   nil,
 		Type:        document.TypeContract,
 		Name:        name,
@@ -92,7 +98,7 @@ func workflowToInput(fm Frontmatter, body []byte, workspaceID, actor string) (do
 		return document.UpsertInput{}, fmt.Errorf("workflow: name required")
 	}
 	return document.UpsertInput{
-		WorkspaceID: workspaceID,
+		WorkspaceID: "",
 		ProjectID:   nil,
 		Type:        document.TypeWorkflow,
 		Name:        name,
@@ -119,7 +125,7 @@ func principleToInput(fm Frontmatter, body []byte, workspaceID, actor string) (d
 		return document.UpsertInput{}, fmt.Errorf("principle: name required")
 	}
 	return document.UpsertInput{
-		WorkspaceID: workspaceID,
+		WorkspaceID: "",
 		ProjectID:   nil,
 		Type:        document.TypePrinciple,
 		Name:        name,
@@ -157,7 +163,7 @@ func storyTemplateToInput(fm Frontmatter, body []byte, workspaceID, actor string
 		return document.UpsertInput{}, fmt.Errorf("story_template %q: marshal: %w", category, err)
 	}
 	return document.UpsertInput{
-		WorkspaceID: workspaceID,
+		WorkspaceID: "",
 		ProjectID:   nil,
 		Type:        document.TypeStoryTemplate,
 		Name:        name,
@@ -267,7 +273,7 @@ func replicateVocabularyToInput(fm Frontmatter, body []byte, workspaceID, actor 
 		return document.UpsertInput{}, fmt.Errorf("replicate_vocabulary %q: marshal: %w", name, err)
 	}
 	return document.UpsertInput{
-		WorkspaceID: workspaceID,
+		WorkspaceID: "",
 		ProjectID:   nil,
 		Type:        document.TypeReplicateVocabulary,
 		Name:        name,
@@ -291,7 +297,7 @@ func artifactToInput(fm Frontmatter, body []byte, workspaceID, actor string) (do
 		return document.UpsertInput{}, fmt.Errorf("artifact: name required")
 	}
 	return document.UpsertInput{
-		WorkspaceID: workspaceID,
+		WorkspaceID: "",
 		ProjectID:   nil,
 		Type:        document.TypeArtifact,
 		Name:        name,
@@ -325,7 +331,7 @@ func helpToInput(fm Frontmatter, body []byte, workspaceID, actor string) (docume
 		return document.UpsertInput{}, fmt.Errorf("help %q: marshal: %w", slug, err)
 	}
 	return document.UpsertInput{
-		WorkspaceID: workspaceID,
+		WorkspaceID: "",
 		ProjectID:   nil,
 		Type:        document.TypeHelp,
 		Name:        slug,

@@ -188,12 +188,11 @@ func TestLookupOrchestratorAgent_OverrideChain(t *testing.T) {
 
 	// System seed.
 	if _, err := docs.Create(ctx, document.Document{
-		WorkspaceID: "wksp_sys",
-		Type:        document.TypeAgent,
-		Scope:       document.ScopeSystem,
-		Status:      document.StatusActive,
-		Name:        "agent_claude_orchestrator",
-		Body:        "system seed",
+		Type:   document.TypeAgent,
+		Scope:  document.ScopeSystem,
+		Status: document.StatusActive,
+		Name:   "agent_claude_orchestrator",
+		Body:   "system seed",
 	}, now); err != nil {
 		t.Fatalf("seed system agent: %v", err)
 	}

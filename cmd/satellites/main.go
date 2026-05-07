@@ -263,14 +263,45 @@ func main() {
 			}
 		}
 
-		// sty_8f6b90c8: archive scope=system type=principle rows whose
-		// Name no longer matches a seed file under system/principles/.
-		// Catches orphans left after a principle is moved to project
-		// tier or deleted from the seed dir. Idempotent.
-		if archived, err := configseed.SweepOrphanedSystemPrinciples(ctx, docStore, configseed.ResolveSeedDir(), logger, time.Now().UTC()); err != nil {
-			logger.Warn().Str("error", err.Error()).Msg("system principle sweep failed")
+		// sty_92271886: workspace-tier seed phase. Walks
+		// config/seed/<workspace_id>/<kind>/*.md and upserts each as a
+		// scope=workspace document stamped with workspace_id from the
+		// path. Synchronous so workspace docs are visible to the
+		// project goroutine that runs after MCP boot. Failures log at
+		// warn — partial seed is preferred to a hard stop.
+		if wsDirs, derr := configseed.DiscoverWorkspaceDirs(configseed.ResolveSeedDir()); derr != nil {
+			logger.Warn().Str("error", derr.Error()).Msg("workspace seed discovery failed")
+		} else {
+			for _, wsID := range wsDirs {
+				if summary, err := configseed.RunWorkspace(ctx, docStore,
+					configseed.ResolveSeedDir(), wsID, "system", time.Now().UTC()); err != nil {
+					logger.Warn().Str("workspace_id", wsID).Str("error", err.Error()).Msg("workspace seed run failed")
+				} else if summary.Loaded > 0 || len(summary.Errors) > 0 {
+					logger.Info().
+						Str("workspace_id", wsID).
+						Int("loaded", summary.Loaded).
+						Int("created", summary.Created).
+						Int("updated", summary.Updated).
+						Int("skipped", summary.Skipped).
+						Int("errors", len(summary.Errors)).
+						Msg("workspace seed run complete")
+					for _, e := range summary.Errors {
+						logger.Warn().Str("workspace_id", wsID).Str("path", e.Path).Str("reason", e.Reason).Msg("workspace seed entry failed")
+					}
+				}
+			}
+		}
+
+		// sty_8f6b90c8 / sty_92271886: archive scope=system rows whose
+		// Name no longer matches a seed file under
+		// config/seed/system/<kind>/. Catches orphans left after a
+		// document is moved to a different tier or deleted from the
+		// seed dir; covers every kind the system loader walks.
+		// Idempotent.
+		if archived, err := configseed.SweepOrphanedSystemDocs(ctx, docStore, configseed.ResolveSeedDir(), logger, time.Now().UTC()); err != nil {
+			logger.Warn().Str("error", err.Error()).Msg("system orphan sweep failed")
 		} else if archived > 0 {
-			logger.Info().Int("archived", archived).Msg("orphan system principles archived")
+			logger.Info().Int("archived", archived).Msg("orphan system docs archived")
 		}
 
 		// sty_e2512dbd: clear workspace_id and project_id on every

@@ -135,6 +135,73 @@ func runPrinciplePhase(ctx context.Context, docs document.Store, seedDir, worksp
 	return summary
 }
 
+// RunWorkspace loads <seedDir>/<workspaceID>/<kind>/*.md and upserts each
+// as a scope=workspace document stamped with the supplied workspaceID
+// and project_id=nil. Mirrors RunProject's structure but at one tier
+// up: the path layout is workspace-only, never enumerating proj_*
+// children (those are handled by RunProject in a separate pass).
+//
+// projectKind subdirectories (proj_*) directly under the workspace dir
+// are skipped — discovery here is by kind subdirectory name only, and
+// the workspaceKinds list excludes the project-tier prefix.
+//
+// Idempotent on body hash via docs.Upsert. Missing workspace dir is
+// not an error (the caller may discover via DiscoverWorkspaceDirs and
+// invoke per entry; cold-boot tests pass an empty seed dir).
+//
+// Sty_92271886.
+func RunWorkspace(ctx context.Context, docs document.Store, seedDir, workspaceID, actor string, now time.Time) (Summary, error) {
+	if docs == nil {
+		return Summary{}, fmt.Errorf("configseed: doc store is nil")
+	}
+	if workspaceID == "" {
+		return Summary{}, fmt.Errorf("configseed: workspace_id required")
+	}
+	if seedDir == "" {
+		seedDir = DefaultSeedDir
+	}
+	workspaceRoot := filepath.Join(seedDir, workspaceID)
+	if _, err := os.Stat(workspaceRoot); err != nil {
+		if os.IsNotExist(err) {
+			return Summary{}, nil
+		}
+		return Summary{}, fmt.Errorf("configseed: stat workspace seed dir: %w", err)
+	}
+
+	summary := Summary{}
+	for _, kind := range workspaceKinds {
+		inputs, errs := LoadDir(workspaceRoot, kind, workspaceID, actor)
+		summary.Errors = append(summary.Errors, prefixedErrors(errs, workspaceID)...)
+		for _, in := range inputs {
+			// Per-kind parsers stamp scope=system + WorkspaceID="" by
+			// default (sty_e2512dbd). Re-target to the workspace tier
+			// here so the same parsers cover system, workspace, and
+			// project surfaces without per-tier duplicates.
+			in.Scope = document.ScopeWorkspace
+			in.WorkspaceID = workspaceID
+			in.ProjectID = nil
+			summary.Loaded++
+			res, err := docs.Upsert(ctx, in, now)
+			if err != nil {
+				summary.Errors = append(summary.Errors, ErrorEntry{
+					Path:   workspaceID + "/" + string(kind) + "/" + in.Name,
+					Reason: err.Error(),
+				})
+				continue
+			}
+			switch {
+			case res.Created:
+				summary.Created++
+			case res.Changed:
+				summary.Updated++
+			default:
+				summary.Skipped++
+			}
+		}
+	}
+	return summary, nil
+}
+
 // RunHelp executes the help-tier seed: walks helpDir/*.md and upserts
 // each as a type=help document. story_cc5c67a9.
 func RunHelp(ctx context.Context, docs document.Store, helpDir, workspaceID, actor string, now time.Time) (Summary, error) {

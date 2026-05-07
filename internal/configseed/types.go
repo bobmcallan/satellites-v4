@@ -26,6 +26,15 @@ const (
 	// handshake markdown the MCP server returns to connecting clients.
 	// Sty_6c3f8091.
 	KindArtifact Kind = "artifact"
+	// KindSkill / KindReviewer were added under sty_92271886 so the
+	// workspace-tier seed phase can walk shared `skills/*.md` and
+	// `reviewers/*.md` directories. The system-tier `Run` deliberately
+	// excludes both — per the "Skills and reviewers are ad-hoc, not
+	// baseline" project principle. The constants exist so the workspace
+	// loader (and any future per-project skill seed) can address the
+	// kinds with the same enum.
+	KindSkill    Kind = "skill"
+	KindReviewer Kind = "reviewer"
 )
 
 // Summary captures the per-kind result counts a Run pass produces.

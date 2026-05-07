@@ -348,57 +348,61 @@ func TestValidate_ScopeEnum(t *testing.T) {
 	}
 }
 
-func TestValidate_WorkspaceScopeRoleOrWorkflow(t *testing.T) {
+// TestValidate_WorkspaceScopeAcceptedTypes covers the workspace tier's
+// accepted type set. Sty_92271886 expanded the original {role, workflow}
+// pair to {role, workflow, agent, contract, skill, reviewer} so the
+// shared work docs (developer_agent / releaser_agent + the contracts and
+// reviewers they bind) can live at workspace scope. Type=help and other
+// system-only kinds remain rejected at scope=workspace.
+func TestValidate_WorkspaceScopeAcceptedTypes(t *testing.T) {
 	t.Parallel()
-	// Role with scope=workspace + workspace_id: accepted.
-	roleHappy := Document{
-		Type:        TypeRole,
+
+	binding := StringPtr("doc_contract")
+
+	cases := []struct {
+		name string
+		doc  Document
+	}{
+		{"role", Document{Type: TypeRole, Scope: ScopeWorkspace, Name: "role_custom", WorkspaceID: "wksp_a"}},
+		{"workflow", Document{Type: TypeWorkflow, Scope: ScopeWorkspace, Name: "workflow_custom", WorkspaceID: "wksp_a"}},
+		{"agent", Document{Type: TypeAgent, Scope: ScopeWorkspace, Name: "agent_custom", WorkspaceID: "wksp_a"}},
+		{"contract", Document{Type: TypeContract, Scope: ScopeWorkspace, Name: "contract_custom", WorkspaceID: "wksp_a"}},
+		{"skill", Document{Type: TypeSkill, Scope: ScopeWorkspace, Name: "skill_custom", WorkspaceID: "wksp_a"}},
+		{"reviewer", Document{Type: TypeReviewer, Scope: ScopeWorkspace, Name: "reviewer_custom", WorkspaceID: "wksp_a", ContractBinding: binding}},
+	}
+	for _, tc := range cases {
+		if err := tc.doc.Validate(); err != nil {
+			t.Errorf("scope=workspace + type=%s happy: %v", tc.name, err)
+		}
+	}
+
+	// Empty workspace_id: rejected.
+	if err := (Document{Type: TypeAgent, Scope: ScopeWorkspace, Name: "agent_no_ws"}).Validate(); err == nil {
+		t.Errorf("scope=workspace without workspace_id accepted; want rejection")
+	}
+
+	// Project_id present: rejected.
+	withProj := Document{
+		Type:        TypeAgent,
 		Scope:       ScopeWorkspace,
-		Name:        "role_custom",
-		WorkspaceID: "wksp_a",
-	}
-	if err := roleHappy.Validate(); err != nil {
-		t.Errorf("role scope=workspace happy: %v", err)
-	}
-	// Workflow with scope=workspace + workspace_id: accepted (story_f0a78759).
-	workflowHappy := Document{
-		Type:        TypeWorkflow,
-		Scope:       ScopeWorkspace,
-		Name:        "workflow_custom",
-		WorkspaceID: "wksp_a",
-	}
-	if err := workflowHappy.Validate(); err != nil {
-		t.Errorf("workflow scope=workspace happy: %v", err)
-	}
-	// Role with scope=workspace but empty workspace_id: rejected.
-	roleNoWS := Document{
-		Type:  TypeRole,
-		Scope: ScopeWorkspace,
-		Name:  "role_custom",
-	}
-	if err := roleNoWS.Validate(); err == nil {
-		t.Errorf("role scope=workspace without workspace_id accepted; want rejection")
-	}
-	// Role with scope=workspace + project_id: rejected.
-	roleWithProject := Document{
-		Type:        TypeRole,
-		Scope:       ScopeWorkspace,
-		Name:        "role_custom",
+		Name:        "agent_with_proj",
 		WorkspaceID: "wksp_a",
 		ProjectID:   StringPtr("proj_x"),
 	}
-	if err := roleWithProject.Validate(); err == nil {
-		t.Errorf("role scope=workspace with project_id accepted; want rejection")
+	if err := withProj.Validate(); err == nil {
+		t.Errorf("scope=workspace with project_id accepted; want rejection")
 	}
-	// Non-role/non-workflow document with scope=workspace: rejected.
-	agentWS := Document{
-		Type:        TypeAgent,
+
+	// type=help under scope=workspace: rejected (still system-only).
+	helpWS := Document{
+		Type:        TypeHelp,
 		Scope:       ScopeWorkspace,
-		Name:        "agent_custom",
+		Name:        "help_page",
+		Body:        "body",
 		WorkspaceID: "wksp_a",
 	}
-	if err := agentWS.Validate(); err == nil {
-		t.Errorf("agent scope=workspace accepted; want rejection (only role/workflow allowed)")
+	if err := helpWS.Validate(); err == nil {
+		t.Errorf("scope=workspace + type=help accepted; want rejection")
 	}
 }
 

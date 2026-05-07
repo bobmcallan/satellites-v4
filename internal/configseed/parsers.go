@@ -308,6 +308,61 @@ func artifactToInput(fm Frontmatter, body []byte, workspaceID, actor string) (do
 	}, nil
 }
 
+// skillToInput builds a document.UpsertInput for a kind=skill file.
+// Skills bind to agents via agent.skill_refs (story_b1108d4a) — the
+// frontmatter `contract_binding` is preserved when present (legacy rows
+// still carry it) but is no longer required.
+//
+// Sty_92271886 introduced the parser to support the workspace-tier seed
+// phase. The system-tier Run does not walk skills (per the
+// "Skills and reviewers are ad-hoc, not baseline" project principle);
+// RunWorkspace is the only loader that consumes skill files today.
+func skillToInput(fm Frontmatter, body []byte, workspaceID, actor string) (document.UpsertInput, error) {
+	name := fm.String("name")
+	if name == "" {
+		return document.UpsertInput{}, fmt.Errorf("skill: name required")
+	}
+	in := document.UpsertInput{
+		WorkspaceID: "",
+		ProjectID:   nil,
+		Type:        document.TypeSkill,
+		Name:        name,
+		Body:        body,
+		Scope:       document.ScopeSystem,
+		Tags:        appendDistinct(fm.StringSlice("tags"), "seed", "configseed"),
+		Actor:       actor,
+	}
+	if binding := fm.String("contract_binding"); binding != "" {
+		in.ContractBinding = &binding
+	}
+	return in, nil
+}
+
+// reviewerToInput builds a document.UpsertInput for a kind=reviewer file.
+// Reviewer docs require `contract_binding` per Document.Validate.
+// Sty_92271886.
+func reviewerToInput(fm Frontmatter, body []byte, workspaceID, actor string) (document.UpsertInput, error) {
+	name := fm.String("name")
+	if name == "" {
+		return document.UpsertInput{}, fmt.Errorf("reviewer: name required")
+	}
+	binding := fm.String("contract_binding")
+	if binding == "" {
+		return document.UpsertInput{}, fmt.Errorf("reviewer %q: contract_binding required", name)
+	}
+	return document.UpsertInput{
+		WorkspaceID:     "",
+		ProjectID:       nil,
+		Type:            document.TypeReviewer,
+		Name:            name,
+		Body:            body,
+		Scope:           document.ScopeSystem,
+		ContractBinding: &binding,
+		Tags:            appendDistinct(fm.StringSlice("tags"), "seed", "configseed"),
+		Actor:           actor,
+	}, nil
+}
+
 // helpToInput builds a document.UpsertInput for a kind=help file.
 // Sibling story_cc5c67a9 owns the type=help discriminator + portal
 // surface; the loader entry point lives here so the runner stays

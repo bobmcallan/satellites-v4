@@ -216,6 +216,94 @@ func TestTaskAdd_SeedAgentResolvesForOtherWorkspaceCaller(t *testing.T) {
 	require.Equal(t, task.StatusPublished, out["status"])
 }
 
+// TestTaskAdd_WorkspaceTier_SameWorkspace covers sty_92271886's
+// task_add tenancy AC: a scope=workspace agent in caller's workspace
+// resolves to the caller's session-bound project (or the default
+// project when both lie in the agent's workspace).
+func TestTaskAdd_WorkspaceTier_SameWorkspace(t *testing.T) {
+	t.Parallel()
+	f := newOrchestratorFixture(t)
+
+	// Mint a scope=workspace agent stamped with the fixture's workspace.
+	settings, _ := document.MarshalAgentSettings(document.AgentSettings{
+		Delivers: []string{task.ContractAction("develop")},
+	})
+	wsAgent, err := f.server.docs.Create(context.Background(), document.Document{
+		Type:        document.TypeAgent,
+		Scope:       document.ScopeWorkspace,
+		Name:        "ws_developer",
+		WorkspaceID: f.wsID,
+		Body:        "agent body",
+		Status:      document.StatusActive,
+		Structured:  settings,
+	}, f.now)
+	require.NoError(t, err)
+
+	res := callAddHandler(t, f, map[string]any{
+		"agent_id": wsAgent.ID,
+		"prompt":   "ship the develop work",
+		"story_id": f.storyID,
+		"action":   task.ContractAction("develop"),
+	})
+	require.False(t, res.IsError, "ws-tier same-workspace failed: %s", errorText(res))
+
+	out := decodeResult(t, res)
+	row, err := f.taskStore.GetByID(context.Background(), out["task_id"].(string), nil)
+	require.NoError(t, err)
+	require.Equal(t, f.wsID, row.WorkspaceID, "task workspace matches agent workspace")
+	require.Equal(t, f.projectID, row.ProjectID, "task project resolved from caller's chain")
+}
+
+// TestTaskAdd_WorkspaceTier_CrossWorkspaceRejected covers the
+// negative branch: caller in a different workspace must not be able
+// to dispatch a workspace-tier agent — agent_unavailable.
+func TestTaskAdd_WorkspaceTier_CrossWorkspaceRejected(t *testing.T) {
+	t.Parallel()
+	f := newOrchestratorFixture(t)
+
+	// Workspace-tier agent in workspace alpha (the fixture's workspace).
+	settings, _ := document.MarshalAgentSettings(document.AgentSettings{
+		Delivers: []string{task.ContractAction("develop")},
+	})
+	wsAgent, err := f.server.docs.Create(context.Background(), document.Document{
+		Type:        document.TypeAgent,
+		Scope:       document.ScopeWorkspace,
+		Name:        "ws_developer_alpha",
+		WorkspaceID: f.wsID,
+		Body:        "agent body",
+		Status:      document.StatusActive,
+		Structured:  settings,
+	}, f.now)
+	require.NoError(t, err)
+
+	// A second user with a fresh workspace + project — no membership in
+	// the agent's workspace.
+	otherWS, err := f.server.workspaces.Create(context.Background(), "user_other", "beta", f.now)
+	require.NoError(t, err)
+	require.NoError(t, f.server.workspaces.AddMember(context.Background(), otherWS.ID, "user_other", "admin", "system", f.now))
+	otherProj, err := f.server.projects.Create(context.Background(), "user_other", otherWS.ID, "other-proj", f.now)
+	require.NoError(t, err)
+	otherStory, err := f.server.stories.Create(context.Background(), story.Story{
+		WorkspaceID: otherWS.ID,
+		ProjectID:   otherProj.ID,
+		Title:       "other story",
+	}, f.now)
+	require.NoError(t, err)
+
+	otherCtx := withCaller(context.Background(), CallerIdentity{UserID: "user_other", Source: "session"})
+	req := mcpgo.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"agent_id": wsAgent.ID,
+		"prompt":   "should be rejected",
+		"story_id": otherStory.ID,
+		"action":   task.ContractAction("develop"),
+	}
+	res, err := f.server.handleTaskAdd(otherCtx, req)
+	require.NoError(t, err)
+	require.True(t, res.IsError, "expected agent_unavailable, got success: %s", errorText(res))
+	require.Contains(t, errorText(res), "agent_unavailable")
+}
+
 // errorText returns the inner text of a tool result regardless of whether
 // it came back as IsError or as success — both shapes carry the message
 // in Content[0].

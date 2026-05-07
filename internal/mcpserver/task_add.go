@@ -93,27 +93,66 @@ func (s *Server) handleTaskAdd(ctx context.Context, req mcpgo.CallToolRequest) (
 	// rows post-migration; ignored here defensively for legacy rows
 	// that haven't been swept yet).
 	//
+	// sty_92271886: scope=workspace agents are shared across every
+	// project in their workspace. The agent's WorkspaceID is the
+	// agent's tenancy; the task lands in the caller's session-bound
+	// project provided that project lives in the agent's workspace.
+	// Caller without membership in the agent's workspace gets
+	// agent_unavailable — same shape as a missing agent from the
+	// caller's vantage.
+	//
 	// For scope=project agents the agent's stamped project is the
 	// owning tenancy — the agent IS the project's worker.
 	projectID := ""
 	workspaceID := ""
-	if doc.Scope != document.ScopeSystem {
-		if doc.ProjectID != nil {
-			projectID = *doc.ProjectID
+	if doc.Scope == document.ScopeWorkspace {
+		agentWS := doc.WorkspaceID
+		if agentWS == "" {
+			return mcpgo.NewToolResultError(fmt.Sprintf("agent_invalid: scope=workspace agent_id=%q has empty workspace_id", agentID)), nil
 		}
-		workspaceID = doc.WorkspaceID
-	}
-	if projectID == "" {
-		projectID = s.callerActiveProjectID(ctx, caller)
-	}
-	if projectID == "" {
-		projectID = s.defaultProjectID
-	}
-	if workspaceID == "" && projectID != "" {
-		workspaceID = s.resolveProjectWorkspaceID(ctx, projectID)
-	}
-	if workspaceID == "" && len(memberships) > 0 {
-		workspaceID = memberships[0]
+		inWS := false
+		for _, m := range memberships {
+			if m == agentWS {
+				inWS = true
+				break
+			}
+		}
+		if !inWS {
+			return mcpgo.NewToolResultError(fmt.Sprintf("agent_unavailable: agent_id=%q scope=workspace workspace_id=%s caller has no membership", agentID, agentWS)), nil
+		}
+		workspaceID = agentWS
+		// Caller's session/default project is honoured only when it
+		// lies in the agent's workspace; otherwise defer to the next
+		// step in the chain (defaultProjectID) which is also gated
+		// below.
+		if cand := s.callerActiveProjectID(ctx, caller); cand != "" && s.resolveProjectWorkspaceID(ctx, cand) == agentWS {
+			projectID = cand
+		}
+		if projectID == "" && s.defaultProjectID != "" && s.resolveProjectWorkspaceID(ctx, s.defaultProjectID) == agentWS {
+			projectID = s.defaultProjectID
+		}
+		if projectID == "" {
+			return mcpgo.NewToolResultError(fmt.Sprintf("agent_unavailable: agent_id=%q scope=workspace workspace_id=%s no caller project resolvable in agent workspace", agentID, agentWS)), nil
+		}
+	} else {
+		if doc.Scope != document.ScopeSystem {
+			if doc.ProjectID != nil {
+				projectID = *doc.ProjectID
+			}
+			workspaceID = doc.WorkspaceID
+		}
+		if projectID == "" {
+			projectID = s.callerActiveProjectID(ctx, caller)
+		}
+		if projectID == "" {
+			projectID = s.defaultProjectID
+		}
+		if workspaceID == "" && projectID != "" {
+			workspaceID = s.resolveProjectWorkspaceID(ctx, projectID)
+		}
+		if workspaceID == "" && len(memberships) > 0 {
+			workspaceID = memberships[0]
+		}
 	}
 
 	storyMinted := false

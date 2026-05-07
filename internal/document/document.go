@@ -146,8 +146,17 @@ func (d Document) Validate() error {
 			return errors.New("document: workspace_id must be empty when scope=system")
 		}
 	case ScopeWorkspace:
-		if d.Type != TypeRole && d.Type != TypeWorkflow {
-			return fmt.Errorf("document: scope=workspace only valid for type=role or type=workflow, got type=%s", d.Type)
+		// sty_92271886: workspace tier hosts the shared work docs that
+		// span every project in a workspace (developer_agent /
+		// releaser_agent + the develop/push/merge_to_main contracts and
+		// the skills/reviewers they bind). Roles + workflows were the
+		// initial set; agent/contract/skill/reviewer joined when the
+		// substrate gained a workspace seed phase.
+		switch d.Type {
+		case TypeRole, TypeWorkflow, TypeAgent, TypeContract, TypeSkill, TypeReviewer:
+			// allowed
+		default:
+			return fmt.Errorf("document: scope=workspace not valid for type=%s", d.Type)
 		}
 		if d.WorkspaceID == "" {
 			return errors.New("document: workspace_id required when scope=workspace")

@@ -103,6 +103,10 @@ func kindSubdir(kind Kind) string {
 		return "replicate_vocabulary"
 	case KindArtifact:
 		return "artifacts"
+	case KindSkill:
+		return "skills"
+	case KindReviewer:
+		return "reviewers"
 	case KindHelp:
 		// Help docs live at the seed-dir root rather than under a
 		// subdirectory — see HelpDir wiring in runner.go.
@@ -128,6 +132,10 @@ func buildInput(kind Kind, fm Frontmatter, body []byte, workspaceID, actor strin
 		return replicateVocabularyToInput(fm, body, workspaceID, actor)
 	case KindArtifact:
 		return artifactToInput(fm, body, workspaceID, actor)
+	case KindSkill:
+		return skillToInput(fm, body, workspaceID, actor)
+	case KindReviewer:
+		return reviewerToInput(fm, body, workspaceID, actor)
 	case KindHelp:
 		return helpToInput(fm, body, workspaceID, actor)
 	}

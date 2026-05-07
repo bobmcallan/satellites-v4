@@ -127,6 +127,105 @@ func TestSweepOrphanedSystemPrinciples_Idempotent(t *testing.T) {
 	}
 }
 
+// TestSweepOrphanedSystemDocs_GenericKindCoverage exercises the
+// generalised sweep across multiple kinds (sty_92271886). One orphan
+// per kind, plus one matching seed file per kind, plus one row of an
+// unrelated tier (scope=workspace) that must NOT be archived.
+func TestSweepOrphanedSystemDocs_GenericKindCoverage(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, SystemSubdir, "agents"), 0o755); err != nil {
+		t.Fatalf("mkdir agents: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, SystemSubdir, "contracts"), 0o755); err != nil {
+		t.Fatalf("mkdir contracts: %v", err)
+	}
+
+	const agentMD = `---
+name: kept_agent
+tags: []
+---
+agent body
+`
+	const contractMD = `---
+name: kept_contract
+tags: []
+---
+contract body
+`
+	if err := os.WriteFile(filepath.Join(dir, SystemSubdir, "agents", "kept.md"), []byte(agentMD), 0o644); err != nil {
+		t.Fatalf("write agent: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, SystemSubdir, "contracts", "kept.md"), []byte(contractMD), 0o644); err != nil {
+		t.Fatalf("write contract: %v", err)
+	}
+
+	docs := document.NewMemoryStore()
+	ctx := context.Background()
+	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
+
+	// kept rows (match a seed file)
+	if _, err := docs.Upsert(ctx, document.UpsertInput{Type: document.TypeAgent, Scope: document.ScopeSystem, Name: "kept_agent", Body: []byte("a"), Actor: "system"}, now); err != nil {
+		t.Fatalf("seed kept_agent: %v", err)
+	}
+	if _, err := docs.Upsert(ctx, document.UpsertInput{Type: document.TypeContract, Scope: document.ScopeSystem, Name: "kept_contract", Body: []byte("c"), Actor: "system"}, now); err != nil {
+		t.Fatalf("seed kept_contract: %v", err)
+	}
+
+	// orphan rows (no matching seed file)
+	orphanAgent, err := docs.Upsert(ctx, document.UpsertInput{Type: document.TypeAgent, Scope: document.ScopeSystem, Name: "orphan_agent", Body: []byte("a"), Actor: "system"}, now)
+	if err != nil {
+		t.Fatalf("seed orphan_agent: %v", err)
+	}
+	orphanContract, err := docs.Upsert(ctx, document.UpsertInput{Type: document.TypeContract, Scope: document.ScopeSystem, Name: "orphan_contract", Body: []byte("c"), Actor: "system"}, now)
+	if err != nil {
+		t.Fatalf("seed orphan_contract: %v", err)
+	}
+
+	// scope=workspace row of the same type — must NOT be archived; the
+	// sweep targets scope=system only.
+	wsAgent, err := docs.Upsert(ctx, document.UpsertInput{Type: document.TypeAgent, Scope: document.ScopeWorkspace, Name: "ws_agent", WorkspaceID: "wksp_unrelated", Body: []byte("a"), Actor: "system"}, now)
+	if err != nil {
+		t.Fatalf("seed ws_agent: %v", err)
+	}
+
+	logger := arbor.New("warn")
+	archived, err := SweepOrphanedSystemDocs(ctx, docs, dir, logger, now)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if archived != 2 {
+		t.Errorf("archived = %d, want 2 (one orphan per kind)", archived)
+	}
+
+	for _, p := range []struct {
+		name string
+		id   string
+		want string
+	}{
+		{"orphan_agent", orphanAgent.Document.ID, document.StatusArchived},
+		{"orphan_contract", orphanContract.Document.ID, document.StatusArchived},
+		{"ws_agent_untouched", wsAgent.Document.ID, document.StatusActive},
+	} {
+		got, err := docs.GetByID(ctx, p.id, nil)
+		if err != nil {
+			t.Fatalf("get %s: %v", p.name, err)
+		}
+		if got.Status != p.want {
+			t.Errorf("%s status = %q, want %q", p.name, got.Status, p.want)
+		}
+	}
+
+	// idempotent: second pass archives 0.
+	again, err := SweepOrphanedSystemDocs(ctx, docs, dir, logger, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if again != 0 {
+		t.Errorf("second sweep archived = %d, want 0 (idempotent)", again)
+	}
+}
+
 // TestSweepOrphanedSystemPrinciples_MissingDirNoError covers the
 // post-migration shape: no system/principles/ dir at all. Sweep
 // archives every active scope=system principle row.

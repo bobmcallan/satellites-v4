@@ -84,6 +84,61 @@ var projectKinds = []Kind{
 	KindPrinciple,
 }
 
+// workspaceKinds is the ordered list the workspace-tier loader walks
+// (sty_92271886). Includes skill + reviewer alongside the project-tier
+// set: workspace-tier docs are the shared work surface (developer_agent
+// + the develop/push/merge_to_main contracts and the skills/reviewers
+// they bind), so skill/reviewer files belong here when an operator
+// authors them. system tier deliberately excludes both per the
+// "Skills and reviewers are ad-hoc, not baseline" project principle.
+var workspaceKinds = []Kind{
+	KindAgent,
+	KindContract,
+	KindSkill,
+	KindReviewer,
+	KindWorkflow,
+	KindStoryTemplate,
+	KindReplicateVocabulary,
+	KindArtifact,
+	KindPrinciple,
+}
+
+// DiscoverWorkspaceDirs returns every wksp_*/ directory directly under
+// seedDir, sorted by name. The workspace seed phase walks each entry
+// for <kind>/*.md files; project_id subdirectories underneath are
+// covered by DiscoverProjectDirs / RunProject and are NOT loaded by
+// the workspace-tier pass.
+//
+// Returns nil + nil when the seed dir is missing (cold-boot test
+// fixture).
+//
+// Sty_92271886.
+func DiscoverWorkspaceDirs(seedDir string) ([]string, error) {
+	if seedDir == "" {
+		seedDir = DefaultSeedDir
+	}
+	entries, err := os.ReadDir(seedDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("configseed: read seed dir for workspace discovery: %w", err)
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasPrefix(name, WorkspaceDirPrefix) {
+			continue
+		}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 // DiscoverProjectDirs walks <seedDir>/wksp_*/proj_*/ and returns the
 // (workspace_id, project_id) pairs found on disk, sorted by
 // workspace_id then project_id. Returns nil + nil when the seed dir is

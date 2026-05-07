@@ -121,6 +121,111 @@ func TestMemoryStore_ProjectIsolation(t *testing.T) {
 	}
 }
 
+// TestUpsert_CrossTierIdentity is the substrate-fix anchor surfaced
+// during sty_9ee6fc46's dispatch dogfood: an upsert at one scope must
+// NOT collide with a same-name row at a different scope. Pre-fix,
+// MemoryStore.findByName + SurrealStore.GetByName keyed identity on
+// (project_id, name) only — so a workspace-tier `develop` upsert
+// matched the existing system-tier `develop` row (both have
+// project_id=nil) and silently re-targeted it. Sty_92271886 follow-up.
+func TestUpsert_CrossTierIdentity(t *testing.T) {
+	t.Parallel()
+	store := NewMemoryStore()
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Seed a scope=system contract named "develop".
+	sysRes, err := store.Upsert(ctx, UpsertInput{
+		Type:  TypeContract,
+		Scope: ScopeSystem,
+		Name:  "develop",
+		Body:  []byte("system body"),
+		Actor: "system",
+	}, now)
+	if err != nil {
+		t.Fatalf("seed system: %v", err)
+	}
+	if !sysRes.Created {
+		t.Fatalf("system seed must be created")
+	}
+
+	// Upsert a scope=workspace contract with the SAME name. Must mint
+	// a NEW row, not update the system-tier one.
+	wsRes, err := store.Upsert(ctx, UpsertInput{
+		Type:        TypeContract,
+		Scope:       ScopeWorkspace,
+		WorkspaceID: "wksp_a",
+		Name:        "develop",
+		Body:        []byte("workspace body"),
+		Actor:       "system",
+	}, now)
+	if err != nil {
+		t.Fatalf("workspace upsert: %v", err)
+	}
+	if !wsRes.Created {
+		t.Errorf("workspace upsert should mint a new row, got Created=%v", wsRes.Created)
+	}
+	if wsRes.Document.ID == sysRes.Document.ID {
+		t.Errorf("workspace upsert collided with system row id %q", sysRes.Document.ID)
+	}
+
+	// The system-tier row's body must be unchanged.
+	sysAfter, err := store.GetByID(ctx, sysRes.Document.ID, nil)
+	if err != nil {
+		t.Fatalf("GetByID system: %v", err)
+	}
+	if sysAfter.Body != "system body" || sysAfter.Scope != ScopeSystem {
+		t.Errorf("system row drifted: body=%q scope=%q", sysAfter.Body, sysAfter.Scope)
+	}
+
+	// The workspace-tier row must be at scope=workspace.
+	wsAfter, err := store.GetByID(ctx, wsRes.Document.ID, nil)
+	if err != nil {
+		t.Fatalf("GetByID workspace: %v", err)
+	}
+	if wsAfter.Body != "workspace body" || wsAfter.Scope != ScopeWorkspace || wsAfter.WorkspaceID != "wksp_a" {
+		t.Errorf("workspace row wrong: body=%q scope=%q ws=%q", wsAfter.Body, wsAfter.Scope, wsAfter.WorkspaceID)
+	}
+
+	// Re-upserting the workspace row with the same body is a no-op.
+	wsAgain, err := store.Upsert(ctx, UpsertInput{
+		Type:        TypeContract,
+		Scope:       ScopeWorkspace,
+		WorkspaceID: "wksp_a",
+		Name:        "develop",
+		Body:        []byte("workspace body"),
+		Actor:       "system",
+	}, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("workspace re-upsert: %v", err)
+	}
+	if wsAgain.Created || wsAgain.Changed {
+		t.Errorf("workspace re-upsert with same body should be no-op, got %+v", wsAgain)
+	}
+	if wsAgain.Document.ID != wsRes.Document.ID {
+		t.Errorf("workspace re-upsert minted a new id: %q → %q", wsRes.Document.ID, wsAgain.Document.ID)
+	}
+
+	// A workspace-tier row in a DIFFERENT workspace must also be distinct.
+	otherWS, err := store.Upsert(ctx, UpsertInput{
+		Type:        TypeContract,
+		Scope:       ScopeWorkspace,
+		WorkspaceID: "wksp_b",
+		Name:        "develop",
+		Body:        []byte("other workspace body"),
+		Actor:       "system",
+	}, now)
+	if err != nil {
+		t.Fatalf("other workspace upsert: %v", err)
+	}
+	if !otherWS.Created {
+		t.Errorf("upsert in second workspace should mint a new row")
+	}
+	if otherWS.Document.ID == wsRes.Document.ID || otherWS.Document.ID == sysRes.Document.ID {
+		t.Errorf("workspace_b row collided with existing rows")
+	}
+}
+
 func TestIngestFile_PathTraversalBlocked(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

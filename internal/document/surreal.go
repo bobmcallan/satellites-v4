@@ -180,11 +180,7 @@ func (s *SurrealStore) Upsert(ctx context.Context, in UpsertInput, now time.Time
 	if err := s.validateBinding(ctx, in.ContractBinding); err != nil {
 		return UpsertResult{}, err
 	}
-	projectID := ""
-	if in.ProjectID != nil {
-		projectID = *in.ProjectID
-	}
-	existing, err := s.GetByName(ctx, projectID, in.Name, nil)
+	existing, err := s.findForUpsert(ctx, in)
 	if err == nil {
 		// Body-hash match short-circuits the write path UNLESS the
 		// type has drifted (a row whose type was rewritten by an
@@ -615,6 +611,50 @@ func (s *SurrealStore) GetByID(ctx context.Context, id string, memberships []str
 	results, err := surrealdb.Query[[]Document](ctx, s.db, sql, vars)
 	if err != nil {
 		return Document{}, fmt.Errorf("document: select by id: %w", err)
+	}
+	if results == nil || len(*results) == 0 || len((*results)[0].Result) == 0 {
+		return Document{}, ErrNotFound
+	}
+	return (*results)[0].Result[0], nil
+}
+
+// findForUpsert is the scope-aware existence check used by Upsert.
+// Sty_92271886 added the workspace tier (scope=workspace, project_id=NONE);
+// before this method existed, Upsert keyed identity on (project_id, name)
+// alone, which collided system-tier rows with workspace-tier rows of the
+// same name. findForUpsert keys on the natural per-tier identity so an
+// upsert at one scope never re-targets a row at a different scope:
+//
+//   - system    → (name, scope=system)
+//   - workspace → (name, scope=workspace, workspace_id)
+//   - project   → (name, scope=project, project_id)
+//   - user      → (name, scope=user, workspace_id, created_by)
+func (s *SurrealStore) findForUpsert(ctx context.Context, in UpsertInput) (Document, error) {
+	conds := []string{"name = $name", "status = 'active'", "scope = $scope"}
+	vars := map[string]any{"name": in.Name, "scope": in.Scope}
+	switch in.Scope {
+	case ScopeSystem:
+		// system tier is global — no further key.
+	case ScopeWorkspace:
+		conds = append(conds, "workspace_id = $workspace")
+		vars["workspace"] = in.WorkspaceID
+	case ScopeProject:
+		if in.ProjectID == nil || *in.ProjectID == "" {
+			return Document{}, ErrNotFound
+		}
+		conds = append(conds, "project_id = $project")
+		vars["project"] = *in.ProjectID
+	case ScopeUser:
+		conds = append(conds, "workspace_id = $workspace", "created_by = $actor")
+		vars["workspace"] = in.WorkspaceID
+		vars["actor"] = in.Actor
+	default:
+		return Document{}, ErrNotFound
+	}
+	sql := fmt.Sprintf("SELECT %s FROM documents WHERE %s LIMIT 1", selectCols, strings.Join(conds, " AND "))
+	results, err := surrealdb.Query[[]Document](ctx, s.db, sql, vars)
+	if err != nil {
+		return Document{}, fmt.Errorf("document: select for upsert: %w", err)
 	}
 	if results == nil || len(*results) == 0 || len((*results)[0].Result) == 0 {
 		return Document{}, ErrNotFound

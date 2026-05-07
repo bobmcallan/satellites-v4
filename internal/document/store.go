@@ -229,6 +229,47 @@ func (m *MemoryStore) findByName(projectID, name string) (Document, bool) {
 	return Document{}, false
 }
 
+// findForUpsert is the scope-aware existence check Upsert uses. Sty_92271886
+// added the workspace tier (scope=workspace, ProjectID=nil); a same-name
+// system-tier row (scope=system, ProjectID=nil) would collide under the old
+// (project_id, name) lookup and silently update across the tier boundary.
+// findForUpsert keys on the natural per-tier identity so an upsert at one
+// scope never re-targets a row at a different scope:
+//
+//   - system    → (name, scope=system)
+//   - workspace → (name, scope=workspace, workspace_id)
+//   - project   → (name, scope=project, project_id)
+//   - user      → (name, scope=user, workspace_id, created_by)
+//
+// Caller must hold m.mu.
+func (m *MemoryStore) findForUpsert(in UpsertInput) (Document, bool) {
+	for _, d := range m.rows {
+		if d.Name != in.Name || d.Status != StatusActive || d.Scope != in.Scope {
+			continue
+		}
+		switch in.Scope {
+		case ScopeSystem:
+			return d, true
+		case ScopeWorkspace:
+			if d.WorkspaceID == in.WorkspaceID {
+				return d, true
+			}
+		case ScopeProject:
+			if in.ProjectID == nil || d.ProjectID == nil {
+				continue
+			}
+			if *d.ProjectID == *in.ProjectID {
+				return d, true
+			}
+		case ScopeUser:
+			if d.WorkspaceID == in.WorkspaceID && d.CreatedBy == in.Actor {
+				return d, true
+			}
+		}
+	}
+	return Document{}, false
+}
+
 // validateBindingLocked enforces FK integrity against the in-memory rows.
 // Caller must hold m.mu.
 func (m *MemoryStore) validateBindingLocked(binding *string) error {
@@ -247,10 +288,6 @@ func (m *MemoryStore) Upsert(ctx context.Context, in UpsertInput, now time.Time)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	hash := HashBody(in.Body)
-	projectID := ""
-	if in.ProjectID != nil {
-		projectID = *in.ProjectID
-	}
 	candidate := Document{
 		WorkspaceID:     in.WorkspaceID,
 		ProjectID:       in.ProjectID,
@@ -270,7 +307,7 @@ func (m *MemoryStore) Upsert(ctx context.Context, in UpsertInput, now time.Time)
 	if err := m.validateBindingLocked(in.ContractBinding); err != nil {
 		return UpsertResult{}, err
 	}
-	if existing, ok := m.findByName(projectID, in.Name); ok {
+	if existing, ok := m.findForUpsert(in); ok {
 		// Body-hash match short-circuits unless the type has drifted —
 		// see surreal.go for the corresponding rationale (story_7992c382).
 		if existing.BodyHash == hash && existing.Type == in.Type {

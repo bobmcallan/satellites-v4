@@ -690,13 +690,18 @@ func (s *SurrealStore) BackfillProjectID(ctx context.Context, defaultID string) 
 	return len((*results)[0].Result), nil
 }
 
-// ClearSystemWorkspaceIDs implements Store for SurrealStore.
-func (s *SurrealStore) ClearSystemWorkspaceIDs(ctx context.Context, now time.Time) (int, error) {
-	sql := "UPDATE documents SET workspace_id = '', updated_at = $now WHERE scope = 'system' AND workspace_id != NONE AND workspace_id != '' RETURN AFTER"
+// ClearSystemTenantStamps implements Store for SurrealStore.
+func (s *SurrealStore) ClearSystemTenantStamps(ctx context.Context, now time.Time) (int, error) {
+	sql := `UPDATE documents
+		SET workspace_id = '', project_id = NONE, updated_at = $now
+		WHERE scope = 'system'
+		AND ((workspace_id != NONE AND workspace_id != '')
+		     OR (project_id != NONE AND project_id != ''))
+		RETURN AFTER`
 	vars := map[string]any{"now": now}
 	results, err := surrealdb.Query[[]Document](ctx, s.db, sql, vars)
 	if err != nil {
-		return 0, fmt.Errorf("document: clear system workspace_ids: %w", err)
+		return 0, fmt.Errorf("document: clear system tenant stamps: %w", err)
 	}
 	if results == nil || len(*results) == 0 {
 		return 0, nil

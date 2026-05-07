@@ -84,6 +84,63 @@ contract body for workspace tier
 	}
 }
 
+// TestRunWorkspace_LoadsLifecycleContractAtWorkspaceScope is the
+// sty_9ee6fc46 anchor: a workspace seed dir containing
+// contracts/develop.md must produce a name=develop document at
+// scope=workspace, stamped with the supplied workspace_id and a
+// nil project_id. Locks the relocation of develop / push /
+// merge_to_main from the system tier to the workspace tier.
+func TestRunWorkspace_LoadsLifecycleContractAtWorkspaceScope(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	const wsID = "wksp_lifecycle"
+
+	if err := os.MkdirAll(filepath.Join(dir, wsID, "contracts"), 0o755); err != nil {
+		t.Fatalf("mkdir contracts: %v", err)
+	}
+	const developMD = `---
+name: develop
+category: develop
+validation_mode: llm
+required_role: role_orchestrator
+tags: [v4, lifecycle, workspace]
+---
+develop body
+`
+	if err := os.WriteFile(filepath.Join(dir, wsID, "contracts", "develop.md"), []byte(developMD), 0o644); err != nil {
+		t.Fatalf("write develop contract: %v", err)
+	}
+
+	docs := document.NewMemoryStore()
+	ctx := context.Background()
+	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
+
+	if _, err := RunWorkspace(ctx, docs, dir, wsID, "system", now); err != nil {
+		t.Fatalf("RunWorkspace: %v", err)
+	}
+
+	rows, err := docs.List(ctx, document.ListOptions{Scope: document.ScopeWorkspace, Type: document.TypeContract}, nil)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("workspace contract rows = %d, want 1", len(rows))
+	}
+	got := rows[0]
+	if got.Name != "develop" {
+		t.Errorf("Name = %q, want %q", got.Name, "develop")
+	}
+	if got.Scope != document.ScopeWorkspace {
+		t.Errorf("Scope = %q, want workspace", got.Scope)
+	}
+	if got.WorkspaceID != wsID {
+		t.Errorf("WorkspaceID = %q, want %q", got.WorkspaceID, wsID)
+	}
+	if got.ProjectID != nil {
+		t.Errorf("ProjectID = %v, want nil", got.ProjectID)
+	}
+}
+
 // TestRunWorkspace_SkipsProjectSubdir asserts a proj_*/ entry directly
 // under the workspace dir is NOT walked by RunWorkspace — those are
 // the project-tier loader's responsibility.

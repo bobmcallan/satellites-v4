@@ -9,11 +9,10 @@ evidence_required: |
   - plan.md  (scope, files-to-change, approach, test-strategy, AC mapping)
   - review-criteria.md  (per-AC verify / evidence / pass-fail boundary)
 
-  Plus a submitted task list via task_submit(kind=plan,
-  tasks=[…]) covering the downstream actions (develop / push /
-  merge_to_main / story_close) each paired with its kind=review
-  sibling. The plan task itself is tasks[0] (kind=work,
-  action=contract:plan); its review sibling is tasks[1].
+  Plus an ordered downstream task list authored by the plan agent
+  covering each contract the story will execute, every kind=work
+  paired with its kind=review sibling. The plan task itself is the
+  first work entry; its review sibling is the second.
 tags: [v4, lifecycle, system]
 ---
 # Plan Contract
@@ -35,29 +34,25 @@ readiness assessment.
 - `review-criteria.md` — the per-AC success conditions, written
   before the implementing agent begins so the criteria are
   independent of the implementing agent's choices. Same tagging.
-- **Task list** — the plan agent submits the full ordered task
-  list via `task_submit(kind=plan, tasks=[…])`. Each
-  downstream work task is paired with its kind=review sibling; the
-  substrate validates structure (plan first, every work has a
-  review, agents match capability) and rejects on violation.
+- **Task list** — the plan agent authors the ordered downstream
+  task list, every `kind=work` paired with its `kind=review`
+  sibling. The substrate validates structure (plan first, every
+  work has a review, agents match capability) and rejects on
+  violation.
 
 ## How
 
-Read-only investigation plus ledger writes plus the
-`task_submit(kind=plan)` call. The plan agent inspects the
-codebase and reasons about the change shape; it never edits a file
-or runs a build.
+Read-only investigation plus ledger writes plus the task-list
+authoring call. The plan agent inspects the codebase and reasons
+about the change shape; it never edits a file or runs a build.
 
 ## Limitations
 
-- Plan binds develop. Mid-flight scope changes require submitting a
-  fresh plan via `task_submit(kind=plan)` against the same
-  story (the substrate is idempotent on first submission and
-  rejects subsequent submissions when tasks already exist — agents
-  amend through the orchestrator's task-spawn flow, not by
-  re-submitting plan).
-- Plan cannot file follow-up stories during planning — that belongs
-  to the user's decision space. Plan can _propose_ splits in
-  `plan.md` but does not act on them.
-- Plan close requires the submitted task list to cover the story's
+- Plan binds develop. Mid-flight scope changes go through the
+  orchestrator's task-spawn flow against the same story; the plan
+  task itself is one-shot per story.
+- Plan cannot file follow-up stories during planning — that
+  belongs to the user's decision space. Plan can _propose_ splits
+  in `plan.md` but does not act on them.
+- Plan close requires the authored task list to cover the story's
   ACs; a plan that designs no work is not a plan.

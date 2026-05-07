@@ -93,11 +93,15 @@ The orchestrator's runtime job is dispatch, not work. Citing
   CLI plus `PreToolUse` hooks in the worktree's
   `.claude/settings.json`. Defence in depth — flag-level and
   hook-level enforcement.
-- **The substrate provides the context.** The dispatch step
-  composes the agent's prompt from the agent_process artifact +
-  the agent doc body + active principles + story_context +
-  contract document body + relevant `task_walk` slice. The
-  agent does NOT inherit operator-side Claude Code memory.
+- **The orchestrator authors `task_add(prompt=…)`.** The mint
+  prompt names the agent role, the action, the story id, any
+  prior task id, and the explicit work the agent should
+  execute. The dispatched bash subprocess carries only that
+  thin pointer; the agent collates the rest itself via
+  per-verb MCP retrieval — `agent_get`, `contract_get`,
+  `principle_list`, `story_get`, `task_walk`, `ledger_*`.
+  Citing `pr_substrate_provides_context`. The agent does NOT
+  inherit operator-side Claude Code memory.
 - **The agent claims, works, closes.** Inside its worktree the
   agent claims its task, writes evidence ledger rows, and
   closes the task. Review tasks are dispatched the same way

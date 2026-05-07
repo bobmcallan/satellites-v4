@@ -754,6 +754,117 @@ func (s *SurrealStore) ResolveByName(ctx context.Context, docType, name, workspa
 	return Document{}, ErrNotFound
 }
 
+// ResolveList implements Store for SurrealStore. Issues up to three
+// sequential SELECTs in tier-precedence order: project → workspace →
+// system. Memberships scope project + workspace tiers exactly as
+// ResolveByName enforces it; the system tier is workspace-blind.
+// Per-tier SELECTs drop the LIMIT clause so the post-merge truncation
+// at opts.Limit is the binding cap (one tier's rows cannot starve
+// another's). Dedupe by (Name, Type) gives project precedence over
+// workspace precedence over system on collisions; the merged slice is
+// re-sorted by updated_at DESC because tier precedence and per-row
+// timestamps can disagree.
+func (s *SurrealStore) ResolveList(ctx context.Context, opts ListOptions, workspaceID string, memberships []string) ([]Document, error) {
+	walkProject := opts.Scope == "" || opts.Scope == ScopeProject
+	walkWorkspace := opts.Scope == "" || opts.Scope == ScopeWorkspace
+	walkSystem := opts.Scope == "" || opts.Scope == ScopeSystem
+	if opts.Type != "" {
+		if _, ok := validTypes[opts.Type]; !ok {
+			return nil, fmt.Errorf("document: invalid type filter %q", opts.Type)
+		}
+	}
+	if opts.Scope != "" {
+		if _, ok := validScopes[opts.Scope]; !ok {
+			return nil, fmt.Errorf("document: invalid scope filter %q", opts.Scope)
+		}
+	}
+
+	denyTenantTiers := memberships != nil && len(memberships) == 0
+	type tierBuild struct {
+		name string
+		fn   func() (string, map[string]any)
+	}
+	tiers := make([]tierBuild, 0, 3)
+	if walkProject && opts.ProjectID != "" && !denyTenantTiers {
+		projectID := opts.ProjectID
+		tiers = append(tiers, tierBuild{name: ScopeProject, fn: func() (string, map[string]any) {
+			conds := []string{"status = 'active'", "scope = 'project'", "project_id = $project"}
+			vars := map[string]any{"project": projectID}
+			s.appendListFilters(&conds, vars, opts)
+			if memberships != nil {
+				conds = append(conds, "workspace_id IN $memberships")
+				vars["memberships"] = memberships
+			}
+			return fmt.Sprintf("SELECT %s FROM documents WHERE %s ORDER BY updated_at DESC", selectCols, strings.Join(conds, " AND ")), vars
+		}})
+	}
+	if walkWorkspace && workspaceID != "" && !denyTenantTiers {
+		wsID := workspaceID
+		tiers = append(tiers, tierBuild{name: ScopeWorkspace, fn: func() (string, map[string]any) {
+			conds := []string{"status = 'active'", "scope = 'workspace'", "workspace_id = $workspace"}
+			vars := map[string]any{"workspace": wsID}
+			s.appendListFilters(&conds, vars, opts)
+			if memberships != nil {
+				conds = append(conds, "workspace_id IN $memberships")
+				vars["memberships"] = memberships
+			}
+			return fmt.Sprintf("SELECT %s FROM documents WHERE %s ORDER BY updated_at DESC", selectCols, strings.Join(conds, " AND ")), vars
+		}})
+	}
+	if walkSystem {
+		tiers = append(tiers, tierBuild{name: ScopeSystem, fn: func() (string, map[string]any) {
+			conds := []string{"status = 'active'", "scope = 'system'"}
+			vars := map[string]any{}
+			s.appendListFilters(&conds, vars, opts)
+			return fmt.Sprintf("SELECT %s FROM documents WHERE %s ORDER BY updated_at DESC", selectCols, strings.Join(conds, " AND ")), vars
+		}})
+	}
+
+	seen := make(map[string]struct{})
+	out := make([]Document, 0)
+	for _, t := range tiers {
+		sql, vars := t.fn()
+		results, err := surrealdb.Query[[]Document](ctx, s.db, sql, vars)
+		if err != nil {
+			return nil, fmt.Errorf("document: resolve list (%s): %w", t.name, err)
+		}
+		if results == nil || len(*results) == 0 {
+			continue
+		}
+		for _, d := range (*results)[0].Result {
+			key := d.Name + "|" + d.Type
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, d)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	if opts.Limit > 0 && len(out) > opts.Limit {
+		out = out[:opts.Limit]
+	}
+	return out, nil
+}
+
+// appendListFilters appends opts.Type / opts.ContractBinding / opts.Tags
+// predicates to a tier-specific SELECT in ResolveList. Shared so all
+// three tier branches stay in sync.
+func (s *SurrealStore) appendListFilters(conds *[]string, vars map[string]any, opts ListOptions) {
+	if opts.Type != "" {
+		*conds = append(*conds, "type = $type")
+		vars["type"] = opts.Type
+	}
+	if opts.ContractBinding != "" {
+		*conds = append(*conds, "contract_binding = $binding")
+		vars["binding"] = opts.ContractBinding
+	}
+	if len(opts.Tags) > 0 {
+		*conds = append(*conds, "tags ANYINSIDE $tags")
+		vars["tags"] = opts.Tags
+	}
+}
+
 // Count implements Store for SurrealStore.
 func (s *SurrealStore) Count(ctx context.Context, projectID string, memberships []string) (int, error) {
 	if memberships != nil && len(memberships) == 0 {

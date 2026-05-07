@@ -1350,18 +1350,34 @@ func (s *Server) handleDocumentList(ctx context.Context, req mcpgo.CallToolReque
 	start := time.Now()
 	caller, _ := UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
+	// Hierarchical list lookup: project → workspace → system. Mirrors
+	// handleDocumentGet's project-resolution shape (sty_e2bfeffa) so the
+	// typed `_list` wrappers and the generic verb walk the same tier
+	// ladder ResolveByName uses. The project-resolution branch is
+	// lenient: a caller without an owned project still resolves the
+	// workspace + system tiers, so an error from resolveProjectID drops
+	// us to projectID="" rather than aborting the request.
+	projectID := req.GetString("project_id", "")
+	resolvedID, projErr := s.resolveProjectID(ctx, projectID, caller, memberships)
+	if projErr != nil {
+		resolvedID = ""
+	}
+	wsID := s.resolveProjectWorkspaceID(ctx, resolvedID)
+	if wsID == "" {
+		wsID = s.resolveCallerWorkspaceID(ctx, caller)
+	}
 	opts := document.ListOptions{
 		Type:            req.GetString("type", ""),
 		Scope:           req.GetString("scope", ""),
 		ContractBinding: req.GetString("contract_binding", ""),
-		ProjectID:       req.GetString("project_id", ""),
+		ProjectID:       resolvedID,
 		Tags:            req.GetStringSlice("tags", nil),
 		Limit:           int(req.GetFloat("limit", 0)),
 	}
 	if opts.Limit > 500 {
 		opts.Limit = 500
 	}
-	rows, err := listScoped(ctx, s.docs, opts, memberships)
+	rows, err := listScoped(ctx, s.docs, opts, wsID, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -1371,6 +1387,8 @@ func (s *Server) handleDocumentList(ctx context.Context, req mcpgo.CallToolReque
 		Str("tool", "document_list").
 		Str("type", opts.Type).
 		Str("scope", opts.Scope).
+		Str("project_id", resolvedID).
+		Str("workspace_id", wsID).
 		Int("count", len(rows)).
 		Int64("duration_ms", time.Since(start).Milliseconds()).
 		Msg("mcp tool call")

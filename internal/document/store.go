@@ -155,6 +155,22 @@ type Store interface {
 	// tier matches.
 	ResolveByName(ctx context.Context, docType, name, workspaceID, projectID string, memberships []string) (Document, error)
 
+	// ResolveList is the list-shape sibling of ResolveByName: it walks
+	// the project → workspace → system tier ladder and returns the
+	// merged set with project precedence on (Name, Type) collisions.
+	// opts.ProjectID keys the project tier (empty skips it); workspaceID
+	// keys the workspace tier (empty skips it); the system tier is
+	// always considered (workspace-blind, mirrors ResolveByName).
+	// opts.Scope filters which tiers participate: ScopeProject /
+	// ScopeWorkspace / ScopeSystem walk a single tier; "" walks all
+	// three. The remaining ListOptions filters (Type, ContractBinding,
+	// Tags) apply per-tier. Memberships scope project + workspace
+	// tiers exactly as ResolveByName enforces it; an empty (deny-all)
+	// memberships slice keeps only the system tier. Rows are sorted by
+	// updated_at DESC after merge; opts.Limit is applied post-merge so
+	// one tier can never starve another.
+	ResolveList(ctx context.Context, opts ListOptions, workspaceID string, memberships []string) ([]Document, error)
+
 	// Count returns the number of active documents in projectID. Boot
 	// seeding uses this to skip work on a pre-populated project.
 	Count(ctx context.Context, projectID string, memberships []string) (int, error)
@@ -676,6 +692,76 @@ func (m *MemoryStore) ResolveByName(ctx context.Context, docType, name, workspac
 		}
 	}
 	return Document{}, ErrNotFound
+}
+
+// ResolveList implements Store for MemoryStore. Walks the tier ladder
+// project → workspace → system in precedence order, deduping by
+// (Name, Type) so a project row beats a workspace row beats a system
+// row of the same name+type. Per-tier predicates apply the rest of
+// ListOptions (Type, ContractBinding, Tags). The final slice is sorted
+// by UpdatedAt DESC and truncated to opts.Limit post-merge.
+func (m *MemoryStore) ResolveList(ctx context.Context, opts ListOptions, workspaceID string, memberships []string) ([]Document, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	walkProject := opts.Scope == "" || opts.Scope == ScopeProject
+	walkWorkspace := opts.Scope == "" || opts.Scope == ScopeWorkspace
+	walkSystem := opts.Scope == "" || opts.Scope == ScopeSystem
+	tiers := make([]func(d Document) bool, 0, 3)
+	if walkProject && opts.ProjectID != "" {
+		projectID := opts.ProjectID
+		tiers = append(tiers, func(d Document) bool {
+			if d.Scope != ScopeProject || d.ProjectID == nil || *d.ProjectID != projectID {
+				return false
+			}
+			return inDocMemberships(d.WorkspaceID, memberships)
+		})
+	}
+	if walkWorkspace && workspaceID != "" {
+		wsID := workspaceID
+		tiers = append(tiers, func(d Document) bool {
+			if d.Scope != ScopeWorkspace || d.WorkspaceID != wsID {
+				return false
+			}
+			return inDocMemberships(d.WorkspaceID, memberships)
+		})
+	}
+	if walkSystem {
+		tiers = append(tiers, func(d Document) bool { return d.Scope == ScopeSystem })
+	}
+	seen := make(map[string]struct{})
+	out := make([]Document, 0)
+	for _, match := range tiers {
+		for _, d := range m.rows {
+			if d.Status != StatusActive {
+				continue
+			}
+			if opts.Type != "" && d.Type != opts.Type {
+				continue
+			}
+			if opts.ContractBinding != "" {
+				if d.ContractBinding == nil || *d.ContractBinding != opts.ContractBinding {
+					continue
+				}
+			}
+			if len(opts.Tags) > 0 && !anyTagMatch(d.Tags, opts.Tags) {
+				continue
+			}
+			if !match(d) {
+				continue
+			}
+			key := d.Name + "|" + d.Type
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	if opts.Limit > 0 && len(out) > opts.Limit {
+		out = out[:opts.Limit]
+	}
+	return out, nil
 }
 
 // Count implements Store for MemoryStore.

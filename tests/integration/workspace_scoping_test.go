@@ -304,3 +304,126 @@ func TestResolveByName_HierarchicalSurreal(t *testing.T) {
 		t.Errorf("missing name should be ErrNotFound, got %v", err)
 	}
 }
+
+// TestResolveList_HierarchicalSurreal exercises Store.ResolveList
+// against the SurrealDB path end-to-end, mirroring the four
+// ResolveByName probes for the list shape. Sty_08196787: hierarchical
+// list lookup project → workspace → system.
+func TestResolveList_HierarchicalSurreal(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping testcontainers test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	surreal, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:        "surrealdb/surrealdb:v3.0.0",
+			ExposedPorts: []string{"8000/tcp"},
+			Cmd:          []string{"start", "--user", "root", "--pass", "root"},
+			WaitingFor:   wait.ForListeningPort("8000/tcp").WithStartupTimeout(90 * time.Second),
+		},
+		Started: true,
+	})
+	if err != nil {
+		t.Fatalf("start surrealdb: %v", err)
+	}
+	t.Cleanup(func() { _ = surreal.Terminate(ctx) })
+
+	host, _ := surreal.Host(ctx)
+	mapped, _ := surreal.MappedPort(ctx, "8000/tcp")
+	dsn := fmt.Sprintf("ws://root:root@%s:%s/rpc/satellites/satellites", host, mapped.Port())
+	cfg, err := db.ParseDSN(dsn)
+	if err != nil {
+		t.Fatalf("parse DSN: %v", err)
+	}
+	conn, err := db.Connect(ctx, cfg)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	docStore := document.NewSurrealStore(conn)
+	now := time.Now().UTC()
+	wsID, projID := "wksp_resolve_list", "proj_resolve_list"
+
+	sys, err := docStore.Upsert(ctx, document.UpsertInput{
+		Type:  document.TypeContract,
+		Scope: document.ScopeSystem,
+		Name:  "develop",
+		Body:  []byte("system body"),
+		Actor: "test",
+	}, now)
+	if err != nil {
+		t.Fatalf("seed system: %v", err)
+	}
+	ws, err := docStore.Upsert(ctx, document.UpsertInput{
+		Type:        document.TypeContract,
+		Scope:       document.ScopeWorkspace,
+		WorkspaceID: wsID,
+		Name:        "develop",
+		Body:        []byte("workspace body"),
+		Actor:       "test",
+	}, now)
+	if err != nil {
+		t.Fatalf("seed workspace: %v", err)
+	}
+	proj, err := docStore.Upsert(ctx, document.UpsertInput{
+		Type:        document.TypeContract,
+		Scope:       document.ScopeProject,
+		WorkspaceID: wsID,
+		ProjectID:   document.StringPtr(projID),
+		Name:        "develop",
+		Body:        []byte("project body"),
+		Actor:       "test",
+	}, now)
+	if err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	// Probe 1: project tier wins on (Name, Type) collision when
+	// projectID is supplied and the caller has matching membership.
+	rows, err := docStore.ResolveList(ctx, document.ListOptions{
+		Type: document.TypeContract, ProjectID: projID,
+	}, wsID, []string{wsID})
+	if err != nil {
+		t.Fatalf("ResolveList project: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != proj.Document.ID {
+		t.Errorf("project tier should win, got %+v (sys=%q ws=%q proj=%q)", rows, sys.Document.ID, ws.Document.ID, proj.Document.ID)
+	}
+
+	// Probe 2: workspace tier wins when no projectID is supplied.
+	rows, err = docStore.ResolveList(ctx, document.ListOptions{
+		Type: document.TypeContract,
+	}, wsID, []string{wsID})
+	if err != nil {
+		t.Fatalf("ResolveList workspace: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != ws.Document.ID {
+		t.Errorf("workspace tier should win, got %+v", rows)
+	}
+
+	// Probe 3: system tier alone when no workspace + nil memberships
+	// (bootstrap path).
+	rows, err = docStore.ResolveList(ctx, document.ListOptions{
+		Type: document.TypeContract,
+	}, "", nil)
+	if err != nil {
+		t.Fatalf("ResolveList system: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != sys.Document.ID {
+		t.Errorf("system tier alone should win, got %+v", rows)
+	}
+
+	// Probe 4: non-member memberships hide the project + workspace
+	// tiers; the caller falls through to the system row.
+	rows, err = docStore.ResolveList(ctx, document.ListOptions{
+		Type: document.TypeContract, ProjectID: projID,
+	}, wsID, []string{"wksp_other"})
+	if err != nil {
+		t.Fatalf("ResolveList non-member: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != sys.Document.ID {
+		t.Errorf("non-member should fall through to system, got %+v", rows)
+	}
+}

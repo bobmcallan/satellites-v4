@@ -269,8 +269,11 @@ func TestHandleDocumentList_SystemScopeWorkspaceBlind(t *testing.T) {
 
 // TestHandleDocumentList_MixedScopeUnion covers the AC: a list call
 // without a scope filter returns the union of scope=system rows
-// (workspace-blind) plus rows in the caller's memberships, deduped by
-// id, with cross-tenant rows hidden.
+// (workspace-blind) plus rows in the caller's tier (workspace tier
+// keyed by the caller's default workspace), with cross-tenant rows
+// hidden. Sty_08196787 promoted this union to the per-tier ladder
+// ResolveByName already used; the test exercises the workspace-tier
+// rung that was previously unreachable for typed `_list` wrappers.
 func TestHandleDocumentList_MixedScopeUnion(t *testing.T) {
 	t.Parallel()
 	s := newDocumentTestServer(t)
@@ -286,37 +289,28 @@ func TestHandleDocumentList_MixedScopeUnion(t *testing.T) {
 	}
 
 	// sty_e2512dbd: scope=system rows have no workspace_id; tenant rows do.
-	mk := func(wsID, scope, name string, projectID *string) {
+	mk := func(wsID, scope, name string) {
 		t.Helper()
-		typ := document.TypePrinciple
-		if scope == document.ScopeWorkspace {
-			typ = document.TypeRole
-		}
 		doc := document.Document{
-			Type:  typ,
+			Type:  document.TypeRole,
 			Scope: scope,
 			Name:  name,
 		}
 		if scope != document.ScopeSystem {
 			doc.WorkspaceID = wsID
 		}
-		if scope == document.ScopeProject {
-			doc.ProjectID = projectID
-		}
 		if _, err := s.docs.Create(ctx, doc, time.Now().UTC()); err != nil {
 			t.Fatalf("seed %q: %v", name, err)
 		}
 	}
 
-	mk("", document.ScopeSystem, "system-row", nil)
-	aliceProj := "proj_alice"
-	mk(wsAlice.ID, document.ScopeProject, "alice-row", &aliceProj)
-	bobProj := "proj_bob"
-	mk(wsBob.ID, document.ScopeProject, "bob-row", &bobProj)
+	mk("", document.ScopeSystem, "system-row")
+	mk(wsAlice.ID, document.ScopeWorkspace, "alice-row")
+	mk(wsBob.ID, document.ScopeWorkspace, "bob-row")
 
 	aliceCtx := withCaller(ctx, CallerIdentity{UserID: "user_alice", Source: "session"})
 	res, _ := s.handleDocumentList(aliceCtx, newCallToolReq("document_list", map[string]any{
-		"type": "principle",
+		"type": "role",
 	}))
 	rows := decodeArray(t, res)
 
@@ -594,6 +588,55 @@ func TestAgentListWrapper_SystemScopeWorkspaceBlind(t *testing.T) {
 	rows := decodeArray(t, res)
 	if len(rows) != 3 {
 		t.Errorf("agent_list(scope=system) = %d rows, want 3 (developer_agent, releaser_agent, story_close_agent)", len(rows))
+	}
+}
+
+// TestContractListWrapper_HierarchicalTiers covers the wrapper-layer
+// routing for sty_08196787: contract_list reaches the workspace-tier
+// rung that was unreachable for typed `_list` wrappers pre-fix. The
+// fixture shape mirrors the live workspace-tier contracts (sty_690b1653
+// `review`-style: scope=workspace with WorkspaceID set and ProjectID
+// nil), so the test proves the workspace tier is reached via the
+// workspace_id cascade — not via the row's project_id field.
+func TestContractListWrapper_HierarchicalTiers(t *testing.T) {
+	t.Parallel()
+	s := newDocumentTestServer(t)
+	s.registerDocumentWrappers()
+	ctx := context.Background()
+
+	wsRow, err := s.workspaces.Create(ctx, "user_alice", "alice-tier", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("alice ws: %v", err)
+	}
+
+	wkspContract, err := s.docs.Create(ctx, document.Document{
+		WorkspaceID: wsRow.ID,
+		Type:        document.TypeContract,
+		Scope:       document.ScopeWorkspace,
+		Name:        "develop_wksp",
+		Structured:  []byte(`{"category":"develop","required_for_close":false,"validation_mode":"llm"}`),
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("seed workspace contract: %v", err)
+	}
+
+	aliceCtx := withCaller(ctx, CallerIdentity{UserID: "user_alice", Source: "session"})
+	handler := s.wrapperList(document.TypeContract)
+	res, _ := handler(aliceCtx, newCallToolReq("contract_list", map[string]any{}))
+	rows := decodeArray(t, res)
+
+	found := false
+	for _, r := range rows {
+		if r["id"] == wkspContract.ID {
+			if r["scope"] != document.ScopeWorkspace {
+				t.Errorf("workspace-tier contract returned with scope=%v, want %q", r["scope"], document.ScopeWorkspace)
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("contract_list missing workspace-tier row %q (got %+v)", wkspContract.ID, rows)
 	}
 }
 

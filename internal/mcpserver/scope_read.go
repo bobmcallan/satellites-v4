@@ -17,43 +17,15 @@ import (
 	"github.com/bobmcallan/satellites/internal/document"
 )
 
-// listScoped routes opts.Scope to the right membership shape:
-//
-//   - scope=system → nil memberships (workspace-blind).
-//   - scope=workspace|project|user → the caller's memberships
-//     (tenant-isolated).
-//   - scope=="" → union of (system rows workspace-blind) + (everything
-//     in the caller's memberships). Single response, deduped by id.
-//
-// The mixed-scope union path applies the limit after merging so the
-// caller-visible row count matches their request even when the system
-// tier and the membership tier each contribute.
-func listScoped(ctx context.Context, store document.Store, opts document.ListOptions, memberships []string) ([]document.Document, error) {
-	switch opts.Scope {
-	case document.ScopeSystem:
-		return store.List(ctx, opts, nil)
-	case "":
-		// no-op; fall through to union
-	default:
-		return store.List(ctx, opts, memberships)
-	}
-
-	sysOpts := opts
-	sysOpts.Scope = document.ScopeSystem
-	sysOpts.Limit = 0
-	sysRows, err := store.List(ctx, sysOpts, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	memOpts := opts
-	memOpts.Limit = 0
-	memRows, err := store.List(ctx, memOpts, memberships)
-	if err != nil {
-		return nil, err
-	}
-
-	return mergeUnionByID(sysRows, memRows, opts.Limit), nil
+// listScoped is the typed `_list` MCP wrappers' entry into the
+// hierarchical resolver. Story_08196787 promoted the manual tier-routing
+// that lived inline here into Store.ResolveList so list-shape reads now
+// walk the same project → workspace → system ladder ResolveByName uses
+// for name-shape reads. Scope filtering, membership scoping, and the
+// system-tier-workspace-blind invariant (sty_6ee30308) are enforced
+// inside the resolver; this helper is a thin pass-through.
+func listScoped(ctx context.Context, store document.Store, opts document.ListOptions, workspaceID string, memberships []string) ([]document.Document, error) {
+	return store.ResolveList(ctx, opts, workspaceID, memberships)
 }
 
 // searchScoped is listScoped's analogue for the structured-filter

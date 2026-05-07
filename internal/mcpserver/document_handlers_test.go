@@ -476,6 +476,94 @@ func TestHandleDocumentGet_SystemScopeByName(t *testing.T) {
 	}
 }
 
+// TestHandleDocumentGet_WorkspaceTierByName confirms the hierarchical
+// name resolver reaches the workspace tier — the rung that was
+// unreachable pre-sty_e2bfeffa. A workspace-tier role is seeded for
+// the caller's workspace; document_get(name=…) must return it.
+func TestHandleDocumentGet_WorkspaceTierByName(t *testing.T) {
+	t.Parallel()
+	s := newDocumentTestServer(t)
+	ctx := context.Background()
+
+	ws, err := s.workspaces.Create(ctx, "user_alice", "alice-tier", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("alice ws: %v", err)
+	}
+
+	wsRow, err := s.docs.Create(ctx, document.Document{
+		WorkspaceID: ws.ID,
+		Type:        document.TypeRole,
+		Scope:       document.ScopeWorkspace,
+		Name:        "wksp_role",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("seed workspace role: %v", err)
+	}
+
+	aliceCtx := withCaller(ctx, CallerIdentity{UserID: "user_alice", Source: "session"})
+	res, _ := s.handleDocumentGet(aliceCtx, newCallToolReq("document_get", map[string]any{
+		"name": "wksp_role",
+	}))
+	if res.IsError {
+		t.Fatalf("workspace-tier name resolve failed: %s", firstText(res))
+	}
+	got := decodeOne(t, res)
+	if got["id"] != wsRow.ID {
+		t.Errorf("got id=%v, want %q", got["id"], wsRow.ID)
+	}
+	if got["scope"] != document.ScopeWorkspace {
+		t.Errorf("got scope=%v, want %q", got["scope"], document.ScopeWorkspace)
+	}
+}
+
+// TestAgentGetWrapper_TypeFilter seeds a contract and an agent that
+// share the same name. agent_get(name=…) must return the agent row,
+// not the contract — the tightened typed wrapper pins the type filter
+// before delegating to handleDocumentGet.
+func TestAgentGetWrapper_TypeFilter(t *testing.T) {
+	t.Parallel()
+	s := newDocumentTestServer(t)
+	s.registerDocumentWrappers()
+	ctx := context.Background()
+
+	contractRow, err := s.docs.Create(ctx, document.Document{
+		Type:       document.TypeContract,
+		Scope:      document.ScopeSystem,
+		Name:       "develop",
+		Structured: []byte(`{"category":"develop","required_for_close":false,"validation_mode":"llm"}`),
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("seed contract: %v", err)
+	}
+	agentRow, err := s.docs.Create(ctx, document.Document{
+		Type:  document.TypeAgent,
+		Scope: document.ScopeSystem,
+		Name:  "develop",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+
+	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
+		t.Fatalf("other ws: %v", err)
+	}
+	otherCtx := withCaller(ctx, CallerIdentity{UserID: "user_other", Source: "session"})
+	handler := s.wrapperGet(document.TypeAgent)
+	res, _ := handler(otherCtx, newCallToolReq("agent_get", map[string]any{
+		"name": "develop",
+	}))
+	if res.IsError {
+		t.Fatalf("agent_get(name=develop) failed: %s", firstText(res))
+	}
+	got := decodeOne(t, res)
+	if got["id"] != agentRow.ID {
+		t.Errorf("agent_get returned id=%v, want %q (contract was %q)", got["id"], agentRow.ID, contractRow.ID)
+	}
+	if got["type"] != document.TypeAgent {
+		t.Errorf("agent_get returned type=%v, want %q", got["type"], document.TypeAgent)
+	}
+}
+
 // TestAgentListWrapper_SystemScopeWorkspaceBlind covers the wrapper
 // layer (agent_list → handleDocumentList) end-to-end so a regression
 // in wrapperList that bypassed the helper would surface here.

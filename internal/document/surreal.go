@@ -688,6 +688,72 @@ func (s *SurrealStore) GetByName(ctx context.Context, projectID, name string, me
 	return (*results)[0].Result[0], nil
 }
 
+// ResolveByName implements Store for SurrealStore. Issues up to three
+// sequential SELECTs in tier-precedence order: project → workspace →
+// system. Memberships scope project + workspace tiers (an empty slice
+// is deny-all on those tiers); the system tier is workspace-blind per
+// ClearSystemTenantStamps.
+func (s *SurrealStore) ResolveByName(ctx context.Context, docType, name, workspaceID, projectID string, memberships []string) (Document, error) {
+	tiers := []func() (string, map[string]any){}
+	if projectID != "" {
+		tiers = append(tiers, func() (string, map[string]any) {
+			conds := []string{"name = $name", "status = 'active'", "scope = 'project'", "project_id = $project"}
+			vars := map[string]any{"name": name, "project": projectID}
+			if docType != "" {
+				conds = append(conds, "type = $type")
+				vars["type"] = docType
+			}
+			if memberships != nil {
+				conds = append(conds, "workspace_id IN $memberships")
+				vars["memberships"] = memberships
+			}
+			return fmt.Sprintf("SELECT %s FROM documents WHERE %s LIMIT 1", selectCols, strings.Join(conds, " AND ")), vars
+		})
+	}
+	if workspaceID != "" {
+		tiers = append(tiers, func() (string, map[string]any) {
+			conds := []string{"name = $name", "status = 'active'", "scope = 'workspace'", "workspace_id = $workspace"}
+			vars := map[string]any{"name": name, "workspace": workspaceID}
+			if docType != "" {
+				conds = append(conds, "type = $type")
+				vars["type"] = docType
+			}
+			if memberships != nil {
+				conds = append(conds, "workspace_id IN $memberships")
+				vars["memberships"] = memberships
+			}
+			return fmt.Sprintf("SELECT %s FROM documents WHERE %s LIMIT 1", selectCols, strings.Join(conds, " AND ")), vars
+		})
+	}
+	tiers = append(tiers, func() (string, map[string]any) {
+		conds := []string{"name = $name", "status = 'active'", "scope = 'system'"}
+		vars := map[string]any{"name": name}
+		if docType != "" {
+			conds = append(conds, "type = $type")
+			vars["type"] = docType
+		}
+		return fmt.Sprintf("SELECT %s FROM documents WHERE %s LIMIT 1", selectCols, strings.Join(conds, " AND ")), vars
+	})
+
+	denyTenantTiers := memberships != nil && len(memberships) == 0
+	for i, build := range tiers {
+		isSystemTier := i == len(tiers)-1
+		if denyTenantTiers && !isSystemTier {
+			continue
+		}
+		sql, vars := build()
+		results, err := surrealdb.Query[[]Document](ctx, s.db, sql, vars)
+		if err != nil {
+			return Document{}, fmt.Errorf("document: resolve by name: %w", err)
+		}
+		if results == nil || len(*results) == 0 || len((*results)[0].Result) == 0 {
+			continue
+		}
+		return (*results)[0].Result[0], nil
+	}
+	return Document{}, ErrNotFound
+}
+
 // Count implements Store for SurrealStore.
 func (s *SurrealStore) Count(ctx context.Context, projectID string, memberships []string) (int, error) {
 	if memberships != nil && len(memberships) == 0 {

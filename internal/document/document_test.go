@@ -224,6 +224,21 @@ func TestUpsert_CrossTierIdentity(t *testing.T) {
 	if otherWS.Document.ID == wsRes.Document.ID || otherWS.Document.ID == sysRes.Document.ID {
 		t.Errorf("workspace_b row collided with existing rows")
 	}
+
+	// Sty_e2bfeffa: ResolveByName must walk project → workspace → system
+	// and return the workspace-tier row when the caller scopes to wksp_a,
+	// not the system-tier row that shares the name.
+	got, err := store.ResolveByName(ctx, TypeContract, "develop", "wksp_a", "", []string{"wksp_a"})
+	if err != nil {
+		t.Fatalf("ResolveByName workspace tier: %v", err)
+	}
+	if got.ID != wsRes.Document.ID {
+		t.Errorf("ResolveByName returned id=%q (sys=%q ws=%q): workspace tier should win",
+			got.ID, sysRes.Document.ID, wsRes.Document.ID)
+	}
+	if got.Scope != ScopeWorkspace {
+		t.Errorf("ResolveByName returned scope=%q, want %q", got.Scope, ScopeWorkspace)
+	}
 }
 
 func TestIngestFile_PathTraversalBlocked(t *testing.T) {

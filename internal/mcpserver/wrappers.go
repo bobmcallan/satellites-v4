@@ -59,7 +59,7 @@ func (s *Server) registerWrapperFamily(kind string) {
 		mcpgo.WithString("name", mcpgo.Description("Document name (used when id is omitted).")),
 		mcpgo.WithString("project_id", mcpgo.Description("Project scope for name-keyed lookups.")),
 	)
-	s.mcp.AddTool(get, s.handleDocumentGet)
+	s.mcp.AddTool(get, s.wrapperGet(kind))
 
 	list := mcpgo.NewTool(kind+"_list",
 		mcpgo.WithDescription(fmt.Sprintf("List %s documents in the caller's workspaces.", kind)),
@@ -120,6 +120,21 @@ func (s *Server) wrapperCreate(kind string) func(context.Context, mcpgo.CallTool
 		args["type"] = kind
 		req.Params.Arguments = args
 		return s.handleDocumentCreate(ctx, req)
+	}
+}
+
+// wrapperGet pins the type filter to kind on document_get so a typed
+// wrapper rejects a same-name row of a different type. Mirrors the
+// shape of wrapperList / wrapperSearch.
+func (s *Server) wrapperGet(kind string) func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	return func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		args := req.GetArguments()
+		if args == nil {
+			args = map[string]any{}
+		}
+		args["type"] = kind
+		req.Params.Arguments = args
+		return s.handleDocumentGet(ctx, req)
 	}
 }
 

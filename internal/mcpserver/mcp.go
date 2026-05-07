@@ -1166,27 +1166,22 @@ func (s *Server) handleDocumentGet(ctx context.Context, req mcpgo.CallToolReques
 	if err != nil {
 		return mcpgo.NewToolResultError("either id or name is required"), nil
 	}
-	// Try the system tier first (sty_6ee30308). A system-tier hit
-	// returns without resolving a project context — callers without
-	// any owned project (e.g. a fresh user looking up a seed agent)
-	// must still reach scope=system docs by name.
-	if sysDoc, sysErr := s.docs.GetByName(ctx, "", name, nil); sysErr == nil && sysDoc.Scope == document.ScopeSystem {
-		body, _ := json.Marshal(sysDoc)
-		s.logger.Info().
-			Str("method", "tools/call").
-			Str("tool", "document_get").
-			Str("name", name).
-			Str("scope", document.ScopeSystem).
-			Int64("duration_ms", time.Since(start).Milliseconds()).
-			Msg("mcp tool call")
-		return mcpgo.NewToolResultText(string(body)), nil
-	}
+	// Hierarchical name lookup: project → workspace → system. The
+	// project-resolution branch is lenient: a caller with no owned
+	// project (fresh user reading a seed agent) still resolves system-
+	// tier rows by name, so an error from resolveProjectID drops us
+	// to projectID="" rather than aborting the request.
 	projectID := req.GetString("project_id", "")
-	resolvedID, err := s.resolveProjectID(ctx, projectID, caller, memberships)
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
+	resolvedID, projErr := s.resolveProjectID(ctx, projectID, caller, memberships)
+	if projErr != nil {
+		resolvedID = ""
 	}
-	doc, err := s.docs.GetByName(ctx, resolvedID, name, memberships)
+	wsID := s.resolveProjectWorkspaceID(ctx, resolvedID)
+	if wsID == "" {
+		wsID = s.resolveCallerWorkspaceID(ctx, caller)
+	}
+	docType := req.GetString("type", "")
+	doc, err := s.docs.ResolveByName(ctx, docType, name, wsID, resolvedID, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -1195,7 +1190,9 @@ func (s *Server) handleDocumentGet(ctx context.Context, req mcpgo.CallToolReques
 		Str("method", "tools/call").
 		Str("tool", "document_get").
 		Str("project_id", resolvedID).
+		Str("workspace_id", wsID).
 		Str("name", name).
+		Str("scope", doc.Scope).
 		Int64("duration_ms", time.Since(start).Milliseconds()).
 		Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil

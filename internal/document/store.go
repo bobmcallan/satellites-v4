@@ -143,6 +143,18 @@ type Store interface {
 	// projectID. Replaces the v3 GetByFilename surface.
 	GetByName(ctx context.Context, projectID, name string, memberships []string) (Document, error)
 
+	// ResolveByName walks the tier ladder project → workspace → system
+	// and returns the first active row whose name matches and (when
+	// docType is non-empty) whose type matches. Empty-string keys cause
+	// the corresponding tier to be skipped: projectID="" skips the
+	// project tier, workspaceID="" skips the workspace tier; the system
+	// tier is always considered. Membership scoping is applied to the
+	// project + workspace tiers exactly as GetByName enforces it; the
+	// system tier is workspace-blind (per ClearSystemTenantStamps —
+	// system rows carry no tenant key). Returns ErrNotFound when no
+	// tier matches.
+	ResolveByName(ctx context.Context, docType, name, workspaceID, projectID string, memberships []string) (Document, error)
+
 	// Count returns the number of active documents in projectID. Boot
 	// seeding uses this to skip work on a pre-populated project.
 	Count(ctx context.Context, projectID string, memberships []string) (int, error)
@@ -623,6 +635,47 @@ func (m *MemoryStore) GetByName(ctx context.Context, projectID, name string, mem
 		return Document{}, ErrNotFound
 	}
 	return doc, nil
+}
+
+// ResolveByName implements Store for MemoryStore. Walks
+// project → workspace → system in precedence order; the first hit
+// wins. Memberships scope project + workspace tiers; the system tier
+// is workspace-blind per the ClearSystemTenantStamps invariant.
+func (m *MemoryStore) ResolveByName(ctx context.Context, docType, name, workspaceID, projectID string, memberships []string) (Document, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	tiers := []func(d Document) bool{}
+	if projectID != "" {
+		tiers = append(tiers, func(d Document) bool {
+			if d.Scope != ScopeProject || d.ProjectID == nil || *d.ProjectID != projectID {
+				return false
+			}
+			return inDocMemberships(d.WorkspaceID, memberships)
+		})
+	}
+	if workspaceID != "" {
+		tiers = append(tiers, func(d Document) bool {
+			if d.Scope != ScopeWorkspace || d.WorkspaceID != workspaceID {
+				return false
+			}
+			return inDocMemberships(d.WorkspaceID, memberships)
+		})
+	}
+	tiers = append(tiers, func(d Document) bool { return d.Scope == ScopeSystem })
+	for _, match := range tiers {
+		for _, d := range m.rows {
+			if d.Status != StatusActive || d.Name != name {
+				continue
+			}
+			if docType != "" && d.Type != docType {
+				continue
+			}
+			if match(d) {
+				return d, nil
+			}
+		}
+	}
+	return Document{}, ErrNotFound
 }
 
 // Count implements Store for MemoryStore.

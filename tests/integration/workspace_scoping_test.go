@@ -175,3 +175,132 @@ func TestWorkspaceScoping_CrossWorkspaceDenial(t *testing.T) {
 		t.Errorf("nil memberships project GetByID should see the row; err=%v", err)
 	}
 }
+
+// TestResolveByName_HierarchicalSurreal exercises the SurrealDB path of
+// Store.ResolveByName end-to-end against testcontainers, mirroring the
+// MemoryStore unit cases. Sty_e2bfeffa: hierarchical name lookup
+// project → workspace → system.
+func TestResolveByName_HierarchicalSurreal(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping testcontainers test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	surreal, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:        "surrealdb/surrealdb:v3.0.0",
+			ExposedPorts: []string{"8000/tcp"},
+			Cmd:          []string{"start", "--user", "root", "--pass", "root"},
+			WaitingFor:   wait.ForListeningPort("8000/tcp").WithStartupTimeout(90 * time.Second),
+		},
+		Started: true,
+	})
+	if err != nil {
+		t.Fatalf("start surrealdb: %v", err)
+	}
+	t.Cleanup(func() { _ = surreal.Terminate(ctx) })
+
+	host, _ := surreal.Host(ctx)
+	mapped, _ := surreal.MappedPort(ctx, "8000/tcp")
+	dsn := fmt.Sprintf("ws://root:root@%s:%s/rpc/satellites/satellites", host, mapped.Port())
+	cfg, err := db.ParseDSN(dsn)
+	if err != nil {
+		t.Fatalf("parse DSN: %v", err)
+	}
+	conn, err := db.Connect(ctx, cfg)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	docStore := document.NewSurrealStore(conn)
+	now := time.Now().UTC()
+	wsID, projID := "wksp_resolve", "proj_resolve"
+
+	sys, err := docStore.Upsert(ctx, document.UpsertInput{
+		Type:  document.TypeContract,
+		Scope: document.ScopeSystem,
+		Name:  "develop",
+		Body:  []byte("system body"),
+		Actor: "test",
+	}, now)
+	if err != nil {
+		t.Fatalf("seed system: %v", err)
+	}
+	ws, err := docStore.Upsert(ctx, document.UpsertInput{
+		Type:        document.TypeContract,
+		Scope:       document.ScopeWorkspace,
+		WorkspaceID: wsID,
+		Name:        "develop",
+		Body:        []byte("workspace body"),
+		Actor:       "test",
+	}, now)
+	if err != nil {
+		t.Fatalf("seed workspace: %v", err)
+	}
+	proj, err := docStore.Upsert(ctx, document.UpsertInput{
+		Type:        document.TypeContract,
+		Scope:       document.ScopeProject,
+		WorkspaceID: wsID,
+		ProjectID:   document.StringPtr(projID),
+		Name:        "develop",
+		Body:        []byte("project body"),
+		Actor:       "test",
+	}, now)
+	if err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	// Project tier wins when projectID is supplied and the caller has
+	// the matching workspace membership.
+	got, err := docStore.ResolveByName(ctx, document.TypeContract, "develop", wsID, projID, []string{wsID})
+	if err != nil {
+		t.Fatalf("ResolveByName project: %v", err)
+	}
+	if got.ID != proj.Document.ID {
+		t.Errorf("project tier expected, got id=%q (sys=%q ws=%q proj=%q)", got.ID, sys.Document.ID, ws.Document.ID, proj.Document.ID)
+	}
+
+	// Workspace tier wins when no projectID is supplied.
+	got, err = docStore.ResolveByName(ctx, document.TypeContract, "develop", wsID, "", []string{wsID})
+	if err != nil {
+		t.Fatalf("ResolveByName workspace: %v", err)
+	}
+	if got.ID != ws.Document.ID {
+		t.Errorf("workspace tier expected, got id=%q", got.ID)
+	}
+
+	// System tier wins when neither workspace nor project context is
+	// supplied.
+	got, err = docStore.ResolveByName(ctx, document.TypeContract, "develop", "", "", nil)
+	if err != nil {
+		t.Fatalf("ResolveByName system: %v", err)
+	}
+	if got.ID != sys.Document.ID {
+		t.Errorf("system tier expected, got id=%q", got.ID)
+	}
+
+	// Non-member memberships hide the workspace + project tiers; the
+	// caller falls through to the system row.
+	got, err = docStore.ResolveByName(ctx, document.TypeContract, "develop", wsID, projID, []string{"wksp_other"})
+	if err != nil {
+		t.Fatalf("ResolveByName non-member: %v", err)
+	}
+	if got.ID != sys.Document.ID {
+		t.Errorf("non-member should fall through to system, got id=%q", got.ID)
+	}
+
+	// Empty memberships (deny-all on tenant tiers) still reaches system.
+	got, err = docStore.ResolveByName(ctx, document.TypeContract, "develop", wsID, projID, []string{})
+	if err != nil {
+		t.Fatalf("ResolveByName deny-all: %v", err)
+	}
+	if got.ID != sys.Document.ID {
+		t.Errorf("deny-all should fall through to system, got id=%q", got.ID)
+	}
+
+	// Missing name returns ErrNotFound.
+	if _, err := docStore.ResolveByName(ctx, document.TypeContract, "missing", wsID, projID, []string{wsID}); !errors.Is(err, document.ErrNotFound) {
+		t.Errorf("missing name should be ErrNotFound, got %v", err)
+	}
+}

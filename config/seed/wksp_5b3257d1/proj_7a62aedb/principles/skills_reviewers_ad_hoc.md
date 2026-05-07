@@ -1,6 +1,6 @@
 ---
 id: pr_skills_reviewers_ad_hoc
-name: Skills and reviewers are ad-hoc, not baseline
+name: skills_reviewers_ad_hoc
 scope: project
 tags:
   - configseed

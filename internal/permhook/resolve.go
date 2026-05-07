@@ -196,9 +196,9 @@ func deny(reason, source string) Result {
 // returns the highest-precedence orchestrator agent doc when one
 // exists. story_c08856b2 AC3.
 //
-// Today the system seed is `agent_claude_orchestrator` (loaded by
+// Today the system seed is `claude_orchestrator` (loaded by
 // configseed from config/seed/system/agents/claude_orchestrator.md per
-// sty_db196ff4). A project can author its own `orchestrator_role`
+// sty_db196ff4 + sty_94c54229's plain-slug rename). A project can author its own `orchestrator_role`
 // agent to override the seeded baseline. The story AC named a
 // workspace tier; the document substrate restricts workspace-scope to
 // type=role only, so the workspace tier is collapsed into the project
@@ -215,7 +215,7 @@ func LookupOrchestratorAgent(ctx context.Context, docs document.Store, workspace
 		}
 	}
 	// System fallback (the configseed-loaded baseline).
-	if d, err := docs.GetByName(ctx, "", "agent_claude_orchestrator", nil); err == nil && d.Type == document.TypeAgent {
+	if d, err := docs.GetByName(ctx, "", "claude_orchestrator", nil); err == nil && d.Type == document.TypeAgent {
 		return d, true
 	}
 	return document.Document{}, false

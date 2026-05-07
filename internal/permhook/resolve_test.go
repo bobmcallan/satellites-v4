@@ -191,7 +191,7 @@ func TestLookupOrchestratorAgent_OverrideChain(t *testing.T) {
 		Type:   document.TypeAgent,
 		Scope:  document.ScopeSystem,
 		Status: document.StatusActive,
-		Name:   "agent_claude_orchestrator",
+		Name:   "claude_orchestrator",
 		Body:   "system seed",
 	}, now); err != nil {
 		t.Fatalf("seed system agent: %v", err)
@@ -199,7 +199,7 @@ func TestLookupOrchestratorAgent_OverrideChain(t *testing.T) {
 
 	// System fallback when no override.
 	d, ok := LookupOrchestratorAgent(ctx, docs, "wksp_x", "proj_x")
-	if !ok || d.Name != "agent_claude_orchestrator" {
+	if !ok || d.Name != "claude_orchestrator" {
 		t.Fatalf("system fallback = %+v ok=%v", d, ok)
 	}
 
@@ -225,7 +225,7 @@ func TestLookupOrchestratorAgent_OverrideChain(t *testing.T) {
 	// substrate (type=role only). The chain collapses to project >
 	// system; passing no project_id falls through to system.
 	d, ok = LookupOrchestratorAgent(ctx, docs, "wksp_x", "")
-	if !ok || d.Name != "agent_claude_orchestrator" {
+	if !ok || d.Name != "claude_orchestrator" {
 		t.Fatalf("no project scope = %+v, want system fallback", d)
 	}
 }

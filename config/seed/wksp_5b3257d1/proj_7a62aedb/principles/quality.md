@@ -1,6 +1,6 @@
 ---
 id: pr_quality
-name: Quality over speed
+name: quality
 scope: project
 tags:
   - quality

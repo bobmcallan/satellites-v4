@@ -1,6 +1,6 @@
 ---
 id: pr_reviewer_voice_authoritative
-name: Reviewer rejections are the operator's voice
+name: reviewer_voice_authoritative
 scope: project
 tags:
   - process

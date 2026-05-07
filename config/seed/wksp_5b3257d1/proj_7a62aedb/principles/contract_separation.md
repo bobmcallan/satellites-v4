@@ -1,6 +1,6 @@
 ---
 id: pr_contract_separation
-name: Lifecycle and project contract separation
+name: contract_separation
 scope: project
 tags:
   - architecture

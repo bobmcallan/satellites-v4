@@ -1,6 +1,6 @@
 ---
 id: pr_dogfood_before_shipped
-name: pr_dogfood_before_shipped
+name: dogfood_before_shipped
 scope: project
 tags:
   - quality

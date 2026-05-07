@@ -569,6 +569,25 @@ func main() {
 			for _, e := range result.Errors {
 				logger.Warn().Str("workspace_id", d.WorkspaceID).Str("project_id", d.ProjectID).Str("path", e.Path).Str("reason", e.Reason).Msg("project seed entry failed")
 			}
+
+			// sty_94c54229: archive scope=project rows whose Name no longer
+			// matches a seed file under config/seed/<ws>/<proj>/<kind>/.
+			// Mirrors the system-tier sweep above; the project tier had no
+			// equivalent until this story, leaving renamed-away rows live
+			// alongside the new ones. Idempotent.
+			if archived, perr := configseed.SweepOrphanedProjectDocs(ctx, docStore, configseed.ResolveSeedDir(), d.WorkspaceID, d.ProjectID, logger, time.Now().UTC()); perr != nil {
+				logger.Warn().
+					Str("workspace_id", d.WorkspaceID).
+					Str("project_id", d.ProjectID).
+					Str("error", perr.Error()).
+					Msg("project orphan sweep failed")
+			} else if archived > 0 {
+				logger.Info().
+					Str("workspace_id", d.WorkspaceID).
+					Str("project_id", d.ProjectID).
+					Int("archived", archived).
+					Msg("orphan project docs archived")
+			}
 		}
 	}()
 	mcpAuth := mcpserver.AuthMiddleware(mcpserver.AuthDeps{

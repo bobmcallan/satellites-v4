@@ -1,6 +1,6 @@
 ---
 id: pr_agile
-name: Agile smallest-change delivery
+name: agile
 scope: project
 tags:
   - delivery

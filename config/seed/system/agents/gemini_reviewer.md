@@ -1,5 +1,5 @@
 ---
-name: agent_gemini_reviewer
+name: gemini_reviewer
 tier: flash
 tool_ceiling:
   - "task_get"

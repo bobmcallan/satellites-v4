@@ -1,6 +1,6 @@
 ---
 id: pr_process_is_trust
-name: Process is trust
+name: process_is_trust
 scope: project
 tags:
   - lifecycle

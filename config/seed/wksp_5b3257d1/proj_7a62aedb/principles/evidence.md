@@ -1,6 +1,6 @@
 ---
 id: pr_evidence
-name: Evidence must be verifiable
+name: evidence
 scope: project
 tags:
   - quality

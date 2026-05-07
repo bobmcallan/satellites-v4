@@ -1,6 +1,6 @@
 ---
 id: pr_no_unrequested_compat
-name: No unrequested abstractions or backwards-compat layers
+name: no_unrequested_compat
 scope: project
 tags:
   - scope

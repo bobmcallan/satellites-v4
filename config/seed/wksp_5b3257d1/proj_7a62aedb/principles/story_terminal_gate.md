@@ -1,6 +1,6 @@
 ---
 id: pr_story_terminal_gate
-name: Story terminal-transition gate
+name: story_terminal_gate
 scope: project
 tags:
   - process

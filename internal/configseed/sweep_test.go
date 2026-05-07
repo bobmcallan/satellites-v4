@@ -94,6 +94,89 @@ func TestSweepOrphanedSystemPrinciples_ArchivesUnmatched(t *testing.T) {
 	}
 }
 
+// TestSweepOrphanedProjectDocs_ArchivesUnmatched (sty_94c54229) seeds
+// two scope=project principle rows under one (workspace, project) pair,
+// leaves only one matching seed file on disk, and asserts the project-
+// tier sweep archives the other. Mirrors the system-tier coverage at
+// the project tier — the rename in this story relies on the project
+// sweep firing on every project-seed pass.
+func TestSweepOrphanedProjectDocs_ArchivesUnmatched(t *testing.T) {
+	t.Parallel()
+	const ws = "wksp_test"
+	const proj = "proj_test"
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ws, proj, "principles"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	const keptPrinciple = `---
+id: kept
+name: kept
+scope: project
+tags: []
+---
+Body.
+`
+	if err := os.WriteFile(filepath.Join(dir, ws, proj, "principles", "kept.md"), []byte(keptPrinciple), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	docs := document.NewMemoryStore()
+	ctx := context.Background()
+	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
+
+	pid := proj
+	if _, err := docs.Upsert(ctx, document.UpsertInput{
+		WorkspaceID: ws,
+		ProjectID:   &pid,
+		Type:        document.TypePrinciple,
+		Scope:       document.ScopeProject,
+		Name:        "kept",
+		Body:        []byte("kept body"),
+		Actor:       "system",
+	}, now); err != nil {
+		t.Fatalf("seed kept: %v", err)
+	}
+
+	orphan, err := docs.Upsert(ctx, document.UpsertInput{
+		WorkspaceID: ws,
+		ProjectID:   &pid,
+		Type:        document.TypePrinciple,
+		Scope:       document.ScopeProject,
+		Name:        "pr_dropped",
+		Body:        []byte("orphan body"),
+		Actor:       "system",
+	}, now)
+	if err != nil {
+		t.Fatalf("seed orphan: %v", err)
+	}
+
+	logger := arbor.New("warn")
+	archived, err := SweepOrphanedProjectDocs(ctx, docs, dir, ws, proj, logger, now)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if archived != 1 {
+		t.Errorf("archived = %d, want 1", archived)
+	}
+
+	got, err := docs.GetByID(ctx, orphan.Document.ID, nil)
+	if err != nil {
+		t.Fatalf("GetByID orphan: %v", err)
+	}
+	if got.Status != document.StatusArchived {
+		t.Errorf("orphan status = %q, want archived", got.Status)
+	}
+
+	// Second pass is a no-op.
+	again, err := SweepOrphanedProjectDocs(ctx, docs, dir, ws, proj, logger, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("sweep idempotent: %v", err)
+	}
+	if again != 0 {
+		t.Errorf("second sweep archived = %d, want 0", again)
+	}
+}
+
 // TestSweepOrphanedSystemPrinciples_Idempotent asserts a second pass
 // against the post-sweep state archives zero additional rows.
 func TestSweepOrphanedSystemPrinciples_Idempotent(t *testing.T) {

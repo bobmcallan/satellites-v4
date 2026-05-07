@@ -1,6 +1,6 @@
 ---
 id: pr_local_iteration
-name: Iterate locally, deploy once
+name: local_iteration
 scope: project
 tags:
   - delivery

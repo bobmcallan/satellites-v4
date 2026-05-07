@@ -1,5 +1,5 @@
 ---
-name: agent_claude_orchestrator
+name: claude_orchestrator
 tool_ceiling: ["*"]
 tags: [v4, agents-roles, orchestrator]
 ---

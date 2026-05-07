@@ -1,6 +1,6 @@
 ---
 id: pr_root_cause
-name: Root cause, not hack
+name: root_cause
 scope: project
 tags:
   - quality

@@ -120,6 +120,98 @@ func SweepOrphanedSystemDocs(ctx context.Context, docs document.Store, seedDir s
 	return archived, nil
 }
 
+// SweepOrphanedProjectDocs archives every active scope=project document
+// under (workspaceID, projectID) whose Name does not appear in the
+// on-disk seed set under <seedDir>/<workspaceID>/<projectID>/<kind_subdir>/*.md,
+// for every kind in projectKinds. Mirrors SweepOrphanedSystemDocs at
+// the project tier — the system tier sweep walks system/<kind>/, this
+// one walks <ws>/<proj>/<kind>/.
+//
+// Runs workspace-blind (nil memberships) so a boot user without
+// membership in the target workspace can still reconcile orphan rows;
+// the project tier is non-tenant from the seed loader's POV (the loader
+// always runs as `system`).
+//
+// Idempotent: a second invocation on a clean DB lists only active rows
+// matching active seed files and archives nothing.
+//
+// Returns the per-kind archived count summed across kinds. Per-row
+// Delete failures are logged via the supplied logger and do not abort
+// the sweep.
+//
+// Sty_94c54229 — added so a project-tier rename of frontmatter `name:`
+// reconciles the live DB the same way a system-tier rename does.
+func SweepOrphanedProjectDocs(ctx context.Context, docs document.Store, seedDir, workspaceID, projectID string, logger arbor.ILogger, now time.Time) (archived int, err error) {
+	if docs == nil {
+		return 0, fmt.Errorf("configseed: doc store is nil")
+	}
+	if workspaceID == "" {
+		return 0, fmt.Errorf("configseed: workspace_id required")
+	}
+	if projectID == "" {
+		return 0, fmt.Errorf("configseed: project_id required")
+	}
+	if seedDir == "" {
+		seedDir = DefaultSeedDir
+	}
+
+	for _, kind := range projectKinds {
+		docType, ok := documentTypeForKind(kind)
+		if !ok {
+			continue
+		}
+		subdir := kindSubdir(kind)
+		if subdir == "" {
+			continue
+		}
+		expected, rerr := readProjectSeedNames(seedDir, workspaceID, projectID, subdir)
+		if rerr != nil {
+			return archived, rerr
+		}
+
+		rows, lerr := docs.List(ctx, document.ListOptions{
+			Type:      docType,
+			Scope:     document.ScopeProject,
+			ProjectID: projectID,
+		}, nil)
+		if lerr != nil {
+			return archived, fmt.Errorf("sweep: list project %s: %w", docType, lerr)
+		}
+
+		for _, row := range rows {
+			if row.Status != document.StatusActive {
+				continue
+			}
+			if row.WorkspaceID != workspaceID {
+				continue
+			}
+			if expected[row.Name] {
+				continue
+			}
+			if derr := docs.Delete(ctx, row.ID, document.DeleteArchive, nil); derr != nil {
+				logger.Warn().
+					Str("doc_id", row.ID).
+					Str("type", row.Type).
+					Str("name", row.Name).
+					Str("workspace_id", row.WorkspaceID).
+					Str("project_id", projectID).
+					Str("error", derr.Error()).
+					Msg("sweep project doc archive failed")
+				continue
+			}
+			archived++
+			logger.Info().
+				Str("doc_id", row.ID).
+				Str("type", row.Type).
+				Str("name", row.Name).
+				Str("workspace_id", row.WorkspaceID).
+				Str("project_id", projectID).
+				Msg("archived orphan project doc")
+		}
+	}
+	return archived, nil
+}
+
 // SweepOrphanedSystemPrinciples is the original principle-only entry
 // point, preserved as a thin alias around the generalised sweep so
 // legacy callers (the in-tree boot wiring before sty_92271886) keep
@@ -202,6 +294,45 @@ func documentTypeForKind(kind Kind) (string, bool) {
 		return document.TypeHelp, true
 	}
 	return "", false
+}
+
+// readProjectSeedNames returns the set of canonical names for every
+// .md file under <seedDir>/<workspaceID>/<projectID>/<subdir>/. Mirrors
+// readSystemSeedNames but rooted at the project-tier path.
+func readProjectSeedNames(seedDir, workspaceID, projectID, subdir string) (map[string]bool, error) {
+	out := make(map[string]bool)
+	dir := filepath.Join(seedDir, workspaceID, projectID, subdir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return out, nil
+		}
+		return nil, fmt.Errorf("sweep: read project %s dir: %w", subdir, err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		content, rerr := os.ReadFile(filepath.Join(dir, e.Name()))
+		if rerr != nil {
+			continue
+		}
+		fm, _, perr := Parse(content)
+		if perr != nil {
+			continue
+		}
+		name := fm.String("name")
+		if name == "" {
+			name = fm.String("category")
+		}
+		if name == "" {
+			name = fm.String("slug")
+		}
+		if name != "" {
+			out[name] = true
+		}
+	}
+	return out, nil
 }
 
 // readSystemSeedNames returns the set of `name` frontmatter values for

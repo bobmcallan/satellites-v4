@@ -1,6 +1,6 @@
 ---
 id: pr_mcp_naming_convention
-name: MCP verb naming convention
+name: mcp_naming_convention
 scope: project
 tags:
   - mcp

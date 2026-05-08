@@ -30,6 +30,11 @@ const DefaultIdleBackoff = 5 * time.Second
 
 // DefaultHeartbeatInterval governs how often the worker writes
 // kind:worker-heartbeat ledger rows during an in-flight task.
+// The dispatcher's reclaim watchdog
+// (internal/dispatcher/dispatcher.go) treats a claimed task as
+// stale once it sits past 2× expected_duration; consistent
+// heartbeats are how a long-running execute keeps that window
+// alive.
 const DefaultHeartbeatInterval = 60 * time.Second
 
 // DefaultExecuteTimeout caps a single task's execute phase. The

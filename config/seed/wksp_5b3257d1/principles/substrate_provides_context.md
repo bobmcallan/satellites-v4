@@ -1,7 +1,7 @@
 ---
 id: pr_substrate_provides_context
 name: substrate_provides_context
-scope: project
+scope: workspace
 tags:
   - process
   - dispatch

@@ -1,7 +1,7 @@
 ---
 id: pr_skills_reviewers_ad_hoc
 name: skills_reviewers_ad_hoc
-scope: project
+scope: workspace
 tags:
   - configseed
   - lifecycle

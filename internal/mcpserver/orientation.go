@@ -48,9 +48,14 @@ type orientationFields struct {
 }
 
 // buildOrientation reads the project intent artifact + every active
-// principle (system + project scope) and returns them in the bundle
-// shape. Errors fall through to empty fields so a missing intent or
-// principle store doesn't break the bootstrap call.
+// principle (system + workspace + project scope) and returns them in
+// the bundle shape. Errors fall through to empty fields so a missing
+// intent or principle store doesn't break the bootstrap call.
+//
+// Sty_7f5585e9 added the workspace-tier pass — a workspace authors a
+// principle once and every project in the workspace inherits it.
+// Reads are additive across tiers; collisions on Name produce two
+// entries and the agent reconciles.
 func (s *Server) buildOrientation(ctx context.Context, p project.Project) orientationFields {
 	out := orientationFields{Principles: []PrincipleEntry{}}
 	if s.docs == nil {
@@ -74,6 +79,22 @@ func (s *Server) buildOrientation(ctx context.Context, p project.Project) orient
 			out.Principles = append(out.Principles, PrincipleEntry{
 				Name: d.Name, Scope: "system", Body: d.Body,
 			})
+		}
+	}
+
+	if p.WorkspaceID != "" {
+		if rows, err := s.docs.List(ctx, document.ListOptions{
+			Type:  document.TypePrinciple,
+			Scope: document.ScopeWorkspace,
+		}, nil); err == nil {
+			for _, d := range rows {
+				if d.Status != document.StatusActive || d.WorkspaceID != p.WorkspaceID {
+					continue
+				}
+				out.Principles = append(out.Principles, PrincipleEntry{
+					Name: d.Name, Scope: "workspace", Body: d.Body,
+				})
+			}
 		}
 	}
 

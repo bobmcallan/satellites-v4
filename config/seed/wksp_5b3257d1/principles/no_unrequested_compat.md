@@ -1,7 +1,7 @@
 ---
 id: pr_no_unrequested_compat
 name: no_unrequested_compat
-scope: project
+scope: workspace
 tags:
   - scope
   - architecture

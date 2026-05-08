@@ -1,7 +1,7 @@
 ---
 id: pr_mcp_naming_convention
 name: mcp_naming_convention
-scope: project
+scope: workspace
 tags:
   - mcp
   - api

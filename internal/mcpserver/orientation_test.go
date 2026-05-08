@@ -137,6 +137,60 @@ func TestBuildOrientation_ReturnsIntentAndPrinciples(t *testing.T) {
 	}
 }
 
+// TestBuildOrientation_IncludesWorkspaceTier covers sty_7f5585e9: a
+// scope=workspace principle stamped to the bound project's workspace
+// is appended to bundle.Principles with Scope:"workspace". A second
+// workspace-tier principle in a *different* workspace is NOT included
+// — cross-workspace isolation.
+func TestBuildOrientation_IncludesWorkspaceTier(t *testing.T) {
+	t.Parallel()
+	s, p, wsID := newOrientationFixture(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	if _, err := s.docs.Create(ctx, document.Document{
+		WorkspaceID: wsID,
+		Type:        document.TypePrinciple,
+		Scope:       document.ScopeWorkspace,
+		Name:        "pr_test_workspace",
+		Body:        "# Workspace principle\n\nBody.",
+		Status:      document.StatusActive,
+	}, now); err != nil {
+		t.Fatalf("seed wksp principle: %v", err)
+	}
+	otherWS, err := s.workspaces.Create(ctx, "u_carol", "carol-tier", now)
+	if err != nil {
+		t.Fatalf("carol ws: %v", err)
+	}
+	if _, err := s.docs.Create(ctx, document.Document{
+		WorkspaceID: otherWS.ID,
+		Type:        document.TypePrinciple,
+		Scope:       document.ScopeWorkspace,
+		Name:        "pr_other_workspace",
+		Body:        "# Different workspace.\n",
+		Status:      document.StatusActive,
+	}, now); err != nil {
+		t.Fatalf("seed other ws principle: %v", err)
+	}
+
+	bundle := s.buildOrientation(ctx, p)
+	scopes := map[string]int{}
+	names := map[string]bool{}
+	for _, pr := range bundle.Principles {
+		scopes[pr.Scope]++
+		names[pr.Name] = true
+	}
+	if scopes["workspace"] != 1 {
+		t.Errorf("workspace principles = %d, want 1 (got names=%v)", scopes["workspace"], names)
+	}
+	if !names["pr_test_workspace"] {
+		t.Errorf("expected pr_test_workspace; got %v", names)
+	}
+	if names["pr_other_workspace"] {
+		t.Errorf("cross-workspace principle leaked into bundle: %v", names)
+	}
+}
+
 func TestProjectSet_ReturnsOrientationBundle(t *testing.T) {
 	t.Parallel()
 	s, p, _ := newOrientationFixture(t)

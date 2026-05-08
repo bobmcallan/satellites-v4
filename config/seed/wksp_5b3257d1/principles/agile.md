@@ -1,7 +1,7 @@
 ---
 id: pr_agile
 name: agile
-scope: project
+scope: workspace
 tags:
   - delivery
   - process

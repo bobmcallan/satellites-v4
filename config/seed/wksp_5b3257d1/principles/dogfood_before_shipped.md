@@ -1,7 +1,7 @@
 ---
 id: pr_dogfood_before_shipped
 name: dogfood_before_shipped
-scope: project
+scope: workspace
 tags:
   - quality
   - dogfood

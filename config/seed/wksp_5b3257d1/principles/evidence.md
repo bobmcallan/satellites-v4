@@ -1,7 +1,7 @@
 ---
 id: pr_evidence
 name: evidence
-scope: project
+scope: workspace
 tags:
   - quality
   - evidence

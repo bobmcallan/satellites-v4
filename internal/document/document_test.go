@@ -489,6 +489,7 @@ func TestValidate_WorkspaceScopeAcceptedTypes(t *testing.T) {
 		{"contract", Document{Type: TypeContract, Scope: ScopeWorkspace, Name: "contract_custom", WorkspaceID: "wksp_a"}},
 		{"skill", Document{Type: TypeSkill, Scope: ScopeWorkspace, Name: "skill_custom", WorkspaceID: "wksp_a"}},
 		{"reviewer", Document{Type: TypeReviewer, Scope: ScopeWorkspace, Name: "reviewer_custom", WorkspaceID: "wksp_a", ContractBinding: binding}},
+		{"principle", Document{Type: TypePrinciple, Scope: ScopeWorkspace, Name: "principle_custom", WorkspaceID: "wksp_a"}},
 	}
 	for _, tc := range cases {
 		if err := tc.doc.Validate(); err != nil {

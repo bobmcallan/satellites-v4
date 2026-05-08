@@ -1,7 +1,7 @@
 ---
 id: pr_story_terminal_gate
 name: story_terminal_gate
-scope: project
+scope: workspace
 tags:
   - process
   - structural-invariant

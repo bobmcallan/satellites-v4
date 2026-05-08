@@ -1,7 +1,7 @@
 ---
 id: pr_pipeline_integrity
 name: pipeline_integrity
-scope: project
+scope: workspace
 tags:
   - process
   - pipeline

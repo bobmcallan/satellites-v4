@@ -1,7 +1,7 @@
 ---
 id: pr_quality
 name: quality
-scope: project
+scope: workspace
 tags:
   - quality
   - process

@@ -1,7 +1,7 @@
 ---
 id: pr_local_iteration
 name: local_iteration
-scope: project
+scope: workspace
 tags:
   - delivery
   - iteration

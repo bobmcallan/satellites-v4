@@ -1,7 +1,7 @@
 ---
 id: pr_contract_separation
 name: contract_separation
-scope: project
+scope: workspace
 tags:
   - architecture
   - contracts

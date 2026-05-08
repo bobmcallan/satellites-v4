@@ -447,45 +447,41 @@ func TestPrincipleSeedLoad(t *testing.T) {
 
 // TestRunProject_RealSeedDirShipsSatellitesPrinciples checks the
 // loader's structural contract on the real
-// config/seed/wksp_5b3257d1/proj_7a62aedb/principles/ directory: every
-// .md file becomes one type=principle scope=project document with a
-// non-empty body and project_id stamped on the row. Replaces the
-// pre-sty_8f6b90c8 version that targeted system-tier principles —
-// after the migration, the satellites project owns its principles at
-// project scope and the system principles directory is empty.
-func TestRunProject_RealSeedDirShipsSatellitesPrinciples(t *testing.T) {
+// config/seed/wksp_5b3257d1/principles/ directory: every .md file
+// becomes one type=principle scope=workspace document with a non-empty
+// body and workspace_id stamped on the row. Sty_7f5585e9 moved the
+// satellites principles up from the project tier to the workspace
+// tier so a second project added to the workspace inherits them
+// without per-project copying.
+func TestRunWorkspace_RealSeedDirShipsSatellitesPrinciples(t *testing.T) {
 	t.Parallel()
 	seedDir, err := filepath.Abs(filepath.Join("..", "..", "config", "seed"))
 	if err != nil {
 		t.Fatalf("abs seed dir: %v", err)
 	}
-	const (
-		ws  = "wksp_5b3257d1"
-		pid = "proj_7a62aedb"
-	)
-	files, err := filepath.Glob(filepath.Join(seedDir, ws, pid, "principles", "*.md"))
+	const ws = "wksp_5b3257d1"
+	files, err := filepath.Glob(filepath.Join(seedDir, ws, "principles", "*.md"))
 	if err != nil {
 		t.Fatalf("glob principles: %v", err)
 	}
 	if len(files) == 0 {
-		t.Fatalf("no principle files under %s/%s/%s/principles", seedDir, ws, pid)
+		t.Fatalf("no principle files under %s/%s/principles", seedDir, ws)
 	}
 
 	docs := document.NewMemoryStore()
-	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
-	summary, err := RunProject(context.Background(), docs, seedDir, pid, ws, "system", now)
+	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
+	summary, err := RunWorkspace(context.Background(), docs, seedDir, ws, "system", now)
 	if err != nil {
-		t.Fatalf("RunProject: %v", err)
+		t.Fatalf("RunWorkspace: %v", err)
 	}
 	if len(summary.Errors) != 0 {
 		t.Fatalf("unexpected errors: %v", summary.Errors)
 	}
 
 	principles, err := docs.List(context.Background(), document.ListOptions{
-		Type:      document.TypePrinciple,
-		Scope:     document.ScopeProject,
-		ProjectID: pid,
-		Limit:     len(files) * 2,
+		Type:  document.TypePrinciple,
+		Scope: document.ScopeWorkspace,
+		Limit: len(files) * 2,
 	}, nil)
 	if err != nil {
 		t.Fatalf("List principles: %v", err)
@@ -497,8 +493,11 @@ func TestRunProject_RealSeedDirShipsSatellitesPrinciples(t *testing.T) {
 		if p.Body == "" {
 			t.Errorf("principle %q has empty body", p.Name)
 		}
-		if p.ProjectID == nil || *p.ProjectID != pid {
-			t.Errorf("principle %q project_id = %v, want %s", p.Name, p.ProjectID, pid)
+		if p.WorkspaceID != ws {
+			t.Errorf("principle %q workspace_id = %q, want %s", p.Name, p.WorkspaceID, ws)
+		}
+		if p.ProjectID != nil {
+			t.Errorf("principle %q project_id = %v, want nil", p.Name, p.ProjectID)
 		}
 	}
 }

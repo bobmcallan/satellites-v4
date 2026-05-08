@@ -1,7 +1,7 @@
 ---
 id: pr_reviewer_voice_authoritative
 name: reviewer_voice_authoritative
-scope: project
+scope: workspace
 tags:
   - process
   - mandate

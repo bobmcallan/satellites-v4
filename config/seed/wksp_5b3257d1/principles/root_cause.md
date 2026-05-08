@@ -1,7 +1,7 @@
 ---
 id: pr_root_cause
 name: root_cause
-scope: project
+scope: workspace
 tags:
   - quality
   - debugging

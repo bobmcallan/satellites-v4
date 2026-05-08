@@ -1,7 +1,7 @@
 ---
 id: seed_name_slug
 name: seed_name_slug
-scope: project
+scope: workspace
 tags:
   - configseed
   - convention

@@ -140,14 +140,14 @@ in one roundtrip:
 
 That single call replaces what used to be three separate fetches
 (project row + intent + principles). On later turns,
-`project_context()` returns the same bundle without
+`project_get(id=<project_id>)` returns the same bundle without
 re-resolving the repo URL — useful when intent or principles
 need a refresh.
 
 Beyond the bootstrap, role-, story-, and task-specific context
 is fetched on demand:
 
-- `story_context(id)` — story + project + recent ledger +
+- `story_get(id)` — story + project + recent ledger +
   resolved agent_process artifact + category template, in one
   roundtrip.
 - `task_get(id)` / `task_walk(story_id)` — task chain plus
@@ -234,14 +234,14 @@ into the model's working context.
   Phase 3 contribution).
 - The verbs (and their descriptions) the artifact directs
   callers to use after Phase 6 fires — `project_set`,
-  `project_context`, `story_context`, `story_get`, `task_get`,
+  `project_get`, `story_get`, `task_get`,
   `agent_get`, `contract_get`, `principle_list`. Tool
   descriptions registered in `internal/mcpserver/` are
   themselves instruction prose read by the model on every turn,
   rendered into the portal's MCP verb map page for operator
   inspection.
 - The orientation bundle's contents — `project_set` /
-  `project_context` return whatever scope=project artifact
+  `project_get` return whatever scope=project artifact
   named `project_intent` exists for the bound project, plus
   every active scope=system + scope=project type=principle row
   (filtered by workspace at the row layer). Editing the seed
@@ -273,8 +273,8 @@ the prompt-specific verb:
 
 | Operator prompt | Identifier extracted | Verb after bootstrap |
 |---|---|---|
-| `implement sty_a03449d1` | story id `sty_a03449d1` | `story_context(id)` |
-| `run sty_cf8ff98b` | story id `sty_cf8ff98b` | `story_context(id)` |
+| `implement sty_a03449d1` | story id `sty_a03449d1` | `story_get(id)` |
+| `run sty_cf8ff98b` | story id `sty_cf8ff98b` | `story_get(id)` |
 | `do task_b3a91e` | task id `task_b3a91e` | `task_get(id)` |
 | `what's in this repo` | (resolves repo url via `git remote get-url origin`) | `project_set(repo_url)` returns intent + principles directly — no follow-up needed |
 | `list stories in this project` | project id (from bound session) | `story_list(project_id)` |
@@ -300,12 +300,12 @@ session are out of scope and excluded.
 | 1 | 6 | Operator | Typed: *"validate sty_14dfd05b"* |
 | 2 | 6.1 | Claude | Parsed prompt — story id `sty_14dfd05b` extracted |
 | 3 | 6.3 | Satellites MCP | `project_set(repo_url="git@github.com:bobmcallan/satellites.git")` → `{project_id, status:resolved, intent_body, principles[]}` — bootstrap done in one roundtrip, session auto-registered |
-| 4 | 6.3 | Satellites MCP | `story_context(id=sty_14dfd05b)` → story + project + recent ledger + agent_process + category template |
+| 4 | 6.3 | Satellites MCP | `story_get(id=sty_14dfd05b)` → story + project + recent ledger + agent_process + category template |
 | 5 | 6.4 | Claude | Synthesised + acted (verified ACs against on-disk code, reported result) |
 
 Two roundtrips for a substrate-prompt — bootstrap (which
 carries intent + principles) and the prompt-specific bundle.
-The orientation bundle and `story_context` collapse the
+The orientation bundle and `story_get` collapse the
 stitching into the substrate so the agent doesn't have to
 fetch project, intent, principles, story, ledger, and agent
 process as separate calls.

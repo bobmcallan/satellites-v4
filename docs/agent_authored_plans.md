@@ -25,7 +25,7 @@ but not the destination.
 
 3. **Operator: `implement <story_id>` / `resume <story_id>`.**
 
-4. **Orchestrator agent → `story_context(story_id)`.** Returns the
+4. **Orchestrator agent → `story_get(story_id)`.** Returns the
    story body, status, recent ledger ids, and the instruction to
    submit a plan via `task_submit(kind:plan, …)`. The agent
    may pull more context (ledger rows, code) before it composes the
@@ -93,7 +93,7 @@ but not the destination.
 ## What this replaces
 
 Verbs that go away:
-- `orchestrator_compose_plan` — agent submits via `task_submit`.
+- `orchestrator_compose_plan` — agent submits via `task_add`.
 - `orchestrator_submit_plan` — same.
 - `workflow_claim` — substrate creates contract instances (or skips
   the CI concept entirely; see open question) when the plan task list
@@ -102,12 +102,12 @@ Verbs that go away:
   per the existing sty_c6d76a5b spec, deleted.
 - `contract_review_close` / `CommitReviewVerdict` — replaced by
   the reviewer submitting `kind:*_accept` / `kind:*_reject` via
-  `task_submit`.
+  `task_add`.
 - `task_enqueue` / `task_publish` / `task_close` — collapsed into
-  `task_submit`.
+  `task_add`.
 
 Verbs that stay or get added:
-- `story_context(story_id)` — context bundle for an agent about to
+- `story_get(story_id)` — context bundle for an agent about to
   work the story.
 - `task_submit(kind, markdown, tasks[]?, evidence_ledger_ids[]?)`.
 - `story_task_claim(task_id)` — subscriber-side directed claim.
@@ -193,7 +193,7 @@ These need direction before this can become a story:
 7. **Strategy proposals (split / cycles).** Per the existing story
    body, reviewer pushback can spawn `kind:split-proposal` or
    `kind:cycles-proposal` tasks. Do these go through the same
-   `task_submit` verb? (Yes, presumably — they're just
+   `task_add` verb? (Yes, presumably — they're just
    another kind.) And what does the orchestrator do with them?
    Read the markdown body and emit a fresh kind:plan that
    incorporates the split? That keeps it agent-driven.
@@ -221,12 +221,12 @@ NOTE: Possible to have a number of ledger items marked against the task. Hence a
   next implementation slice.
 
 - **Remaining-9 list.** The order shifts:
-  1. Add `story_context` + `task_submit` + validation rules
+  1. Add `story_get` + `task_add` + validation rules
      (kind:plan first, default minimum, auto-insert reviews).
   2. Reviewer service: subscribe via hubemit (item #2 from the old
      list — still next, unchanged).
   3. Reviewer's verdict path: emit `kind:*_accept` / `kind:*_reject`
-     tasks via `task_submit` instead of calling
+     tasks via `task_add` instead of calling
      `contract_review_close`.
   4. Markdown: reviewer routing on contract frontmatter (open
      question 4).

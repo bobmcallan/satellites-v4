@@ -280,7 +280,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		s.mcp.AddTool(createTool, s.handleProjectCreate)
 
 		getProjTool := mcpgo.NewTool("project_get",
-			mcpgo.WithDescription("Return a project the caller owns. Cross-owner access returns not-found. Response includes mcp_url and mcp_config — paste-ready snippets that scope an MCP client to this project via ?project_id=."),
+			mcpgo.WithDescription("Return the orientation bundle for a project the caller owns: project row, mcp_url + mcp_config (paste-ready client snippets that scope an MCP client to this project via ?project_id=), intent_body, and active principles. Cross-owner access returns not-found."),
 			mcpgo.WithString("id",
 				mcpgo.Required(),
 				mcpgo.Description("Project id (proj_<8hex>)."),
@@ -322,16 +322,6 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("session_id", mcpgo.Description("Optional explicit session id. Streamable HTTP callers should let the Mcp-Session-Id header carry the id; this arg is for stdio/test callers that can't set the header.")),
 		)
 		s.mcp.AddTool(setProjTool, s.handleProjectSet)
-
-		// project_context — sty_31d51494 layer 2. No-arg refresh of the
-		// orientation bundle for sessions that have already been bound
-		// via project_set. Returns the same shape minus the bind-related
-		// fields. Use this for principle / intent refresh on subsequent
-		// turns without re-resolving the repo URL.
-		ctxProjTool := mcpgo.NewTool("project_context",
-			mcpgo.WithDescription("Return the orientation bundle for the session-bound project: {project_id, intent_body, principles[]}. No args — reads the project bound by an earlier project_set call (via the Mcp-Session-Id header). Returns a structured no_project_bound error when the session has no active project. Use for refreshing project intent + principles on later turns without re-resolving the repo URL."),
-		)
-		s.mcp.AddTool(ctxProjTool, s.handleProjectContext)
 	}
 
 	if s.ledger != nil {
@@ -428,20 +418,10 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		s.mcp.AddTool(updateStoryTool, s.handleStoryUpdate)
 
 		getStoryTool := mcpgo.NewTool("story_get",
-			mcpgo.WithDescription("Return a story by id. Cross-project access returns not-found."),
+			mcpgo.WithDescription("Return the orientation bundle for a story: row body/status/fields/tags, owning project, recent ledger evidence, the resolved agent_process instruction markdown, and the category template. Workspace-scoped; cross-project access returns not-found."),
 			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Story id (sty_<8hex>).")),
 		)
 		s.mcp.AddTool(getStoryTool, s.handleStoryGet)
-
-		// sty_509a46fa: story_context is a single-roundtrip composer
-		// returning the story + project + recent evidence + resolved
-		// agent_process body + category template. Replaces the agent-
-		// side stitch of story_get + project_get + ledger_recall.
-		contextStoryTool := mcpgo.NewTool("story_context",
-			mcpgo.WithDescription("Return the orientation bundle for a story: row body/status/fields/tags, owning project, recent ledger evidence, the resolved agent_process instruction markdown, and the category template. Single-roundtrip alternative to stitching story_get + project_get + ledger_recall. Workspace-scoped."),
-			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Story id (sty_<8hex>).")),
-		)
-		s.mcp.AddTool(contextStoryTool, s.handleStoryContext)
 
 		listStoryTool := mcpgo.NewTool("story_list",
 			mcpgo.WithDescription("List stories in a project. Supports status, priority, and tag filters."),
@@ -1545,6 +1525,11 @@ func (s *Server) handleProjectCreate(ctx context.Context, req mcpgo.CallToolRequ
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
+// handleProjectGet implements `project_get`: returns the orientation
+// bundle for an explicit project id — project row + mcp_url + mcp_config
+// + intent_body + active principles. Single-shot, no session binding.
+// sty_48e38e83 merged the prior thin row-only `project_get` with the
+// session-keyed `project_context` no-arg refresh.
 func (s *Server) handleProjectGet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := UserFrom(ctx)
@@ -1560,7 +1545,13 @@ func (s *Server) handleProjectGet(ctx context.Context, req mcpgo.CallToolRequest
 	if err != nil || p.OwnerUserID != caller.UserID {
 		return mcpgo.NewToolResultError("project not found"), nil
 	}
-	body, _ := json.Marshal(s.buildProjectView(ctx, p))
+	view := s.buildProjectView(ctx, p)
+	bundle := s.buildOrientation(ctx, p)
+	body, _ := json.Marshal(map[string]any{
+		"project":     view,
+		"intent_body": bundle.IntentBody,
+		"principles":  bundle.Principles,
+	})
 	s.logger.Info().
 		Str("method", "tools/call").
 		Str("tool", "project_get").
@@ -1673,53 +1664,6 @@ func (s *Server) resolveProjectByRemote(ctx context.Context, workspaceID, canoni
 		return project.Project{}, false
 	}
 	return p, true
-}
-
-// handleProjectContext returns the orientation bundle for the
-// session-bound project. sty_31d51494 layer 2 — the no-arg refresh
-// surface for the bootstrap bundle. Reads the active_project_id from
-// the caller's session row (keyed by the Mcp-Session-Id header by
-// default; body session_id arg accepted for stdio / test callers).
-// Returns a structured no_project_bound error when the session has
-// not bound a project via project_set.
-func (s *Server) handleProjectContext(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	caller, _ := UserFrom(ctx)
-	if caller.UserID == "" {
-		return mcpgo.NewToolResultError("no caller identity"), nil
-	}
-	if s.sessions == nil || s.projects == nil {
-		body, _ := json.Marshal(map[string]any{"error": "session_or_project_store_not_wired"})
-		return mcpgo.NewToolResultError(string(body)), nil
-	}
-	sessID := resolveSessionID(ctx, req.GetString("session_id", ""))
-	if sessID == "" {
-		body, _ := json.Marshal(map[string]any{
-			"error":   "session_id_required",
-			"message": "project_context needs a session id — supply via Mcp-Session-Id header or body session_id arg",
-		})
-		return mcpgo.NewToolResultError(string(body)), nil
-	}
-	sess, err := s.sessions.Get(ctx, caller.UserID, sessID)
-	if err != nil || sess.ActiveProjectID == "" {
-		body, _ := json.Marshal(map[string]any{
-			"error":   "no_project_bound",
-			"message": "no active project on this session — call project_set(repo_url) first",
-		})
-		return mcpgo.NewToolResultError(string(body)), nil
-	}
-	memberships := s.resolveCallerMemberships(ctx, caller)
-	p, err := s.projects.GetByID(ctx, sess.ActiveProjectID, memberships)
-	if err != nil {
-		body, _ := json.Marshal(map[string]any{"error": "project_not_found"})
-		return mcpgo.NewToolResultError(string(body)), nil
-	}
-	bundle := s.buildOrientation(ctx, p)
-	body, _ := json.Marshal(map[string]any{
-		"project_id":  p.ID,
-		"intent_body": bundle.IntentBody,
-		"principles":  bundle.Principles,
-	})
-	return mcpgo.NewToolResultText(string(body)), nil
 }
 
 func (s *Server) handleProjectUpdate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -2140,64 +2084,6 @@ func buildStoryUpdateFields(req mcpgo.CallToolRequest) (story.UpdateFields, erro
 	return fields, nil
 }
 
-func (s *Server) handleStoryGet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	start := time.Now()
-	caller, _ := UserFrom(ctx)
-	id, err := req.RequireString("id")
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	memberships := s.resolveCallerMemberships(ctx, caller)
-	st, err := s.stories.GetByID(ctx, id, memberships)
-	if err != nil {
-		return mcpgo.NewToolResultError("story not found"), nil
-	}
-	// Owner check is project-scoped: the caller must own the story's project.
-	if _, err := s.resolveProjectID(ctx, st.ProjectID, caller, memberships); err != nil {
-		return mcpgo.NewToolResultError("story not found"), nil
-	}
-	// Sty_d2a03cea: attach recent ledger evidence (newest-first, capped at
-	// 10) and the resolved template (if any). The view is what callers
-	// actually want — story + what's been recorded against it + the
-	// schema describing what should be recorded next.
-	view := s.buildStoryView(ctx, st, memberships)
-	body, _ := json.Marshal(view)
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "story_get").
-		Str("story_id", id).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
-	return mcpgo.NewToolResultText(string(body)), nil
-}
-
-// storyView is the JSON-marshalled response shape for story_get. Embeds
-// the durable Story row and adds two computed sections: recent ledger
-// evidence (cap 10, newest-first) and the resolved category template
-// (so callers see the field prompts and lifecycle hooks alongside the
-// story). Sty_d2a03cea.
-type storyView struct {
-	story.Story
-	RecentEvidence []ledger.LedgerEntry `json:"recent_evidence,omitempty"`
-	Template       *story.Template      `json:"template,omitempty"`
-}
-
-func (s *Server) buildStoryView(ctx context.Context, st story.Story, memberships []string) storyView {
-	view := storyView{Story: st}
-	if s.ledger != nil {
-		entries, err := s.ledger.List(ctx, st.ProjectID, ledger.ListOptions{
-			StoryID: st.ID,
-			Limit:   10,
-		}, memberships)
-		if err == nil && len(entries) > 0 {
-			view.RecentEvidence = entries
-		}
-	}
-	if t, ok := s.loadStoryTemplate(ctx, st.Category); ok {
-		view.Template = &t
-	}
-	return view
-}
 
 // loadStoryTemplate resolves a category → story.Template by reading the
 // system-scope document with type=story_template + name=category. Sets

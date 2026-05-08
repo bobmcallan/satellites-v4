@@ -1,6 +1,7 @@
-// Tests for the project orientation bundle (sty_31d51494 layer 2).
-// Cover the bundle helper, project_set's enriched return, project_context
-// (no-arg refresh) and the auto-bind on Mcp-Session-Id.
+// Tests for the project orientation bundle (sty_31d51494 layer 2,
+// sty_48e38e83 rename). Cover the bundle helper, project_set's
+// enriched return, project_get's orientation bundle, and the auto-bind
+// on Mcp-Session-Id.
 package mcpserver
 
 import (
@@ -190,25 +191,20 @@ func TestProjectSet_AutoRegistersSessionWhenNotPresent(t *testing.T) {
 	}
 }
 
-func TestProjectContext_ReturnsBundleForBoundSession(t *testing.T) {
+// TestProjectGet_ReturnsOrientationBundle: post-sty_48e38e83 the
+// project_get verb returns the orientation bundle (project view +
+// intent_body + principles[]) for an explicit project id, replacing
+// the prior session-keyed project_context refresh surface.
+func TestProjectGet_ReturnsOrientationBundle(t *testing.T) {
 	t.Parallel()
 	s, p, _ := newOrientationFixture(t)
 	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
 
-	// Bind via project_set first.
-	if _, err := s.handleProjectSet(ctx, newCallToolReq("project_set", map[string]any{
-		"repo_url":   "https://github.com/owner/repo",
-		"session_id": "sess_bound",
-	})); err != nil {
-		t.Fatalf("project_set: %v", err)
-	}
-
-	// Now project_context() with no repo_url — just the session id.
-	res, err := s.handleProjectContext(ctx, newCallToolReq("project_context", map[string]any{
-		"session_id": "sess_bound",
+	res, err := s.handleProjectGet(ctx, newCallToolReq("project_get", map[string]any{
+		"id": p.ID,
 	}))
 	if err != nil {
-		t.Fatalf("project_context: %v", err)
+		t.Fatalf("project_get: %v", err)
 	}
 	if res.IsError {
 		t.Fatalf("IsError: %s", firstText(res))
@@ -217,12 +213,13 @@ func TestProjectContext_ReturnsBundleForBoundSession(t *testing.T) {
 	if err := json.Unmarshal([]byte(firstText(res)), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body["project_id"] != p.ID {
-		t.Errorf("project_id = %v, want %s", body["project_id"], p.ID)
+	proj, _ := body["project"].(map[string]any)
+	if proj["id"] != p.ID {
+		t.Errorf("project.id = %v, want %s", proj["id"], p.ID)
 	}
 	intent, _ := body["intent_body"].(string)
 	if !strings.Contains(intent, "Project intent test body") {
-		t.Errorf("intent_body missing")
+		t.Errorf("intent_body missing seeded content: %q", intent)
 	}
 	principles, _ := body["principles"].([]any)
 	if len(principles) != 2 {
@@ -230,29 +227,25 @@ func TestProjectContext_ReturnsBundleForBoundSession(t *testing.T) {
 	}
 }
 
-func TestProjectContext_NoBoundSessionReturnsError(t *testing.T) {
+func TestProjectGet_UnknownIDReturnsError(t *testing.T) {
 	t.Parallel()
 	s, _, _ := newOrientationFixture(t)
 	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
-	// Register the session but do NOT bind a project.
-	if _, err := s.sessions.Register(ctx, "u_alice", "sess_unbound", session.SourceSessionStart, time.Now().UTC()); err != nil {
-		t.Fatalf("register: %v", err)
-	}
-	res, err := s.handleProjectContext(ctx, newCallToolReq("project_context", map[string]any{
-		"session_id": "sess_unbound",
+	res, err := s.handleProjectGet(ctx, newCallToolReq("project_get", map[string]any{
+		"id": "proj_missing0",
 	}))
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
 	if !res.IsError {
-		t.Fatalf("expected IsError when no project bound; body=%s", firstText(res))
+		t.Fatalf("expected IsError for unknown id; body=%s", firstText(res))
 	}
-	if body := firstText(res); !strings.Contains(body, "no_project_bound") {
-		t.Errorf("expected no_project_bound; got %q", body)
+	if body := firstText(res); !strings.Contains(body, "project not found") {
+		t.Errorf("expected project not found; got %q", body)
 	}
 }
 
-func TestStoryContext_IncludesOrientationBundle(t *testing.T) {
+func TestStoryGet_IncludesOrientationBundle(t *testing.T) {
 	t.Parallel()
 	s, p, wsID := newOrientationFixture(t)
 	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
@@ -271,7 +264,7 @@ func TestStoryContext_IncludesOrientationBundle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("story create: %v", err)
 	}
-	res, err := s.handleStoryContext(ctx, newCallToolReq("story_context", map[string]any{
+	res, err := s.handleStoryGet(ctx, newCallToolReq("story_get", map[string]any{
 		"id": st.ID,
 	}))
 	if err != nil {
@@ -286,10 +279,10 @@ func TestStoryContext_IncludesOrientationBundle(t *testing.T) {
 	}
 	intent, _ := body["intent_body"].(string)
 	if !strings.Contains(intent, "Project intent test body") {
-		t.Errorf("story_context.intent_body missing seeded content")
+		t.Errorf("story_get.intent_body missing seeded content")
 	}
 	principles, _ := body["principles"].([]any)
 	if len(principles) < 1 {
-		t.Errorf("story_context.principles empty; want at least 1")
+		t.Errorf("story_get.principles empty; want at least 1")
 	}
 }

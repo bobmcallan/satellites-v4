@@ -22,4 +22,4 @@ The autonomous reviewer service runs the rubric the operator (via the seed) has 
 
 ## Citation
 
-This principle backs the orchestrator pre-flight rules in the `claude_orchestrator` agent doc and the `default_agent_process` artifact, which the substrate surfaces to every Claude session via `story_context.agent_process`.
+This principle backs the orchestrator pre-flight rules in the `claude_orchestrator` agent doc and the `default_agent_process` artifact, which the substrate surfaces to every Claude session via `story_get.agent_process`.

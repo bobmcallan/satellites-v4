@@ -130,7 +130,7 @@ two parts:
    - Active principles cited by the agent's rubric.
    - Contract document body for the action being performed.
 2. **MCP calls** fetch the project content at execution time:
-   - `story_get` / `story_context` — the story body, AC, fields.
+   - `story_get` — the story body, AC, fields, recent evidence, agent_process, template.
    - `task_walk` — where the chain currently is.
    - `ledger_recall` / `ledger_list` — prior evidence, verdicts.
    - `repo_get_file` / `repo_search_text` — code under review.

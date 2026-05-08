@@ -33,9 +33,9 @@ For unrelated prompts (a quick question, a non-substrate task)
 the bootstrap is unnecessary. The handshake orients — it does
 not demand a roundtrip on every turn.
 
-`project_context()` returns the same orientation bundle without
-re-resolving the repo URL. Use it on later turns when the
-intent or principles need a refresh.
+`project_get(id=<project_id>)` returns the same orientation
+bundle without re-resolving the repo URL. Use it on later turns
+when the intent or principles need a refresh.
 
 ## Fetching context
 

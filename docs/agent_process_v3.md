@@ -116,8 +116,8 @@ worktrees. The substrate provides the dispatch primitive
 
 1. **Operator says `implement <story_id>`.** The orchestrator's
    conversation begins.
-2. **Orient.** Read `story_get`, `story_context`, `task_walk`.
-   The `agent_process` body returned by `story_context` carries
+2. **Orient.** Read `story_get`, `story_get`, `task_walk`.
+   The `agent_process` body returned by `story_get` carries
    the orchestrator's pre-flight rules and dispatch loop.
 3. **If no tasks exist on the chain — compose plan.** Per
    pre-flight Rule 2, read each contract document the planned
@@ -158,7 +158,7 @@ the per-dispatch context bundle the substrate composes.
 Citing `pr_substrate_provides_context`. The dispatch primitive
 itself enforces this: every dispatch composes the agent's
 prompt from agent_process artifact + agent doc body + active
-principles + story_context + contract body + relevant
+principles + story_get + contract body + relevant
 `task_walk` slice. The agent does not inherit, it is supplied.
 
 ---

@@ -30,7 +30,7 @@ Content carried into the session: substrate identity
 primitives (projects, stories, tasks, documents, ledger), the
 bootstrap directive (`project_set` is the first call when the
 prompt references substrate primitives), a fetch map naming the
-verbs callers use to get more context (`story_context`,
+verbs callers use to get more context (`story_get`,
 `task_get`, `agent_get`, `contract_get`), and the operating
 principle (act on prose, write evidence, fetch rules don't
 infer them). ~30 lines total — universal to every reader
@@ -109,7 +109,7 @@ membership / scope filtering is computed at request time. The
 project row keys the rest of the session; subsequent
 project-scoped verbs default to this id when omitted. The
 bundle's intent + principles are the same content
-`project_context()` returns on later turns when the agent needs
+`project_get()` returns on later turns when the agent needs
 a refresh without re-resolving the repo URL.
 
 If the repo isn't registered the response is
@@ -122,10 +122,10 @@ the orchestrator must ask the operator before calling
 ## Step 2 — operator types `implement sty_a03449d1`
 
 The first MCP call after this prompt is **always**
-`story_context` (single-roundtrip orientation), or `story_get`
+`story_get` (single-roundtrip orientation), or `story_get`
 when the agent only needs the row and not the full bundle.
 
-### 2a. `story_context({ id })`
+### 2a. `story_get({ id })`
 
 Returns story row + project row + recent ledger evidence + the
 resolved agent_process instruction markdown + category template.
@@ -299,7 +299,7 @@ deactivate a principle without re-seeding.
 
 The plan submission passes `agent_id` for each task, and the
 substrate validates capability via the agent's `delivers:` /
-`reviews:` lists at `task_submit` time. To pick the right ids
+`reviews:` lists at `task_add` time. To pick the right ids
 the orchestrator reads the agent catalog.
 
 ### 5a. `agent_get({ name: "developer_agent" })` (or `agent_list`)
@@ -554,9 +554,9 @@ walkthrough is out of scope for this doc.
 | 0 | MCP `instructions` block (handshake) | **seed** — `config/seed/system/artifacts/default_agent_process.md` |
 | 1a | `session_register` | **runtime** — session row |
 | 2b | `project_set` | **runtime** — project row |
-| 3a | `story_context` — `story` + `project` | **runtime** — story / project rows |
-| 3a | `story_context` — `agent_process` | **seed** — `config/seed/system/artifacts/default_agent_process.md` |
-| 3a | `story_context` — `template` | **seed** — `config/seed/system/story_templates/<category>.md` |
+| 3a | `story_get` — `story` + `project` | **runtime** — story / project rows |
+| 3a | `story_get` — `agent_process` | **seed** — `config/seed/system/artifacts/default_agent_process.md` |
+| 3a | `story_get` — `template` | **seed** — `config/seed/system/story_templates/<category>.md` |
 | 3b | `task_walk` | **runtime** — task rows |
 | 4a | `document_get(contract:plan)` | **seed** — `config/seed/system/contracts/plan.md` |
 | 4b | `document_get(contract:develop)` | **seed** — `config/seed/system/contracts/develop.md` |
@@ -580,7 +580,7 @@ walkthrough is out of scope for this doc.
 - **Anything the orchestrator writes, claims, or transitions**
   is runtime (sessions, projects, stories, tasks, ledger rows).
   These are the audit trail.
-- **Some responses are mixed**: `story_context` returns a runtime
+- **Some responses are mixed**: `story_get` returns a runtime
   story row alongside the seeded agent_process artifact and
   category template in one roundtrip. `principle_list` rows
   carry a runtime status flag wrapped around a seeded body.

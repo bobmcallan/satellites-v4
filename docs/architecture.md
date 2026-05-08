@@ -382,7 +382,7 @@ This section describes the architecture introduced by sty_9d7992c3 (seed instruc
 3. Writes per-task config files inside the worktree's `.claude/` directory:
    - `settings.json` — `PreToolUse` hooks enforcing `permission_patterns` (defence-in-depth alongside the `--allowedTools` flag); `Stop` hook capturing the subprocess's exit reason.
    - `mcp.json` — substrate MCP server config including an `X-Satellites-Agent: <role>:<task_id>` HTTP header for audit-feed attribution.
-4. Composes the agent's prompt: agent_process artifact body + agent doc body + active principles + `story_context` for the owning story + contract document body for the task's action + relevant `task_walk` slice. The substrate is authoritative on context; the agent does not inherit operator-side Claude Code memory.
+4. Composes the agent's prompt: agent_process artifact body + agent doc body + active principles + `story_get` for the owning story + contract document body for the task's action + relevant `task_walk` slice. The substrate is authoritative on context; the agent does not inherit operator-side Claude Code memory.
 5. Spawns the subprocess: `HOME=<scratch> cd <worktree> && claude -p "<prompt>" --allowedTools "<patterns>" --mcp-config <worktree>/.claude/mcp.json --strict-mcp-config --output-format json`.
 6. Captures the JSON result, parses it, writes a `kind:dispatch-result` ledger row tagged `task_id:<id>` capturing exit code, duration, cost, agent role, branch name, head commit (if the agent committed), and a diff stat.
 7. Tears down the worktree (`git worktree remove`); the branch persists for forensics or merge.

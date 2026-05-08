@@ -2,7 +2,7 @@
 // what an agent reads on its first turn after a user prompt fires —
 // "where am I, what is this project, what guardrails apply" — in one
 // roundtrip. project_set returns it after binding the session to a
-// project; project_context returns it for refresh on subsequent turns
+// project; project_get(id) returns it for refresh on subsequent turns
 // without re-resolving the repo URL.
 //
 // Sources:
@@ -41,7 +41,7 @@ type PrincipleEntry struct {
 
 // orientationFields is the subset of the verb response that carries
 // the orientation bundle. project_set merges this into its existing
-// response shape; project_context returns it alongside project_id.
+// response shape; project_get returns it alongside the project view.
 type orientationFields struct {
 	IntentBody string           `json:"intent_body,omitempty"`
 	Principles []PrincipleEntry `json:"principles"`

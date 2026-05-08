@@ -12,10 +12,10 @@ import (
 	"github.com/bobmcallan/satellites/internal/ledger"
 )
 
-// TestStoryContext_HappyPath verifies that story_context returns the
+// TestStoryGet_HappyPath verifies that story_get returns the
 // orientation bundle in a single roundtrip: story body, owning project,
 // recent ledger evidence, agent_process body, and the category template.
-func TestStoryContext_HappyPath(t *testing.T) {
+func TestStoryGet_HappyPath(t *testing.T) {
 	t.Parallel()
 	s := newStoryUpdateTestServer(t)
 	storyID, projectID, wsID := seedStoryAlice(t, s)
@@ -55,7 +55,7 @@ func TestStoryContext_HappyPath(t *testing.T) {
 		}
 	}
 
-	res, err := s.handleStoryContext(ctx, newCallToolReq("story_context", map[string]any{
+	res, err := s.handleStoryGet(ctx, newCallToolReq("story_get", map[string]any{
 		"id": storyID,
 	}))
 	if err != nil {
@@ -65,7 +65,7 @@ func TestStoryContext_HappyPath(t *testing.T) {
 		t.Fatalf("expected success, got error: %s", firstText(res))
 	}
 
-	var view storyContextView
+	var view storyView
 	if err := json.Unmarshal([]byte(firstText(res)), &view); err != nil {
 		t.Fatalf("unmarshal: %v; body=%s", err, firstText(res))
 	}
@@ -87,14 +87,14 @@ func TestStoryContext_HappyPath(t *testing.T) {
 	}
 }
 
-// TestStoryContext_StoryNotFound returns the same structured error as
+// TestStoryGet_StoryNotFound returns the same structured error as
 // story_get when the id is unknown — never leaks existence to a
 // non-owning caller.
-func TestStoryContext_StoryNotFound(t *testing.T) {
+func TestStoryGet_StoryNotFound(t *testing.T) {
 	t.Parallel()
 	s := newStoryUpdateTestServer(t)
 	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice"})
-	res, err := s.handleStoryContext(ctx, newCallToolReq("story_context", map[string]any{
+	res, err := s.handleStoryGet(ctx, newCallToolReq("story_get", map[string]any{
 		"id": "sty_missing0",
 	}))
 	if err != nil {
@@ -108,15 +108,15 @@ func TestStoryContext_StoryNotFound(t *testing.T) {
 	}
 }
 
-// TestStoryContext_CrossOwnerRejected ensures the project-scoped owner
+// TestStoryGet_CrossOwnerRejected ensures the project-scoped owner
 // check matches story_get: a caller who isn't the project owner gets
 // "story not found" rather than the row body.
-func TestStoryContext_CrossOwnerRejected(t *testing.T) {
+func TestStoryGet_CrossOwnerRejected(t *testing.T) {
 	t.Parallel()
 	s := newStoryUpdateTestServer(t)
 	storyID, _, _ := seedStoryAlice(t, s)
 	bobCtx := withCaller(context.Background(), CallerIdentity{UserID: "u_bob"})
-	res, err := s.handleStoryContext(bobCtx, newCallToolReq("story_context", map[string]any{
+	res, err := s.handleStoryGet(bobCtx, newCallToolReq("story_get", map[string]any{
 		"id": storyID,
 	}))
 	if err != nil {
@@ -130,13 +130,13 @@ func TestStoryContext_CrossOwnerRejected(t *testing.T) {
 	}
 }
 
-// TestStoryContext_RequiresID rejects calls missing the id arg with the
+// TestStoryGet_RequiresID rejects calls missing the id arg with the
 // canonical mcpgo required-arg error.
-func TestStoryContext_RequiresID(t *testing.T) {
+func TestStoryGet_RequiresID(t *testing.T) {
 	t.Parallel()
 	s := newStoryUpdateTestServer(t)
 	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice"})
-	res, err := s.handleStoryContext(ctx, newCallToolReq("story_context", map[string]any{}))
+	res, err := s.handleStoryGet(ctx, newCallToolReq("story_get", map[string]any{}))
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}

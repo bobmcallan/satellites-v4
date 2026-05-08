@@ -64,11 +64,12 @@ Once the orchestrator dispatches this agent on the closing task:
    `kind=review` task for `story_reviewer`. On accepted verdict
    the story status reconciler walks the story to `done`.
 
-## Limitations
+## Out of scope
 
-- Cannot bypass the close gate. If the reviewer rejects, the
-  reviewer's contract prose mints a successor work task via
-  `task_add(prior_task_id=…)`; the orchestrator dispatches a
-  fresh close attempt.
+- Build, test, edit, push, merge — those belong to other roles.
+  This agent is read + ledger-write only; it cannot bypass the close
+  gate. If the reviewer rejects, the reviewer's contract prose mints
+  a successor work task via `task_add(prior_task_id=…)`; the
+  orchestrator dispatches a fresh close attempt.
 - Cannot modify earlier tasks to retroactively make a delivery
   conform.

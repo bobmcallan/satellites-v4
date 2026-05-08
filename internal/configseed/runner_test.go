@@ -161,10 +161,16 @@ Body.
 	}
 }
 
-// TestRun_RealSeedAgentsCarryInstruction (story_b7bf3a5f AC2) — every
-// lifecycle agent shipped in config/seed/system/agents/ declares an
+// TestRun_RealSeedAgentsCarryInstruction (story_b7bf3a5f AC2 +
+// sty_a12e0f5d retier) — every lifecycle agent declares an
 // `instruction` field, the canonical home for agent-level execution
 // guidance now that contracts carry only audit shape.
+//
+// Sty_a12e0f5d moved developer_agent + releaser_agent from
+// config/seed/system/agents/ to config/seed/wksp_5b3257d1/agents/ —
+// the work agents are workspace-tier so a workspace authors them once
+// and every project in the workspace inherits. story_close_agent
+// stays at system tier (review-only lifecycle shell).
 func TestRun_RealSeedAgentsCarryInstruction(t *testing.T) {
 	t.Parallel()
 	seedDir, err := filepath.Abs(filepath.Join("..", "..", "config", "seed"))
@@ -172,9 +178,12 @@ func TestRun_RealSeedAgentsCarryInstruction(t *testing.T) {
 		t.Fatalf("abs seed dir: %v", err)
 	}
 	docs := document.NewMemoryStore()
-	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	if _, err := Run(context.Background(), docs, seedDir, "wksp_sys", "system", now); err != nil {
 		t.Fatalf("Run real seed: %v", err)
+	}
+	if _, err := RunWorkspace(context.Background(), docs, seedDir, "wksp_5b3257d1", "system", now); err != nil {
+		t.Fatalf("RunWorkspace real seed: %v", err)
 	}
 	for _, name := range []string{
 		"developer_agent", "releaser_agent", "story_close_agent",

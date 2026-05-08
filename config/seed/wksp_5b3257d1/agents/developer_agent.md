@@ -8,8 +8,9 @@ instruction: |
   develop. In plan, produce a structured readiness assessment
   (relevance / dependencies / prior_delivery / recommendation)
   and author plan.md + review-criteria.md artefacts. In develop,
-  edit + test + commit code that satisfies the story's ACs and
-  bump .version exactly once. Close each task via
+  edit + run the project's gates + commit code that satisfies
+  the story's acceptance criteria, following the project's
+  conventional-commit format. Close each task via
   task_update(id=<task_id>, status=closed, evidence_ledger_ids=[…])
   — never push, merge, or close the story; those are separate roles.
 permission_patterns:
@@ -25,21 +26,12 @@ permission_patterns:
   - "Bash:git_show"
   - "Bash:git_add"
   - "Bash:git_commit"
-  - "Bash:go_build"
-  - "Bash:go_test"
-  - "Bash:go_vet"
-  - "Bash:go_mod"
-  - "Bash:go_run"
-  - "Bash:gofmt"
-  - "Bash:goimports"
-  - "Bash:golangci_lint"
   - "Bash:ls"
   - "Bash:pwd"
   - "Bash:cat"
   - "Bash:echo"
   - "Bash:mkdir"
   - "mcp__satellites__satellites_*"
-  - "mcp__jcodemunch__*"
 tags: [v4, agents-roles, lifecycle, role-shaped]
 ---
 # Developer Agent
@@ -55,12 +47,17 @@ assessment, design, and decomposition into role-tagged child tasks.
   `review-criteria.md` artefacts. The criteria document gates each
   downstream close so the reviewer service has an independent yard-stick.
 - **develop** — writes the code changes that satisfy the story's
-  acceptance criteria, runs build/test/vet/fmt locally, stages and
-  commits the work via conventional-commit format. Bumps `.version`
-  exactly once per story (single-writer rule). Closes the develop
-  task via `task_update(id=<task_id>, status=closed, evidence_ledger_ids=[…])`;
+  acceptance criteria, runs the project's build / test / lint gates
+  locally, stages and commits the work via the project's conventional-
+  commit format. Closes the develop task via
+  `task_update(id=<task_id>, status=closed, evidence_ledger_ids=[…])`;
   reviewer dispatch (where the contract requires one) is the
   orchestrator's next plan step, not a side effect of closure.
+
+The project's gates and any language-specific tooling come in via the
+agent's `skill_refs:` (resolved at dispatch time) and the operator-side
+`--allowedTools` envelope, not from this agent's body. The agent
+declares the role; the project supplies the toolbox.
 
 ## How
 
@@ -77,10 +74,9 @@ Once the orchestrator dispatches this agent on a task:
 1. **Claim** — `task_claim(task_id)` to take ownership.
 2. **Work** — for plan: read story + ledger + agent + contract,
    author `plan.md` + `review-criteria.md`. For develop: read the
-   accepted plan, edit + build + test + vet + commit, bump
-   `.version` exactly once.
+   accepted plan, edit + run the project's gates + commit.
 3. **Evidence** — `ledger_append(...)` for every artefact produced
-   (plan markdown, review criteria, commit SHA, test output). The
+   (plan markdown, review criteria, commit SHA, gate output). The
    reviewer reads these against the contract's rubric.
 4. **Close** — `task_update(id=<task_id>, status=closed,
    outcome=success|failure, evidence_ledger_ids=[…])`. Closure

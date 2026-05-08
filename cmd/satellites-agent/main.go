@@ -40,6 +40,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	// AgentConfig carries fields that are loaded today and consumed by
+	// future stories: repo_path / branch_template / worktree_root are
+	// the worktree-lifecycle inputs sty_a6250f92 (order:03) wires into
+	// Client.Execute. They round-trip through the loader + struct +
+	// startup log line now so the operator can see what values will
+	// drive the executor once that story lands. sty_ae1e9097.
 	cfg, warnings, err := config.LoadAgent(*configPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "satellites-agent: config: %v\n", err)
@@ -55,6 +61,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Str("config_path", cfg.LoadedTOMLPath()).
 		Str("mcp_url", cfg.MCPURL).
 		Str("hub_url", cfg.HubURL).
+		Str("repo_path", cfg.RepoPath).
+		Str("branch_template", cfg.BranchTemplate).
+		Str("worktree_root", cfg.WorktreeRoot).
 		Msgf("satellites-agent %s", config.GetFullVersion())
 
 	for _, w := range warnings {

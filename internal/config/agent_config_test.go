@@ -267,3 +267,71 @@ func TestLoadAgent_AuthTokenNeverLogged(t *testing.T) {
 	assert.NotContains(t, rendered, "super-secret-deadbeef")
 	assert.Contains(t, rendered, "auth_token=***")
 }
+
+// TestLoadAgent_AllFieldsPopulated is sty_ae1e9097's anchor: a TOML
+// fixture carrying every recognised field at non-default values must
+// land each value on the resulting AgentConfig. Catches future drift
+// where a struct field is added without toml decoder coverage.
+func TestLoadAgent_AllFieldsPopulated(t *testing.T) {
+	tmp := t.TempDir()
+	withCWD(t, tmp)
+	withHome(t, tmp)
+	withEnv(t, agentConfigPathEnv, "")
+
+	body := `
+worker_id          = "worker-test-1"
+workspace_ids      = ["wksp_one", "wksp_two"]
+mcp_url            = "http://example/mcp"
+auth_token         = "sat_test_token"
+idle_backoff       = "11s"
+heartbeat_interval = "37s"
+execute_timeout    = "13m"
+repo_path          = "/tmp/repo"
+branch_template    = "agent-{task_id}-test"
+worktree_root      = "/tmp/worktrees/"
+claude_binary_path = "/opt/claude/bin/claude"
+log_level          = "debug"
+
+hub_url                  = "ws://example/ws"
+subscribe_workspace_ids  = ["wksp_one"]
+subscribe_since_id       = "ldg_replay_anchor"
+ws_reconnect_min_backoff = "750ms"
+ws_reconnect_max_backoff = "45s"
+`
+	path := filepath.Join(tmp, agentDefaultConfigFile)
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+	cfg, warnings, err := LoadAgent("")
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Empty(t, warnings, "all-fields fixture should not warn: %v", warnings)
+
+	assert.Equal(t, "worker-test-1", cfg.WorkerID)
+	assert.Equal(t, []string{"wksp_one", "wksp_two"}, cfg.WorkspaceIDs)
+	assert.Equal(t, "http://example/mcp", cfg.MCPURL)
+	assert.Equal(t, "sat_test_token", cfg.AuthToken)
+	assert.Equal(t, 11*time.Second, cfg.IdleBackoff)
+	assert.Equal(t, 37*time.Second, cfg.HeartbeatInterval)
+	assert.Equal(t, 13*time.Minute, cfg.ExecuteTimeout)
+	assert.Equal(t, "/tmp/repo", cfg.RepoPath)
+	assert.Equal(t, "agent-{task_id}-test", cfg.BranchTemplate)
+	assert.Equal(t, "/tmp/worktrees/", cfg.WorktreeRoot)
+	assert.Equal(t, "/opt/claude/bin/claude", cfg.ClaudeBinaryPath)
+	assert.Equal(t, "debug", cfg.LogLevel)
+	assert.Equal(t, "ws://example/ws", cfg.HubURL)
+	assert.Equal(t, []string{"wksp_one"}, cfg.SubscribeWorkspaceIDs)
+	assert.Equal(t, "ldg_replay_anchor", cfg.SubscribeSinceID)
+	assert.Equal(t, 750*time.Millisecond, cfg.WSReconnectMinBackoff)
+	assert.Equal(t, 45*time.Second, cfg.WSReconnectMaxBackoff)
+	// cwd resolution returns the bare default filename relative to cwd.
+	_ = path
+	assert.Equal(t, agentDefaultConfigFile, cfg.LoadedTOMLPath())
+
+	// AgentConfig.String() must surface the worktree fields so the
+	// startup log line lets an operator verify what the agent will use
+	// without re-reading the TOML separately.
+	rendered := cfg.String()
+	assert.Contains(t, rendered, "/tmp/repo")
+	assert.Contains(t, rendered, "agent-{task_id}-test")
+	assert.Contains(t, rendered, "/tmp/worktrees/")
+}

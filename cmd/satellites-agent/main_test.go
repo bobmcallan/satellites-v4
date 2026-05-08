@@ -228,3 +228,89 @@ func TestMain_Run_ConfigFlagMissing_ReturnsErr(t *testing.T) {
 	assert.NotZero(t, code, "explicit missing --config must surface as non-zero")
 	assert.Contains(t, stderr.String(), "config")
 }
+
+// TestRun_StartupLogReflectsLoadedConfig is sty_ae1e9097's smoke
+// test: the boot-time arbor log line carries the resolved
+// repo_path / branch_template / worktree_root, proving the
+// precedence chain wires every worktree-lifecycle field through to
+// the runtime. Captures os.Stdout for the lifetime of the run() call
+// — the arbor logger writes there directly (internal/arbor/logger.go).
+func TestRun_StartupLogReflectsLoadedConfig(t *testing.T) {
+	mcp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			ID int64 `json:"id"`
+		}
+		_ = json.Unmarshal(body, &req)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0", "id": req.ID,
+			"result": map[string]any{"content": []map[string]any{{"type": "text", "text": "null"}}},
+		})
+	}))
+	defer mcp.Close()
+
+	tmp := t.TempDir()
+	cfgPath := filepath.Join(tmp, "agent.toml")
+	body := []byte(`worker_id = "smoke-startup-log"
+mcp_url = "` + mcp.URL + `"
+hub_url = ""
+idle_backoff = "20ms"
+heartbeat_interval = "1h"
+execute_timeout = "5s"
+repo_path          = "/tmp/sty_ae1e9097/repo"
+branch_template    = "agent-{task_id}-smoke"
+worktree_root      = "/tmp/sty_ae1e9097/worktrees/"
+claude_binary_path = "/opt/claude/bin/claude"
+`)
+	require.NoError(t, os.WriteFile(cfgPath, body, 0o600))
+
+	// Redirect fd 2 (stderr) to a pipe so we can read the arbor
+	// logger's boot line. arbor wraps phuslu/log's ConsoleWriter,
+	// which defaults to os.Stderr; swapping the os package variable
+	// doesn't redirect the underlying fd, so dup2 the pipe over fd 2
+	// to redirect the kernel-level destination.
+	r, wr, err := os.Pipe()
+	require.NoError(t, err)
+	savedStderr, err := syscall.Dup(int(os.Stderr.Fd()))
+	require.NoError(t, err)
+	require.NoError(t, syscall.Dup2(int(wr.Fd()), int(os.Stderr.Fd())))
+	// Close the wr handle once dup2 has captured fd 2 — the kernel
+	// keeps the pipe alive via fd 2, and we still want EOF on r once
+	// fd 2 is restored at test end.
+	wr.Close()
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	done := make(chan int, 1)
+	go func() {
+		done <- run(ctx, []string{"satellites-agent", "--config", cfgPath}, stdout, stderr)
+	}()
+
+	captured := &bytes.Buffer{}
+	readDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(captured, r)
+		close(readDone)
+	}()
+
+	select {
+	case code := <-done:
+		assert.Equal(t, 0, code, "stderr=%q", stderr.String())
+	case <-time.After(2 * time.Second):
+		t.Fatalf("run did not exit within 2s")
+	}
+	// Restore fd 2 to the original stderr. dup2 implicitly closes the
+	// existing fd 2 (the pipe) which signals EOF to the reader.
+	require.NoError(t, syscall.Dup2(savedStderr, int(os.Stderr.Fd())))
+	syscall.Close(savedStderr)
+	<-readDone
+
+	logged := captured.String()
+	assert.Contains(t, logged, "/tmp/sty_ae1e9097/repo", "repo_path missing from startup log: %s", logged)
+	assert.Contains(t, logged, "agent-{task_id}-smoke", "branch_template missing from startup log: %s", logged)
+	assert.Contains(t, logged, "/tmp/sty_ae1e9097/worktrees/", "worktree_root missing from startup log: %s", logged)
+}

@@ -1153,6 +1153,9 @@ func (s *Server) handleDocumentGet(ctx context.Context, req mcpgo.CallToolReques
 		if err != nil {
 			return mcpgo.NewToolResultError(err.Error()), nil
 		}
+		if filter := req.GetString("type", ""); filter != "" && doc.Type != filter {
+			return mcpgo.NewToolResultError(fmt.Sprintf("document_get: row %s has type=%q, not %q", id, doc.Type, filter)), nil
+		}
 		body, _ := json.Marshal(doc)
 		s.logger.Info().
 			Str("method", "tools/call").

@@ -558,6 +558,64 @@ func TestAgentGetWrapper_TypeFilter(t *testing.T) {
 	}
 }
 
+// TestAgentGetWrapper_TypeFilterByID seeds a contract and an agent
+// with distinct names. agent_get(id=<contract_id>) must reject with a
+// type-mismatch error so a typed wrapper does not return a row of the
+// wrong kind. Mirrors the name-based filter test for the id branch
+// (sty_7cfe5e29).
+func TestAgentGetWrapper_TypeFilterByID(t *testing.T) {
+	t.Parallel()
+	s := newDocumentTestServer(t)
+	s.registerDocumentWrappers()
+	ctx := context.Background()
+
+	contractRow, err := s.docs.Create(ctx, document.Document{
+		Type:       document.TypeContract,
+		Scope:      document.ScopeSystem,
+		Name:       "contract_only",
+		Structured: []byte(`{"category":"develop","required_for_close":false,"validation_mode":"llm"}`),
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("seed contract: %v", err)
+	}
+	agentRow, err := s.docs.Create(ctx, document.Document{
+		Type:  document.TypeAgent,
+		Scope: document.ScopeSystem,
+		Name:  "agent_only",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+
+	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
+		t.Fatalf("other ws: %v", err)
+	}
+	otherCtx := withCaller(ctx, CallerIdentity{UserID: "user_other", Source: "session"})
+	handler := s.wrapperGet(document.TypeAgent)
+
+	resMatch, _ := handler(otherCtx, newCallToolReq("agent_get", map[string]any{
+		"id": agentRow.ID,
+	}))
+	if resMatch.IsError {
+		t.Fatalf("agent_get(id=<agent>) failed: %s", firstText(resMatch))
+	}
+	got := decodeOne(t, resMatch)
+	if got["id"] != agentRow.ID {
+		t.Errorf("agent_get returned id=%v, want %q", got["id"], agentRow.ID)
+	}
+
+	resMismatch, _ := handler(otherCtx, newCallToolReq("agent_get", map[string]any{
+		"id": contractRow.ID,
+	}))
+	if !resMismatch.IsError {
+		t.Fatalf("agent_get(id=<contract>) should error on type mismatch; got body=%s", firstText(resMismatch))
+	}
+	msg := firstText(resMismatch)
+	if !strings.Contains(msg, "not \"agent\"") {
+		t.Errorf("agent_get(id=<contract>) error = %q, want type-mismatch text mentioning agent", msg)
+	}
+}
+
 // TestAgentListWrapper_SystemScopeWorkspaceBlind covers the wrapper
 // layer (agent_list → handleDocumentList) end-to-end so a regression
 // in wrapperList that bypassed the helper would surface here.

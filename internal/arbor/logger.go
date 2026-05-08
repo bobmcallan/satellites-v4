@@ -6,6 +6,7 @@ package arbor
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/ternarybob/arbor"
@@ -38,6 +39,36 @@ func New(level string) arbor.ILogger {
 		WithConsoleWriter(arbormodels.WriterConfiguration{
 			Type:       arbormodels.LogWriterTypeConsole,
 			Writer:     os.Stdout,
+			TimeFormat: "2006-01-02T15:04:05Z07:00",
+		}).
+		WithLevelFromString(level)
+}
+
+// NewWithFile builds an arbor logger at the given level with both a
+// console writer (matching New) AND a file writer rooted at logDir.
+// arbor's FileWriter applies its own daily rotation + size-based
+// rollover (defaults: 500KB rolling files, 20 backups) — the satellites
+// caller passes the directory; the filename inside it is fixed at
+// "satellites-agent.log" so an operator can `tail -f` a known path.
+//
+// logDir is created on first write via phuslu/log's EnsureFolder
+// option; an unwritable path surfaces as a write-time error rather
+// than aborting boot. An empty logDir is a programming error — call
+// New() instead. sty_92bfd9e6.
+func NewWithFile(level, logDir string) arbor.ILogger {
+	if logDir == "" {
+		return New(level)
+	}
+	fileName := filepath.Join(logDir, "satellites-agent.log")
+	return arbor.NewLogger().
+		WithConsoleWriter(arbormodels.WriterConfiguration{
+			Type:       arbormodels.LogWriterTypeConsole,
+			Writer:     os.Stdout,
+			TimeFormat: "2006-01-02T15:04:05Z07:00",
+		}).
+		WithFileWriter(arbormodels.WriterConfiguration{
+			Type:       arbormodels.LogWriterTypeFile,
+			FileName:   fileName,
 			TimeFormat: "2006-01-02T15:04:05Z07:00",
 		}).
 		WithLevelFromString(level)

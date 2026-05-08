@@ -54,6 +54,13 @@ type AgentConfig struct {
 	WSReconnectMinBackoff time.Duration `toml:"ws_reconnect_min_backoff"`
 	WSReconnectMaxBackoff time.Duration `toml:"ws_reconnect_max_backoff"`
 
+	// LogPath is the directory where the agent writes its rolling log
+	// file (filename: satellites-agent.log; rotation handled by arbor's
+	// phuslu/log backend). Empty disables the file writer — the agent
+	// runs console-only. Default: <exe>/logs/ resolved at boot in
+	// defaultsAgent. sty_92bfd9e6.
+	LogPath string `toml:"log_path"`
+
 	// loadedTOMLPath records the path that was actually read; "" when
 	// the loader fell back to defaults.
 	loadedTOMLPath string
@@ -84,21 +91,27 @@ func (c AgentConfig) String() string {
 		"AgentConfig{worker_id=%q workspace_ids=%v mcp_url=%q auth_token=%s "+
 			"idle_backoff=%s heartbeat_interval=%s execute_timeout=%s "+
 			"repo_path=%q branch_template=%q worktree_root=%q "+
-			"claude_binary_path=%q log_level=%q hub_url=%q "+
+			"claude_binary_path=%q log_level=%q log_path=%q hub_url=%q "+
 			"subscribe_workspace_ids=%v subscribe_since_id=%q "+
 			"ws_reconnect_min_backoff=%s ws_reconnect_max_backoff=%s}",
 		c.WorkerID, c.WorkspaceIDs, c.MCPURL, mask,
 		c.IdleBackoff, c.HeartbeatInterval, c.ExecuteTimeout,
 		c.RepoPath, c.BranchTemplate, c.WorktreeRoot,
-		c.ClaudeBinaryPath, c.LogLevel, c.HubURL,
+		c.ClaudeBinaryPath, c.LogLevel, c.LogPath, c.HubURL,
 		c.SubscribeWorkspaceIDs, c.SubscribeSinceID,
 		c.WSReconnectMinBackoff, c.WSReconnectMaxBackoff,
 	)
 }
 
 // defaultsAgent builds the in-code default AgentConfig. Lowest
-// precedence layer; TOML overrides it.
+// precedence layer; TOML overrides it. LogPath defaults to
+// <exe>/logs/ resolved from os.Args[0]; tests typically override via
+// the toml fixture so this default doesn't pollute test workspaces.
 func defaultsAgent() *AgentConfig {
+	logDir := ""
+	if len(os.Args) > 0 && os.Args[0] != "" {
+		logDir = filepath.Join(filepath.Dir(os.Args[0]), "logs")
+	}
 	return &AgentConfig{
 		WorkerID:              "",
 		WorkspaceIDs:          nil,
@@ -112,6 +125,7 @@ func defaultsAgent() *AgentConfig {
 		WorktreeRoot:          ".satellites-agents/",
 		ClaudeBinaryPath:      "claude",
 		LogLevel:              "info",
+		LogPath:               logDir,
 		HubURL:                "ws://localhost:8080/ws",
 		SubscribeWorkspaceIDs: nil,
 		SubscribeSinceID:      "",
@@ -144,6 +158,8 @@ type agentTOMLOverlay struct {
 	SubscribeSinceID      *string   `toml:"subscribe_since_id"`
 	WSReconnectMinBackoff *duration `toml:"ws_reconnect_min_backoff"`
 	WSReconnectMaxBackoff *duration `toml:"ws_reconnect_max_backoff"`
+
+	LogPath *string `toml:"log_path"`
 }
 
 // LoadAgent resolves AgentConfig from the precedence chain and
@@ -309,5 +325,8 @@ func (o agentTOMLOverlay) applyTo(cfg *AgentConfig, warnings *[]string) {
 		} else {
 			cfg.WSReconnectMaxBackoff = d
 		}
+	}
+	if o.LogPath != nil {
+		cfg.LogPath = *o.LogPath
 	}
 }

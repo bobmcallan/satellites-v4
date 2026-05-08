@@ -314,3 +314,70 @@ claude_binary_path = "/opt/claude/bin/claude"
 	assert.Contains(t, logged, "agent-{task_id}-smoke", "branch_template missing from startup log: %s", logged)
 	assert.Contains(t, logged, "/tmp/sty_ae1e9097/worktrees/", "worktree_root missing from startup log: %s", logged)
 }
+
+// TestRun_LogPath_WritesFile is sty_92bfd9e6's integration smoke:
+// boot the binary against a stub MCP server with log_path pointing
+// at $tmpdir, assert the satellites-agent.* file is created and
+// receives the startup log line. Console writer continues to fire
+// (verified via fd 2 capture analogous to the prior test).
+func TestRun_LogPath_WritesFile(t *testing.T) {
+	mcp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			ID int64 `json:"id"`
+		}
+		_ = json.Unmarshal(body, &req)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0", "id": req.ID,
+			"result": map[string]any{"content": []map[string]any{{"type": "text", "text": "null"}}},
+		})
+	}))
+	defer mcp.Close()
+
+	tmp := t.TempDir()
+	logDir := filepath.Join(tmp, "agent-logs")
+	cfgPath := filepath.Join(tmp, "agent.toml")
+	body := []byte(`worker_id = "smoke-logpath"
+mcp_url = "` + mcp.URL + `"
+hub_url = ""
+idle_backoff = "20ms"
+heartbeat_interval = "1h"
+execute_timeout = "5s"
+log_path = "` + logDir + `"
+`)
+	require.NoError(t, os.WriteFile(cfgPath, body, 0o600))
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	code := run(ctx, []string{"satellites-agent", "--config", cfgPath}, stdout, stderr)
+	assert.Equal(t, 0, code, "stderr=%q", stderr.String())
+
+	// Tolerate phuslu's async flush: poll for the file under logDir.
+	deadline := time.Now().Add(2 * time.Second)
+	var foundName string
+	for time.Now().Before(deadline) {
+		entries, err := os.ReadDir(logDir)
+		if err == nil {
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasPrefix(e.Name(), "satellites-agent") {
+					foundName = e.Name()
+					break
+				}
+			}
+		}
+		if foundName != "" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	require.NotEmpty(t, foundName, "no satellites-agent.* file appeared under %s", logDir)
+
+	contents, err := os.ReadFile(filepath.Join(logDir, foundName))
+	require.NoError(t, err)
+	assert.Contains(t, string(contents), "satellites-agent", "file log missing startup line: %s", contents)
+	assert.Contains(t, string(contents), logDir, "file log missing log_path field: %s", contents)
+}

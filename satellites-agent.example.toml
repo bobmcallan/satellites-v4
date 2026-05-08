@@ -57,6 +57,12 @@ claude_binary_path = "claude"
 # Arbor log level. trace | debug | info | warn | error.
 log_level          = "info"
 
+# Directory to write the rolling agent log file (filename:
+# satellites-agent.log; rotation: arbor's phuslu/log default — 500KB
+# rolling files, up to 20 backups). Empty disables the file writer
+# (console-only). Default: <exe>/logs resolved from os.Args[0].
+# log_path           = ""
+
 # WebSocket hub endpoint the agent subscribes to for event-driven
 # wakes. Empty disables the subscriber and Worker.Loop falls back to
 # polling on idle_backoff.

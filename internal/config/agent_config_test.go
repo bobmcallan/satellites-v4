@@ -297,6 +297,7 @@ subscribe_workspace_ids  = ["wksp_one"]
 subscribe_since_id       = "ldg_replay_anchor"
 ws_reconnect_min_backoff = "750ms"
 ws_reconnect_max_backoff = "45s"
+log_path                 = "/tmp/sty_92bfd9e6/agent-logs"
 `
 	path := filepath.Join(tmp, agentDefaultConfigFile)
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
@@ -323,6 +324,7 @@ ws_reconnect_max_backoff = "45s"
 	assert.Equal(t, "ldg_replay_anchor", cfg.SubscribeSinceID)
 	assert.Equal(t, 750*time.Millisecond, cfg.WSReconnectMinBackoff)
 	assert.Equal(t, 45*time.Second, cfg.WSReconnectMaxBackoff)
+	assert.Equal(t, "/tmp/sty_92bfd9e6/agent-logs", cfg.LogPath)
 	// cwd resolution returns the bare default filename relative to cwd.
 	_ = path
 	assert.Equal(t, agentDefaultConfigFile, cfg.LoadedTOMLPath())

@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/bobmcallan/satellites/internal/agent/worker"
@@ -52,7 +53,26 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	logger := satarbor.New(cfg.LogLevel)
+	// Resolve log_path to an absolute directory and mkdir before
+	// constructing the logger. Empty disables the file writer (console
+	// only). Resolution failures fall back to console-only with a
+	// warning rather than aborting boot. sty_92bfd9e6.
+	resolvedLogPath := ""
+	if cfg.LogPath != "" {
+		abs, abserr := filepath.Abs(cfg.LogPath)
+		if abserr != nil {
+			warnings = append(warnings, fmt.Sprintf("agent log_path %q unresolvable: %v — falling back to console-only", cfg.LogPath, abserr))
+		} else if mkerr := os.MkdirAll(abs, 0o755); mkerr != nil {
+			warnings = append(warnings, fmt.Sprintf("agent log_path %q mkdir failed: %v — falling back to console-only", abs, mkerr))
+		} else {
+			resolvedLogPath = abs
+		}
+	}
+
+	var logger = satarbor.New(cfg.LogLevel)
+	if resolvedLogPath != "" {
+		logger = satarbor.NewWithFile(cfg.LogLevel, resolvedLogPath)
+	}
 	logger.Info().
 		Str("binary", "satellites-agent").
 		Str("version", config.Version).
@@ -64,6 +84,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Str("repo_path", cfg.RepoPath).
 		Str("branch_template", cfg.BranchTemplate).
 		Str("worktree_root", cfg.WorktreeRoot).
+		Str("log_path", resolvedLogPath).
 		Msgf("satellites-agent %s", config.GetFullVersion())
 
 	for _, w := range warnings {

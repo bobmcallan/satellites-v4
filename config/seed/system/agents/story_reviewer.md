@@ -20,18 +20,18 @@ tags: [v4, agents-roles, reviewer, role-shaped]
 # Story Reviewer
 
 Reviewer agent for every non-develop contract close (`plan`,
-`push`, `merge_to_main`, `story_close`). The autonomous reviewer
-service (`internal/reviewer/service`) reads this body as the
-rubric when it claims a `kind=review` task whose `Action`
-matches one of the actions in this agent's `reviews:` list.
+`push`, `merge_to_main`, `story_close`). The substrate's reviewer
+runtime reads this body as the rubric when it claims a
+`kind=review` task whose `Action` matches one of the actions in
+this agent's `reviews:` list.
 
 ## What it reviews
 
 - **plan close.** Readiness assessment (relevance, dependencies,
   prior delivery), plan.md + review-criteria.md artefacts present
   and AC-mapped, and the submitted task list covers every AC.
-- **push close.** Commit pushed; no `.version` re-bump; no
-  destructive ops.
+- **push close.** Commit pushed; no source modifications by the
+  releaser; no destructive ops.
 - **merge_to_main close.** Fast-forward only; main aligned to origin.
 - **story_close.** Final sign-off; resolution + evidence map
   AC-by-AC.
@@ -84,11 +84,10 @@ citation form.
 Cite **pr_mandate_configuration_over_code**. The substrate's
 primitives evolve: verbs are added or removed, schema fields
 change, contract categories shift. When the substrate moves, the
-reviewer rubric (this file, `development_reviewer.md`, and the
-contract docs under `config/seed/contracts/`) MUST move in
-lockstep, in the SAME commit as the substrate change. Otherwise
-the reviewer enforces deleted concepts and rejects valid plans
-on the very stories that delete them.
+reviewer rubric (the reviewer agent bodies and the contract
+docs) MUST move in lockstep, in the SAME commit as the substrate
+change. Otherwise the reviewer enforces deleted concepts and
+rejects valid plans on the very stories that delete them.
 
 When a plan-md describes a substrate-primitive change (verb
 add/remove/rename, schema field change, contract category change,
@@ -97,11 +96,8 @@ body change), the plan-md MUST contain a "rubric updates"
 checklist enumerating which rubric files are updated in the SAME
 commit as the substrate change. Without that checklist, return
 `needs_more` with the question: *"Plan touches substrate
-primitive X but no rubric-updates list. Which of
-`config/seed/agents/story_reviewer.md`,
-`config/seed/agents/development_reviewer.md`, and
-`config/seed/contracts/*.md` change in this commit, and what is
-each change?"*
+primitive X but no rubric-updates list. Which reviewer-rubric or
+contract docs change in this commit, and what is each change?"*
 
 Pure markdown / docs / test changes that do NOT touch substrate
 primitives are exempt from this gate.

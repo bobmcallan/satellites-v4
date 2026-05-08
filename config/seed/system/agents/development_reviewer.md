@@ -19,11 +19,10 @@ tags: [v4, agents-roles, reviewer, role-shaped, develop]
 ---
 # Development Reviewer
 
-Reviewer agent for `develop` task reviews. The autonomous reviewer
-service (`internal/reviewer/service`) reads this body as the rubric
-when it claims a `kind=review` task whose `Action` is
-`contract:develop`. Capability is declared via the `reviews:`
-frontmatter list.
+Reviewer agent for `develop` task reviews. The substrate's reviewer
+runtime reads this body as the rubric when it claims a `kind=review`
+task whose `Action` is `contract:develop`. Capability is declared
+via the `reviews:` frontmatter list.
 
 ## What it reviews
 
@@ -33,34 +32,36 @@ evidence packet typically contains:
 - A `kind:plan` ledger row that scoped the change.
 - A `kind:evidence` ledger row tagged `task_id:<parent_work>` with
   files-changed, gate output, and AC-by-AC mapping.
-- The committed code on `main` (or a feature branch) referenced by SHA.
+- The committed code referenced by SHA.
 
 ## Rubric
 
 ### 1. Code quality
 
-Apply the develop-category skills (golang-project-layout,
-golang-code-style, golang-naming, golang-error-handling,
-golang-documentation, golang-testing, golang-stretchr-testify,
-golang-observability). Reject changes that violate the patterns these
-skills encode — e.g. exported names without doc comments, error
-discards, double-logging, unbounded label cardinality on metrics.
+Apply the project's develop-category skills (resolved at review time
+from the dispatching agent's `skill_refs` and the project's skill
+catalogue). Each cited skill defines an output that gates pass/fail —
+e.g. layout linter clean, style linter clean, naming-convention check
+green, no error-discard patterns. Reject changes that violate those
+gates as the project has codified them. The reviewer enforces the
+project's standard, not a hardcoded language preset.
 
 ### 2. Tests pass
 
-Cite **pr_evidence**. The close evidence must include `go build`,
-`go vet`, `gofmt -l .`, and `go test ./...` output. Pre-existing
-failures are acceptable when the agent verifies they are pre-existing
-(via `git stash -u --keep-index` round-trip and produces identical
-output). New failures introduced by the change are a hard reject.
+Cite **pr_evidence**. The close evidence must include the output of
+the project's build / lint / test gates (whichever the develop
+contract names). Pre-existing failures are acceptable when the agent
+verifies they are pre-existing (typically via a stash round-trip
+that reproduces identical output). New failures introduced by the
+change are a hard reject.
 
 ### 3. Commit discipline
 
 Cite the **commit-push** skill. Conventional-commit format
 (`type(scope): description`); no AI attribution; no
 `Co-authored-by: AI` / `Generated with Claude` / similar; no
-`--no-verify`; no force push. `.version` bumped exactly once per
-story (single-writer rule on develop).
+`--no-verify`; no force push. Any version-metadata bump declared by
+the project happens on the develop commit (single-writer rule).
 
 ### 4. No unrequested compat
 
@@ -99,23 +100,19 @@ citation form.
 ### 8. Substrate evolution and rubric updates
 
 Cite **pr_mandate_configuration_over_code**. When the develop
-task's diff touches a substrate primitive — `internal/task/`,
-`internal/reviewer/`, MCP verb signatures
-(`internal/mcpserver/*_handler*.go`), agent doc bodies under
-`config/seed/agents/`, or contract doc bodies under
-`config/seed/contracts/` — the upstream plan-md MUST contain a
-"rubric updates" checklist enumerating which rubric files are
-updated in the SAME commit as the substrate change. The develop
-close evidence MUST cite the plan-md ledger row id where that
-checklist appears.
+task's diff touches a substrate primitive — task / reviewer
+runtimes, MCP verb signatures, agent doc bodies, or contract doc
+bodies — the upstream plan-md MUST contain a "rubric updates"
+checklist enumerating which rubric files (the reviewer agent
+bodies and the contract docs) are updated in the SAME commit as
+the substrate change. The develop close evidence MUST cite the
+plan-md ledger row id where that checklist appears.
 
 Without that checklist, return `needs_more` with the question:
-*"Develop task's diff touches substrate primitive X but the plan-md
-contains no rubric-updates list. Which rubric files
-(`config/seed/agents/story_reviewer.md`,
-`config/seed/agents/development_reviewer.md`, or
-`config/seed/contracts/*.md`) change in this commit, and where
-in plan-md is each change enumerated?"*
+*"Develop task's diff touches substrate primitive X but the
+plan-md contains no rubric-updates list. Which rubric files
+change in this commit, and where in plan-md is each change
+enumerated?"*
 
 This gate keeps the rubric in lockstep with the substrate. Pure
 markdown / docs / test changes that do NOT touch substrate

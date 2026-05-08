@@ -42,6 +42,14 @@ type placeholderClient struct {
 // outer worker contexts already enforce per-call timeouts; this is a
 // belt-and-braces transport-level cap).
 func NewPlaceholderClient(cfg config.AgentConfig, logger arbor.ILogger) Client {
+	return newPlaceholderClient(cfg, logger)
+}
+
+// newPlaceholderClient returns the concrete *placeholderClient so
+// in-package callers (the claude client embeds it for Claim / Close /
+// Heartbeat / Shutdown delegation) can reach the unexported callTool
+// helper. Public callers continue to use NewPlaceholderClient.
+func newPlaceholderClient(cfg config.AgentConfig, logger arbor.ILogger) *placeholderClient {
 	timeout := cfg.ExecuteTimeout / 2
 	if timeout <= 0 {
 		timeout = 30 * time.Second

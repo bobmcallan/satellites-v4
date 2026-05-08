@@ -91,7 +91,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		logger.Warn().Str("warning", w).Msg("agent: startup warning")
 	}
 
-	client := worker.NewPlaceholderClient(*cfg, logger)
+	client := worker.NewClaudeClient(*cfg, logger)
 
 	// Wake-channel wiring: when hub_url is empty the agent runs in
 	// polling-only mode (Worker.Loop's IdleBackoff drives Claim);

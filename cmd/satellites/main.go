@@ -113,6 +113,7 @@ func main() {
 		taskStore        task.Store
 		repoStore        repo.Store
 		changelogStore   changelog.Store
+		apiKeyStore      auth.APIKeyStore
 		repoIndexer      codeindex.Indexer
 		defaultProjectID string
 		dbPing           httpserver.HealthCheck
@@ -185,6 +186,12 @@ func main() {
 		// across restarts, so cookies don't orphan after a deploy.
 		users = auth.NewSurrealUserStore(conn)
 		authHandlers.Users = users
+		// story_3191fbfc: substrate-managed agent api-key store. Same
+		// db handle as the user/session stores; idempotent table+index
+		// DEFINEs run on first call. Nil-store fall-back is the
+		// in-memory NewMemoryAgentAPIKeyStore for tests; production
+		// always wires the Surreal-backed shape.
+		apiKeyStore = auth.NewSurrealAgentAPIKeyStore(conn)
 		taskStore = task.NewSurrealStore(conn)
 		repoStore = repo.NewSurrealStore(conn)
 		changelogStore = changelog.NewSurrealStore(conn)
@@ -523,6 +530,7 @@ func main() {
 		TaskStore:        taskStore,
 		RepoStore:        repoStore,
 		ChangelogStore:   changelogStore,
+		APIKeyStore:      apiKeyStore,
 		Indexer:          repoIndexer,
 		AuditReadTTL:     auditReadTTL(),
 	})
@@ -599,6 +607,7 @@ func main() {
 		Sessions:       sessions,
 		Users:          users,
 		APIKeys:        cfg.APIKeys,
+		APIKeyStore:    apiKeyStore,
 		Logger:         logger,
 		OAuthValidator: bearerValidator,
 	})

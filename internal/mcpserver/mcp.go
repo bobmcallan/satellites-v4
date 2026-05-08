@@ -18,6 +18,7 @@ import (
 	"github.com/ternarybob/arbor"
 
 	"github.com/bobmcallan/satellites/internal/agentprocess"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/changelog"
 	"github.com/bobmcallan/satellites/internal/codeindex"
 	"github.com/bobmcallan/satellites/internal/config"
@@ -51,6 +52,7 @@ type Server struct {
 	tasks            task.Store
 	repos            repo.Store
 	changelog        changelog.Store
+	apiKeys          auth.APIKeyStore
 	indexer          codeindex.Indexer
 	replicateVocab   *portalreplicate.Vocabulary
 	replicateRunner  func(ctx context.Context, opts portalreplicate.RunOptions, actions []portalreplicate.Action) ([]portalreplicate.Result, portalreplicate.Summary, error)
@@ -105,6 +107,10 @@ type Deps struct {
 	// ChangelogStore is optional; nil disables the changelog_* MCP verbs
 	// and the project-page changelog panel renders empty (sty_12af0bdc).
 	ChangelogStore changelog.Store
+	// APIKeyStore is optional; nil disables the agent_apikey_* MCP
+	// verbs and the AuthMiddleware store-backed Bearer fall-through.
+	// story_3191fbfc.
+	APIKeyStore auth.APIKeyStore
 	// Indexer is the satellites-native code indexer used by repo_*
 	// search/get verbs and the reindex worker. Nil falls back to
 	// codeindex.NewStub() which returns a structured
@@ -139,6 +145,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		tasks:            deps.TaskStore,
 		repos:            deps.RepoStore,
 		changelog:        deps.ChangelogStore,
+		apiKeys:          deps.APIKeyStore,
 		indexer:          deps.Indexer,
 		nowFunc:          deps.NowFunc,
 	}
@@ -539,6 +546,32 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("project_id", mcpgo.Description("Project to scope the summary to. Omit for all visible projects.")),
 		)
 		s.mcp.AddTool(agentSummaryTool, s.handleAgentEphemeralSummary)
+
+		// sty_3191fbfc: agent api-key mint/list/delete. Disabled when
+		// no APIKeyStore is wired (early-test fixtures); production
+		// wires SurrealAgentAPIKeyStore in cmd/satellites/main.go.
+		if s.apiKeys != nil {
+			apiKeyCreateTool := mcpgo.NewTool("agent_apikey_create",
+				mcpgo.WithDescription("Mint a new agent api-key. Returns the cleartext `key` once — subsequent agent_apikey_list calls return only metadata. The cleartext is hashed (SHA-256 with a per-row salt) at rest. The caller becomes the owner; AuthMiddleware Bearer requests carrying the cleartext resolve as the owner identity. story_3191fbfc."),
+				mcpgo.WithString("name", mcpgo.Required(), mcpgo.Description("Operator-friendly label, e.g. 'agent-laptop' or 'sty_ccb35588-dogfood'.")),
+				mcpgo.WithString("project_id", mcpgo.Description("Optional project scope. When set, the caller must be a member of the project's workspace. Future enforcement may scope the resulting Bearer to project-level operations only.")),
+				mcpgo.WithString("expires_at", mcpgo.Description("Optional RFC3339 expiry. When set, AuthMiddleware rejects the key after this instant. Omit for keys that never expire.")),
+			)
+			s.mcp.AddTool(apiKeyCreateTool, s.handleAgentAPIKeyCreate)
+
+			apiKeyListTool := mcpgo.NewTool("agent_apikey_list",
+				mcpgo.WithDescription("List the caller's agent api-keys. Global admins see every key. The cleartext key is NEVER returned; only id, prefix, name, owner, project, status, last_used_at, expires_at, and created_at. story_3191fbfc."),
+				mcpgo.WithString("project_id", mcpgo.Description("Optional project filter. Empty = all projects the caller owns keys for.")),
+				mcpgo.WithBoolean("include_archived", mcpgo.Description("Include status=archived rows. Default false — only active keys are returned.")),
+			)
+			s.mcp.AddTool(apiKeyListTool, s.handleAgentAPIKeyList)
+
+			apiKeyDeleteTool := mcpgo.NewTool("agent_apikey_delete",
+				mcpgo.WithDescription("Soft-delete an agent api-key by flipping its status to archived. The row remains queryable by id so audit ledger rows referencing apikey:<id> still resolve. Cross-owner deletes are rejected unless the caller is a global admin. Writes a kind:agent-apikey-archived ledger row. story_3191fbfc."),
+				mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("api-key id (apk_<8hex>) to archive.")),
+			)
+			s.mcp.AddTool(apiKeyDeleteTool, s.handleAgentAPIKeyDelete)
+		}
 
 		if s.sessions != nil {
 			// task_add (sty_a427368d): mint one task at status=published

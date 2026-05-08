@@ -1,7 +1,9 @@
 package mcpserver
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -170,6 +172,175 @@ func TestAuth_OAuthBearerInvalid_401(t *testing.T) {
 
 // TestAuth_SatelliteBearerAccepted — bearers minted via
 // IssueSatelliteBearer (the /auth/token/exchange path) authenticate /mcp.
+// TestAuth_BearerStorePath_Owner covers AC5: a Bearer matching an
+// active row in the substrate-managed APIKeyStore resolves as the
+// owner identity with Source = "apikey:<id>". This is the new
+// store-backed path; the env-var keyset path stays untouched.
+func TestAuth_BearerStorePath_Owner(t *testing.T) {
+	t.Parallel()
+	deps := newAuthTestDeps()
+	users := deps.Users.(*auth.MemoryUserStore)
+	owner := auth.User{ID: "u_alice", Email: "alice@local"}
+	users.Add(owner)
+
+	store := auth.NewMemoryAgentAPIKeyStore()
+	cleartext, salt, _ := auth.GenerateAPIKey()
+	row := auth.APIKey{
+		ID:          "apk_test01",
+		WorkspaceID: "wksp_test",
+		OwnerUserID: owner.ID,
+		Name:        "alice's-laptop",
+		Prefix:      auth.APIKeyCleartextPrefix(cleartext),
+		KeyHash:     auth.HashAPIKey(salt, cleartext),
+		KeySalt:     salt,
+		Status:      auth.APIKeyStatusActive,
+		CreatedAt:   time.Now().UTC(),
+	}
+	_ = store.Create(context.Background(), row)
+	deps.APIKeyStore = store
+
+	mw := AuthMiddleware(deps)
+	var seen CallerIdentity
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen, _ = UserFrom(r.Context())
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+cleartext)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if seen.Source != "apikey:apk_test01" {
+		t.Errorf("Source = %q, want apikey:apk_test01", seen.Source)
+	}
+	if seen.Email != "alice@local" {
+		t.Errorf("Email = %q, want alice@local", seen.Email)
+	}
+	if seen.UserID != "u_alice" {
+		t.Errorf("UserID = %q, want u_alice", seen.UserID)
+	}
+}
+
+// TestAuth_BearerStorePath_ExpiredKey covers AC5: an expired row
+// MUST NOT authenticate. The middleware rejects with 401 and the
+// downstream handler is never invoked.
+func TestAuth_BearerStorePath_ExpiredKey(t *testing.T) {
+	t.Parallel()
+	deps := newAuthTestDeps()
+	store := auth.NewMemoryAgentAPIKeyStore()
+	cleartext, salt, _ := auth.GenerateAPIKey()
+	past := time.Now().UTC().Add(-time.Hour)
+	row := auth.APIKey{
+		ID:          "apk_expired1",
+		OwnerUserID: "u_alice",
+		Prefix:      auth.APIKeyCleartextPrefix(cleartext),
+		KeyHash:     auth.HashAPIKey(salt, cleartext),
+		KeySalt:     salt,
+		Status:      auth.APIKeyStatusActive,
+		ExpiresAt:   &past,
+		CreatedAt:   time.Now().UTC().Add(-2 * time.Hour),
+	}
+	_ = store.Create(context.Background(), row)
+	deps.APIKeyStore = store
+
+	mw := AuthMiddleware(deps)
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("should not reach handler with expired key")
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+cleartext)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+// TestAuth_BearerStorePath_ArchivedKey covers AC5: an archived row
+// MUST NOT authenticate. Soft-deleted keys cannot be revived by the
+// caller still possessing the cleartext.
+func TestAuth_BearerStorePath_ArchivedKey(t *testing.T) {
+	t.Parallel()
+	deps := newAuthTestDeps()
+	store := auth.NewMemoryAgentAPIKeyStore()
+	cleartext, salt, _ := auth.GenerateAPIKey()
+	row := auth.APIKey{
+		ID:          "apk_archived1",
+		OwnerUserID: "u_alice",
+		Prefix:      auth.APIKeyCleartextPrefix(cleartext),
+		KeyHash:     auth.HashAPIKey(salt, cleartext),
+		KeySalt:     salt,
+		Status:      auth.APIKeyStatusArchived,
+		CreatedAt:   time.Now().UTC(),
+	}
+	_ = store.Create(context.Background(), row)
+	deps.APIKeyStore = store
+
+	mw := AuthMiddleware(deps)
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("should not reach handler with archived key")
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+cleartext)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+// TestAuth_BearerStorePath_TouchFireAndForget covers AC6: the
+// AuthMiddleware Touch call MUST NOT block the request. The test
+// wires a Touch implementation that always errors, fires a request,
+// asserts the inner handler runs and the response succeeds.
+func TestAuth_BearerStorePath_TouchFireAndForget(t *testing.T) {
+	t.Parallel()
+	deps := newAuthTestDeps()
+	users := deps.Users.(*auth.MemoryUserStore)
+	users.Add(auth.User{ID: "u_alice", Email: "alice@local"})
+	store := &touchErrAPIKeyStore{
+		MemoryAgentAPIKeyStore: auth.NewMemoryAgentAPIKeyStore(),
+	}
+	cleartext, salt, _ := auth.GenerateAPIKey()
+	row := auth.APIKey{
+		ID:          "apk_touchfail1",
+		OwnerUserID: "u_alice",
+		Prefix:      auth.APIKeyCleartextPrefix(cleartext),
+		KeyHash:     auth.HashAPIKey(salt, cleartext),
+		KeySalt:     salt,
+		Status:      auth.APIKeyStatusActive,
+		CreatedAt:   time.Now().UTC(),
+	}
+	_ = store.Create(context.Background(), row)
+	deps.APIKeyStore = store
+
+	mw := AuthMiddleware(deps)
+	reached := false
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+cleartext)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if !reached {
+		t.Error("Touch error blocked the request — must be fire-and-forget")
+	}
+}
+
+// touchErrAPIKeyStore wraps MemoryAgentAPIKeyStore so the Touch
+// method always errors. Used to assert AuthMiddleware does not
+// surface Touch failures.
+type touchErrAPIKeyStore struct {
+	*auth.MemoryAgentAPIKeyStore
+}
+
+func (s *touchErrAPIKeyStore) Touch(ctx context.Context, id string, t time.Time) error {
+	return errTouchUnreachable
+}
+
+var errTouchUnreachable = errors.New("auth: touch unreachable")
+
 func TestAuth_SatelliteBearerAccepted(t *testing.T) {
 	t.Parallel()
 	deps := newAuthTestDeps()

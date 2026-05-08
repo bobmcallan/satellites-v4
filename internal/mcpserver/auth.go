@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/ternarybob/arbor"
 
@@ -38,9 +39,15 @@ func UserFrom(ctx context.Context) (CallerIdentity, bool) {
 // AuthDeps are the satellites dependencies the middleware needs to resolve
 // a caller.
 type AuthDeps struct {
-	Sessions       auth.SessionStore
-	Users          auth.UserStoreByID
-	APIKeys        []string
+	Sessions auth.SessionStore
+	Users    auth.UserStoreByID
+	APIKeys  []string
+	// APIKeyStore is the substrate-managed agent api-key store
+	// (story_3191fbfc). When non-nil, AuthMiddleware falls through to
+	// it after the env-var keyset miss: a Bearer matching an active,
+	// non-expired row resolves as the owner identity. Nil disables
+	// the store-backed path; the env-var APIKeys keyset still works.
+	APIKeyStore    auth.APIKeyStore
 	Logger         arbor.ILogger
 	OAuthValidator *auth.BearerValidator // optional; when nil OAuth-Bearer path is skipped
 }
@@ -70,7 +77,7 @@ func AuthMiddleware(deps AuthDeps) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := bearerToken(r)
 			if token != "" {
-				// 1. Bearer API key.
+				// 1. Bearer API key (env-var keyset).
 				if _, ok := keyset[token]; ok {
 					ctx := context.WithValue(r.Context(), userKey, CallerIdentity{
 						Email:  "apikey",
@@ -79,6 +86,37 @@ func AuthMiddleware(deps AuthDeps) func(http.Handler) http.Handler {
 					})
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
+				}
+				// 1b. Substrate-managed agent api-key store
+				// (story_3191fbfc). LookupByToken enumerates active
+				// non-expired rows, hashes the cleartext against
+				// each row's per-row salt, and returns the
+				// constant-time-compare match. Per-row salt makes a
+				// single salted-hash index unusable for the lookup;
+				// the UNIQUE index on key_hash is retained for
+				// collision detection at write time. There is NO
+				// fall-through to OAuth or session for a Bearer
+				// that *would* resolve to a store-known but
+				// invalid (archived/expired) row — those rows are
+				// filtered before the compare so they cannot match.
+				if deps.APIKeyStore != nil {
+					if key, err := deps.APIKeyStore.LookupByToken(r.Context(), token); err == nil {
+						owner, _ := deps.Users.GetByID(key.OwnerUserID)
+						caller := CallerIdentity{
+							Email:  owner.Email,
+							UserID: key.OwnerUserID,
+							Source: "apikey:" + key.ID,
+						}
+						caller.GlobalAdmin = auth.IsGlobalAdmin(owner, adminEmails)
+						ctx := context.WithValue(r.Context(), userKey, caller)
+						// Best-effort last_used_at bump — fire-and-forget,
+						// does not block the request and ignored on error.
+						go func(id string) {
+							_ = deps.APIKeyStore.Touch(context.Background(), id, time.Now().UTC())
+						}(key.ID)
+						next.ServeHTTP(w, r.WithContext(ctx))
+						return
+					}
 				}
 				// 2. OAuth bearer (Google / GitHub / satellites-signed).
 				if deps.OAuthValidator != nil {

@@ -408,6 +408,15 @@ func main() {
 	}
 	portalHandlers.SetChangelogStore(changelogStore)
 
+	// Single BearerValidator instance shared across /mcp and /ws so
+	// token revocation is uniform across the two surfaces (sty_ccb35588:
+	// closes the WS auth gap that prevented headless agents from
+	// authenticating with an API key).
+	bearerValidator := auth.NewBearerValidator(auth.BearerValidatorConfig{
+		CacheTTL:  cfg.OAuthTokenCacheTTL,
+		JWTSecret: []byte(cfg.JWTSecret),
+	})
+
 	// Websocket hub (slice 10.1) + workspace-aware AuthHub (slice 10.2) +
 	// store-layer emit hooks (slice 10.3). One hub instance per process.
 	sharedHub := hub.New()
@@ -421,9 +430,10 @@ func main() {
 		}
 		authHub = hub.NewAuthHub(sharedHub, wsStore, audit)
 		wsHandlers = wshandler.New(wshandler.Deps{
-			AuthHub:  authHub,
-			Sessions: &sessionResolverAdapter{sessions: sessions, users: users},
-			Logger:   logger,
+			AuthHub:         authHub,
+			Sessions:        &sessionResolverAdapter{sessions: sessions, users: users},
+			BearerValidator: bearerValidator,
+			Logger:          logger,
 		})
 
 		// Attach the store-layer publisher so ledger / task / story
@@ -465,11 +475,6 @@ func main() {
 	if taskStore != nil {
 		go runTaskRetentionSweep(ctx, taskStore, cfg, logger)
 	}
-
-	bearerValidator := auth.NewBearerValidator(auth.BearerValidatorConfig{
-		CacheTTL:  cfg.OAuthTokenCacheTTL,
-		JWTSecret: []byte(cfg.JWTSecret),
-	})
 
 	if oauthServer == nil {
 		logger.Warn().Msg("oauth: DB unavailable — MCP OAuth 2.1 endpoints disabled (clients must use SATELLITES_API_KEYS bearer or session cookie)")

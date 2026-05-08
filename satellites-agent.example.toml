@@ -1,0 +1,79 @@
+# satellites-agent.example.toml — every TOML key recognised by the
+# satellites-agent binary's config loader. Copy to
+# satellites-agent.toml in the working directory (or supply via
+# --config or SATELLITES_AGENT_CONFIG) and edit the values for your
+# environment. Defaults below are the loader's hard-coded defaults;
+# omitting a key leaves it at the default.
+
+# Identifies this worker on heartbeat and shutdown ledger rows. Empty
+# defaults to a per-process anonymous id; set a stable value when
+# multiple agents share a workspace and you want per-machine routing.
+worker_id          = ""
+
+# Workspaces this agent claims tasks from. Empty narrows nothing —
+# the server-side claim arbitration picks any task this user can see.
+# When set, the placeholder client passes the first id to task_claim;
+# the WS subscriber opens one connection per id when
+# subscribe_workspace_ids is unset.
+workspace_ids      = []
+
+# MCP HTTP endpoint the placeholder client posts tools/call requests
+# to. Defaults to the local-dev satellites server.
+mcp_url            = "http://localhost:8080/mcp"
+
+# Bearer token presented to /mcp (Authorization header) and /ws
+# (Authorization header + ?token= query fallback). Never logged. Set
+# to a satellites-issued sat_-prefixed token, an OAuth provider
+# token, or an HS256 JWT minted by /oauth/token. Leave empty in dev
+# when the satellites server runs without auth gates.
+auth_token         = ""
+
+# How long Worker.Loop waits between Claim attempts when no wake
+# event arrives. Polling fallback when hub_url is empty.
+idle_backoff       = "5s"
+
+# How often the worker writes kind:worker-heartbeat ledger rows
+# during an in-flight task.
+heartbeat_interval = "60s"
+
+# Hard upper bound on a single Execute call. Defensive — the server's
+# reclaim watchdog is the primary expiry mechanism.
+execute_timeout    = "10m"
+
+# Repository the agent will run task work in (order:03 will manage
+# per-task git worktrees here). Defaults to the binary's cwd.
+repo_path          = "."
+
+# Branch template for per-task worktrees (order:03). Tokens
+# {task_id} and {base_sha} are substituted at create time.
+branch_template    = "agent-{task_id}-from-{base_sha}"
+
+# Root directory for per-task worktrees (order:03).
+worktree_root      = ".satellites-agents/"
+
+# Path to the claude binary the order:03 executor will spawn.
+claude_binary_path = "claude"
+
+# Arbor log level. trace | debug | info | warn | error.
+log_level          = "info"
+
+# WebSocket hub endpoint the agent subscribes to for event-driven
+# wakes. Empty disables the subscriber and Worker.Loop falls back to
+# polling on idle_backoff.
+hub_url                  = "ws://localhost:8080/ws"
+
+# Workspaces to subscribe to. Empty mirrors workspace_ids — the
+# common case where polling-claim narrowing and WS subscribe target
+# the same set.
+subscribe_workspace_ids  = []
+
+# Optional replay cursor: when set, the first subscribe carries
+# since_id=<value> so events that arrived before the agent started
+# replay from the server's ring buffer (hub.go ring cap is 500).
+subscribe_since_id       = ""
+
+# Initial reconnect backoff after a WS disconnect.
+ws_reconnect_min_backoff = "500ms"
+
+# Upper bound on the exponential reconnect backoff.
+ws_reconnect_max_backoff = "30s"

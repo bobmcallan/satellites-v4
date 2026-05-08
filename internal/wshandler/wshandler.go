@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,11 +32,26 @@ type SessionResolver interface {
 	Resolve(ctx context.Context, sessionID string) (auth.User, error)
 }
 
-// Deps bundles the Handler's runtime dependencies. All fields are required.
+// BearerValidator validates an opaque bearer token (OAuth provider token,
+// satellites-issued JWT, or sat_-prefixed registry token) and returns the
+// resolved identity. Satisfied by *auth.BearerValidator; tests inject a
+// stub.
+type BearerValidator interface {
+	Validate(ctx context.Context, token string) (auth.BearerInfo, error)
+}
+
+// Deps bundles the Handler's runtime dependencies.
 type Deps struct {
 	AuthHub  *hub.AuthHub
 	Sessions SessionResolver
 	Logger   arbor.ILogger
+	// BearerValidator authenticates Bearer tokens carried on the WS
+	// upgrade — Authorization header preferred, ?token=<key> query
+	// param accepted as the upgrader-friendly fallback. Wired with
+	// the same instance used by the /mcp middleware so token
+	// revocation is uniform across the two surfaces. nil disables the
+	// Bearer path; the handler falls back to session-cookie auth.
+	BearerValidator BearerValidator
 	// PingInterval paces server→client control pings on an otherwise-idle
 	// connection. Zero disables pings (test mode).
 	PingInterval time.Duration
@@ -123,19 +139,53 @@ func (h *Handler) serveWS(w http.ResponseWriter, r *http.Request) {
 	c.run()
 }
 
-// resolveUser extracts the session cookie, resolves it to a user. Returns
-// (zero, false) when the cookie is missing or invalid; the serveWS caller
-// responds 401.
+// resolveUser walks the supported auth schemes for /ws and returns the
+// resolved User on first match. Order:
+//
+//  1. Session cookie (existing browser flow).
+//  2. Authorization: Bearer <token> header (new — closes the auth gap
+//     for headless WS subscribers like satellites-agent).
+//  3. ?token=<token> query param (Bearer fallback for environments
+//     that strip Authorization on the WS upgrade).
+//
+// Returns (zero, false) when no scheme produces a user; serveWS
+// responds 401 in that case.
 func (h *Handler) resolveUser(r *http.Request) (auth.User, bool) {
-	sid := auth.ReadCookie(r)
-	if sid == "" {
+	if sid := auth.ReadCookie(r); sid != "" {
+		if user, err := h.deps.Sessions.Resolve(r.Context(), sid); err == nil {
+			return user, true
+		}
+	}
+	if h.deps.BearerValidator == nil {
 		return auth.User{}, false
 	}
-	user, err := h.deps.Sessions.Resolve(r.Context(), sid)
+	tok := bearerFromHeader(r.Header.Get("Authorization"))
+	if tok == "" {
+		tok = strings.TrimSpace(r.URL.Query().Get("token"))
+	}
+	if tok == "" {
+		return auth.User{}, false
+	}
+	info, err := h.deps.BearerValidator.Validate(r.Context(), tok)
 	if err != nil {
 		return auth.User{}, false
 	}
-	return user, true
+	return auth.User{ID: info.UserID, Email: info.Email}, true
+}
+
+// bearerFromHeader extracts the token from an Authorization header.
+// Returns "" when the header is empty or does not carry the Bearer
+// scheme.
+func bearerFromHeader(h string) string {
+	const prefix = "Bearer "
+	h = strings.TrimSpace(h)
+	if len(h) <= len(prefix) {
+		return ""
+	}
+	if !strings.EqualFold(h[:len(prefix)], prefix) {
+		return ""
+	}
+	return strings.TrimSpace(h[len(prefix):])
 }
 
 // connection owns the lifecycle of a single websocket. Ordered shutdown:

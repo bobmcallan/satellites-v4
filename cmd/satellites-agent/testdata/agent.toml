@@ -1,0 +1,17 @@
+# Sample agent.toml referenced by the lifecycle test in main_test.go.
+# The test does not consume this file directly (it writes a TOML
+# pointing at httptest stub URLs into a tempdir); this file is the
+# baseline shape an operator copies into a real deployment.
+worker_id          = "test-worker"
+workspace_ids      = ["wksp_a"]
+mcp_url            = "http://127.0.0.1:8080/mcp"
+auth_token         = ""
+idle_backoff       = "5s"
+heartbeat_interval = "60s"
+execute_timeout    = "5m"
+log_level          = "info"
+
+hub_url                  = "ws://127.0.0.1:8080/ws"
+subscribe_workspace_ids  = ["wksp_a"]
+ws_reconnect_min_backoff = "500ms"
+ws_reconnect_max_backoff = "30s"

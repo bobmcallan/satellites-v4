@@ -89,6 +89,21 @@ type Config struct {
 	IdleBackoff       time.Duration
 	HeartbeatInterval time.Duration
 	ExecuteTimeout    time.Duration
+
+	// WakeChan is an optional read-only signal channel. When non-nil,
+	// Loop attempts a Claim immediately on each receive; idle backoff
+	// remains as a forward-progress fallback when no event arrives.
+	// A nil WakeChan reduces Loop to its polling-only shape.
+	WakeChan <-chan WakeEvent
+}
+
+// WakeEvent signals that a task may be available. It carries
+// identifying fields for log correlation; the Worker does not consume
+// the payload — server-side Claim is the source of truth.
+type WakeEvent struct {
+	TaskID      string
+	ProjectID   string
+	WorkspaceID string
 }
 
 // Worker runs the claim → execute → close loop against a Client.
@@ -151,22 +166,37 @@ func (w *Worker) Loop(ctx context.Context) error {
 			w.emitShutdown(context.Background(), "ctx canceled")
 			return ctx.Err()
 		}
+		// Wait for a wake signal or for the idle backoff to elapse.
+		// A nil WakeChan blocks forever in the select case (Go's nil-
+		// channel semantics) — the loop reduces to polling on
+		// IdleBackoff. Closure of WakeChan also returns immediately
+		// from the select; subsequent receives observe the closed
+		// channel and the loop falls through to a Claim attempt.
+		idle := time.NewTimer(w.cfg.IdleBackoff)
+		select {
+		case <-ctx.Done():
+			idle.Stop()
+			w.emitShutdown(context.Background(), "ctx canceled during idle")
+			return ctx.Err()
+		case ev, ok := <-w.cfg.WakeChan:
+			idle.Stop()
+			if ok && w.logger != nil {
+				w.logger.Debug().
+					Str("task_id", ev.TaskID).
+					Str("project_id", ev.ProjectID).
+					Str("workspace_id", ev.WorkspaceID).
+					Msg("worker wake")
+			}
+		case <-idle.C:
+		}
 		task, err := w.client.Claim(ctx, w.cfg.WorkerID, w.cfg.WorkspaceIDs)
 		if err != nil {
 			if w.logger != nil {
 				w.logger.Warn().Str("error", err.Error()).Msg("worker claim failed")
 			}
-			if sleepInterruptible(ctx, w.cfg.IdleBackoff) {
-				w.emitShutdown(context.Background(), "ctx canceled during backoff")
-				return ctx.Err()
-			}
 			continue
 		}
 		if task == nil {
-			if sleepInterruptible(ctx, w.cfg.IdleBackoff) {
-				w.emitShutdown(context.Background(), "ctx canceled during idle")
-				return ctx.Err()
-			}
 			continue
 		}
 		w.runOne(ctx, *task)
@@ -242,18 +272,5 @@ func (w *Worker) emitShutdown(ctx context.Context, reason string) {
 	defer cancel()
 	if err := w.client.Shutdown(shutdownCtx, w.cfg.WorkerID, reason); err != nil && w.logger != nil {
 		w.logger.Warn().Str("error", err.Error()).Msg("worker shutdown row failed")
-	}
-}
-
-// sleepInterruptible sleeps for d or until ctx is canceled. Returns
-// true when ctx was canceled.
-func sleepInterruptible(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return true
-	case <-t.C:
-		return false
 	}
 }

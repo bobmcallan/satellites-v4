@@ -2084,7 +2084,6 @@ func buildStoryUpdateFields(req mcpgo.CallToolRequest) (story.UpdateFields, erro
 	return fields, nil
 }
 
-
 // loadStoryTemplate resolves a category → story.Template by reading the
 // system-scope document with type=story_template + name=category. Sets
 // the lookup is best-effort: missing or malformed templates return

@@ -59,7 +59,7 @@ cmd_server() {
 }
 
 cmd_agent() {
-  go build -ldflags "$(stamp_ldflags satellites-agent)" -o satellites-agent ./cmd/satellites-agent
+  go build -trimpath -ldflags "$(stamp_ldflags satellites-agent)" -o satellites-agent ./cmd/satellites-agent
 }
 
 cmd_build() {

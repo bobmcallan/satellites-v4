@@ -193,6 +193,56 @@ func TestWorker_HeartbeatFiresDuringExecution(t *testing.T) {
 	assert.GreaterOrEqual(t, hits, int64(2), "heartbeat should fire at least twice during the 60ms execute at 20ms interval; got %d", hits)
 }
 
+func TestWorker_WakeChanTriggersClaim(t *testing.T) {
+	t.Parallel()
+	c := &fakeClient{
+		queue: []*worker.TaskEnvelope{{ID: "task_wake", WorkspaceID: "wksp_a"}},
+	}
+	wakeCh := make(chan worker.WakeEvent, 1)
+	w := worker.New(c, worker.Config{
+		WorkerID:          "worker_wake",
+		WorkspaceIDs:      []string{"wksp_a"},
+		IdleBackoff:       1 * time.Hour, // far longer than the test runtime
+		HeartbeatInterval: 1 * time.Hour,
+		WakeChan:          wakeCh,
+	}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	wakeCh <- worker.WakeEvent{TaskID: "task_wake", WorkspaceID: "wksp_a"}
+	_ = w.Loop(ctx)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	require.Len(t, c.closeCalls, 1, "wake event should drive a single Claim+Execute+Close cycle ahead of the 1h IdleBackoff")
+	assert.Equal(t, "task_wake", c.closeCalls[0].TaskID)
+}
+
+func TestWorker_WakeChanCloseStopsWakes_ButLoopContinues(t *testing.T) {
+	t.Parallel()
+	c := &fakeClient{}
+	wakeCh := make(chan worker.WakeEvent)
+	close(wakeCh) // already closed
+	w := worker.New(c, worker.Config{
+		WorkerID:     "worker_close",
+		WorkspaceIDs: []string{"wksp_a"},
+		IdleBackoff:  10 * time.Millisecond,
+		WakeChan:     wakeCh,
+	}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+	defer cancel()
+	_ = w.Loop(ctx)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Closed channel keeps yielding zero-value events on receive — the
+	// loop converges on Claim each iteration. With queue empty, no
+	// task ever closes; the assertion is that the loop continued to
+	// poll Claim rather than tearing down.
+	assert.Greater(t, c.claimCalls, 1, "loop should continue claiming after WakeChan closes")
+}
+
 func TestWorker_DoubleLoop_Rejected(t *testing.T) {
 	t.Parallel()
 	c := &fakeClient{}

@@ -84,6 +84,19 @@ func (a *auditRecorder) count() int {
 
 // --- fixtures --------------------------------------------------------------
 
+// stubBearer is a deterministic BearerValidator: tokens map to
+// BearerInfo on hit, returns an error on miss.
+type stubBearer struct {
+	tokens map[string]auth.BearerInfo
+}
+
+func (s *stubBearer) Validate(_ context.Context, token string) (auth.BearerInfo, error) {
+	if info, ok := s.tokens[token]; ok {
+		return info, nil
+	}
+	return auth.BearerInfo{}, errString("invalid bearer")
+}
+
 type fixture struct {
 	server   *httptest.Server
 	handler  *Handler
@@ -91,6 +104,7 @@ type fixture struct {
 	members  *memberSet
 	audit    *auditRecorder
 	resolver *stubResolver
+	bearer   *stubBearer
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -99,14 +113,16 @@ func newFixture(t *testing.T) *fixture {
 	audit := &auditRecorder{}
 	authHub := hub.NewAuthHub(hub.New(), members, audit)
 	resolver := &stubResolver{users: map[string]auth.User{}}
+	bearer := &stubBearer{tokens: map[string]auth.BearerInfo{}}
 
 	h := New(Deps{
-		AuthHub:      authHub,
-		Sessions:     resolver,
-		Logger:       satarbor.New("info"),
-		PingInterval: time.Hour, // disable ping chatter for tests
-		WriteTimeout: 500 * time.Millisecond,
-		ReadTimeout:  2 * time.Second,
+		AuthHub:         authHub,
+		Sessions:        resolver,
+		BearerValidator: bearer,
+		Logger:          satarbor.New("info"),
+		PingInterval:    time.Hour, // disable ping chatter for tests
+		WriteTimeout:    500 * time.Millisecond,
+		ReadTimeout:     2 * time.Second,
 	})
 
 	mux := http.NewServeMux()
@@ -121,6 +137,7 @@ func newFixture(t *testing.T) *fixture {
 		members:  members,
 		audit:    audit,
 		resolver: resolver,
+		bearer:   bearer,
 	}
 }
 
@@ -141,6 +158,26 @@ func (f *fixture) dial(t *testing.T, sessionCookie string) (*websocket.Conn, *ht
 		hdr.Set("Cookie", auth.CookieName+"="+sessionCookie)
 	}
 	return websocket.DefaultDialer.Dial(u.String(), hdr)
+}
+
+// dialBearer opens a websocket carrying an Authorization: Bearer header.
+func (f *fixture) dialBearer(t *testing.T, token string) (*websocket.Conn, *http.Response, error) {
+	t.Helper()
+	u, err := url.Parse(f.server.URL + "/ws")
+	require.NoError(t, err)
+	u.Scheme = "ws"
+	hdr := http.Header{}
+	hdr.Set("Authorization", "Bearer "+token)
+	return websocket.DefaultDialer.Dial(u.String(), hdr)
+}
+
+// dialQueryToken opens a websocket carrying ?token= as the auth signal.
+func (f *fixture) dialQueryToken(t *testing.T, token string) (*websocket.Conn, *http.Response, error) {
+	t.Helper()
+	u, err := url.Parse(f.server.URL + "/ws?token=" + token)
+	require.NoError(t, err)
+	u.Scheme = "ws"
+	return websocket.DefaultDialer.Dial(u.String(), nil)
 }
 
 // --- tests -----------------------------------------------------------------
@@ -315,6 +352,62 @@ func countSettledGoroutines(t *testing.T) int {
 		time.Sleep(20 * time.Millisecond)
 	}
 	return curr
+}
+
+func TestServeWS_BearerHeader_OK(t *testing.T) {
+	f := newFixture(t)
+	f.bearer.tokens["valid-tok"] = auth.BearerInfo{UserID: "u_alice", Email: "alice@example.com"}
+	f.members.add("wksp_A", "u_alice")
+
+	conn, _, err := f.dialBearer(t, "valid-tok")
+	require.NoError(t, err)
+	defer conn.Close()
+
+	require.NoError(t, conn.WriteJSON(subscribeMsg{Type: "subscribe", Topic: "ws:wksp_A"}))
+	time.Sleep(50 * time.Millisecond)
+	f.authHub.Publish(context.Background(), "ws:wksp_A", hub.Event{
+		Kind: "ledger.append", WorkspaceID: "wksp_A", Data: "hi",
+	})
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
+	var got hub.Event
+	require.NoError(t, conn.ReadJSON(&got))
+	assert.Equal(t, "ledger.append", got.Kind)
+}
+
+func TestServeWS_QueryToken_OK(t *testing.T) {
+	f := newFixture(t)
+	f.bearer.tokens["valid-q"] = auth.BearerInfo{UserID: "u_q", Email: "q@example.com"}
+	f.members.add("wksp_A", "u_q")
+
+	conn, _, err := f.dialQueryToken(t, "valid-q")
+	require.NoError(t, err)
+	defer conn.Close()
+	require.NoError(t, conn.WriteJSON(subscribeMsg{Type: "subscribe", Topic: "ws:wksp_A"}))
+	time.Sleep(50 * time.Millisecond)
+	f.authHub.Publish(context.Background(), "ws:wksp_A", hub.Event{
+		Kind: "task.published", WorkspaceID: "wksp_A", Data: map[string]any{"task_id": "t1"},
+	})
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
+	var got hub.Event
+	require.NoError(t, conn.ReadJSON(&got))
+	assert.Equal(t, "task.published", got.Kind)
+}
+
+func TestServeWS_NoAuth_401(t *testing.T) {
+	f := newFixture(t)
+	_, resp, err := f.dial(t, "")
+	require.Error(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestServeWS_InvalidBearer_401(t *testing.T) {
+	f := newFixture(t)
+	_, resp, err := f.dialBearer(t, "bogus")
+	require.Error(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
 // Keep import shaping happy in grep-based validators.

@@ -15,10 +15,15 @@ scripts/satellites.toml
 # Go build output
 /satellites
 /satellites-agent
+/bin/
 *.exe
 *.test
 *.out
 *.prof
+
+# satellites-agent local log file written by arbor when run via
+# scripts/run-agent.sh in the repo root.
+.satellites-agent.log
 
 # sty_51571015: agent_dispatch creates a per-task worktree under
 # .satellites-agents/<task_id>. Operators clean these via

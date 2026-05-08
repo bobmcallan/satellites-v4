@@ -121,12 +121,20 @@ func (s *Server) handleTaskAdd(ctx context.Context, req mcpgo.CallToolRequest) (
 			return mcpgo.NewToolResultError(fmt.Sprintf("agent_unavailable: agent_id=%q scope=workspace workspace_id=%s caller has no membership", agentID, agentWS)), nil
 		}
 		workspaceID = agentWS
-		// Caller's session/default project is honoured only when it
-		// lies in the agent's workspace; otherwise defer to the next
-		// step in the chain (defaultProjectID) which is also gated
-		// below.
-		if cand := s.callerActiveProjectID(ctx, caller); cand != "" && s.resolveProjectWorkspaceID(ctx, cand) == agentWS {
-			projectID = cand
+		// sty_21d4d830: when a story_id is supplied, prefer the story's
+		// project so cross-project dispatch within the agent's workspace
+		// works without depending on session binding or defaultProjectID
+		// resolving to the agent's workspace. Subsequent fallbacks stay
+		// in place for the auto-mint-story path (no story_id supplied).
+		if storyID != "" {
+			if storyProj := s.resolveStoryProjectID(ctx, storyID, memberships); storyProj != "" && s.resolveProjectWorkspaceID(ctx, storyProj) == agentWS {
+				projectID = storyProj
+			}
+		}
+		if projectID == "" {
+			if cand := s.callerActiveProjectID(ctx, caller); cand != "" && s.resolveProjectWorkspaceID(ctx, cand) == agentWS {
+				projectID = cand
+			}
 		}
 		if projectID == "" && s.defaultProjectID != "" && s.resolveProjectWorkspaceID(ctx, s.defaultProjectID) == agentWS {
 			projectID = s.defaultProjectID
@@ -280,4 +288,20 @@ func (s *Server) callerActiveProjectID(ctx context.Context, caller CallerIdentit
 		return ""
 	}
 	return sess.ActiveProjectID
+}
+
+// resolveStoryProjectID returns the project_id of the story with id
+// storyID, or "" when the story is missing or the caller has no
+// membership in its workspace. Sty_21d4d830 — used by the
+// scope=workspace agent path to prefer the story's project as the
+// task's tenancy when a story_id is supplied.
+func (s *Server) resolveStoryProjectID(ctx context.Context, storyID string, memberships []string) string {
+	if s.stories == nil || storyID == "" {
+		return ""
+	}
+	st, err := s.stories.GetByID(ctx, storyID, memberships)
+	if err != nil {
+		return ""
+	}
+	return st.ProjectID
 }

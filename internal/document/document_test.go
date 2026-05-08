@@ -1029,3 +1029,95 @@ func TestMemoryStore_UpdatePartial(t *testing.T) {
 		t.Errorf("tags = %v, want [reviewed]", updated.Tags)
 	}
 }
+
+// TestClearWorkspaceProjectStamps_RemovesStaleProjectID is the
+// sty_21d4d830 regression: when an unscoped BackfillProjectID has
+// stamped defaultID onto a scope=workspace row (a row whose project_id
+// must be nil so the agent is callable from any project in the
+// workspace), the boot-time clear must strip the stamp without
+// touching scope=system or scope=project rows.
+func TestClearWorkspaceProjectStamps_RemovesStaleProjectID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryStore()
+	now := time.Now().UTC()
+	staleProj := "proj_default_for_system_user"
+
+	// Tainted scope=workspace agent — what BackfillProjectID produced
+	// before sty_21d4d830 narrowed it. Bypass Validate() by writing
+	// directly to the in-memory map: this is the corrupt state we
+	// need to repair.
+	taintedID := "doc_ws_tainted"
+	store.rows[taintedID] = Document{
+		ID:          taintedID,
+		WorkspaceID: "wksp_alpha",
+		ProjectID:   &staleProj,
+		Type:        TypeAgent,
+		Name:        "developer_agent",
+		Scope:       ScopeWorkspace,
+		Status:      StatusActive,
+		Body:        "x",
+		BodyHash:    HashBody([]byte("x")),
+	}
+
+	// Already-clean scope=workspace agent — stays clean.
+	cleanWSID := "doc_ws_clean"
+	store.rows[cleanWSID] = Document{
+		ID:          cleanWSID,
+		WorkspaceID: "wksp_alpha",
+		ProjectID:   nil,
+		Type:        TypeAgent,
+		Name:        "releaser_agent",
+		Scope:       ScopeWorkspace,
+		Status:      StatusActive,
+		Body:        "y",
+		BodyHash:    HashBody([]byte("y")),
+	}
+
+	// Legit scope=project row — must NOT have its project_id cleared.
+	legitProj := "proj_keep"
+	legitID := "doc_project_keep"
+	store.rows[legitID] = Document{
+		ID:          legitID,
+		WorkspaceID: "wksp_alpha",
+		ProjectID:   &legitProj,
+		Type:        TypeAgent,
+		Name:        "project_agent",
+		Scope:       ScopeProject,
+		Status:      StatusActive,
+		Body:        "z",
+		BodyHash:    HashBody([]byte("z")),
+	}
+
+	n, err := store.ClearWorkspaceProjectStamps(ctx, now)
+	if err != nil {
+		t.Fatalf("ClearWorkspaceProjectStamps: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("rows mutated = %d, want 1", n)
+	}
+	if store.rows[taintedID].ProjectID != nil {
+		t.Errorf("tainted row project_id still set: %v", store.rows[taintedID].ProjectID)
+	}
+	if store.rows[taintedID].WorkspaceID != "wksp_alpha" {
+		t.Errorf("tainted row workspace_id mutated: %q", store.rows[taintedID].WorkspaceID)
+	}
+	if !store.rows[taintedID].UpdatedAt.Equal(now) {
+		t.Errorf("tainted row updated_at = %v, want %v", store.rows[taintedID].UpdatedAt, now)
+	}
+	if store.rows[cleanWSID].ProjectID != nil {
+		t.Errorf("clean ws row project_id mutated: %v", store.rows[cleanWSID].ProjectID)
+	}
+	if store.rows[legitID].ProjectID == nil || *store.rows[legitID].ProjectID != legitProj {
+		t.Errorf("legit project row project_id mutated: %v", store.rows[legitID].ProjectID)
+	}
+
+	// Idempotent — second pass on a clean DB returns 0.
+	n2, err := store.ClearWorkspaceProjectStamps(ctx, now)
+	if err != nil {
+		t.Fatalf("ClearWorkspaceProjectStamps (second pass): %v", err)
+	}
+	if n2 != 0 {
+		t.Errorf("second pass mutated %d rows, want 0", n2)
+	}
+}

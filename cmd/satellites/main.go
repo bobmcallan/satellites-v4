@@ -322,6 +322,16 @@ func main() {
 			logger.Info().Int("rows", cleared).Msg("scope=system tenant stamps cleared")
 		}
 
+		// sty_21d4d830: clear project_id on every scope=workspace row.
+		// Workspace-tier rows are workspace-shared; a stamped project_id
+		// (from a prior unscoped BackfillProjectID pass) pinned the row
+		// to one project and broke cross-project task_add. Idempotent.
+		if cleared, err := docStore.ClearWorkspaceProjectStamps(ctx, time.Now().UTC()); err != nil {
+			logger.Warn().Str("error", err.Error()).Msg("workspace project-stamp clear failed")
+		} else if cleared > 0 {
+			logger.Info().Int("rows", cleared).Msg("scope=workspace project stamps cleared")
+		}
+
 		// sty_c1200f75: migrate any pre-existing tasks at status=enqueued
 		// to status=published. The substrate now distinguishes planned
 		// (agent-local) from published (queue-visible); existing rows

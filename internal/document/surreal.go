@@ -890,12 +890,19 @@ func (s *SurrealStore) Count(ctx context.Context, projectID string, memberships 
 	return (*results)[0].Result[0].N, nil
 }
 
-// BackfillProjectID stamps rows that lack a project_id with defaultID.
-// One-pass idempotent migration for documents seeded before the project
-// primitive existed. Second boot is a no-op because the WHERE clause
-// filters out already-stamped rows.
+// BackfillProjectID stamps scope=project rows that lack a project_id
+// with defaultID. One-pass idempotent migration for documents seeded
+// before the project primitive existed. Second boot is a no-op because
+// the WHERE clause filters out already-stamped rows.
+//
+// Scoped to scope='project' (sty_21d4d830): scope=system rows are
+// non-tenant, and scope=workspace rows are workspace-shared with
+// project_id intentionally nil so they're callable from any project in
+// the workspace. Stamping defaultID on those rows pinned workspace
+// agents (developer_agent / releaser_agent) to a single project and
+// broke task_add cross-project resolution post-redeploy.
 func (s *SurrealStore) BackfillProjectID(ctx context.Context, defaultID string) (int, error) {
-	sql := "UPDATE documents SET project_id = $project WHERE project_id IS NONE OR project_id = '' RETURN AFTER"
+	sql := "UPDATE documents SET project_id = $project WHERE scope = 'project' AND (project_id IS NONE OR project_id = '') RETURN AFTER"
 	vars := map[string]any{"project": defaultID}
 	results, err := surrealdb.Query[[]Document](ctx, s.db, sql, vars)
 	if err != nil {
@@ -919,6 +926,32 @@ func (s *SurrealStore) ClearSystemTenantStamps(ctx context.Context, now time.Tim
 	results, err := surrealdb.Query[[]Document](ctx, s.db, sql, vars)
 	if err != nil {
 		return 0, fmt.Errorf("document: clear system tenant stamps: %w", err)
+	}
+	if results == nil || len(*results) == 0 {
+		return 0, nil
+	}
+	return len((*results)[0].Result), nil
+}
+
+// ClearWorkspaceProjectStamps implements Store for SurrealStore.
+//
+// Sty_21d4d830: workspace-scope rows are workspace-shared and must
+// carry project_id=NONE so task_add can resolve them against any
+// project in the workspace. A prior BackfillProjectID pass stamped
+// the boot user's default project on every empty-project_id row,
+// pinning workspace agents to a single project and breaking
+// cross-project dispatch. Idempotent — a clean DB finds zero rows
+// to update. Returns the number of rows mutated.
+func (s *SurrealStore) ClearWorkspaceProjectStamps(ctx context.Context, now time.Time) (int, error) {
+	sql := `UPDATE documents
+		SET project_id = NONE, updated_at = $now
+		WHERE scope = 'workspace'
+		AND project_id != NONE AND project_id != ''
+		RETURN AFTER`
+	vars := map[string]any{"now": now}
+	results, err := surrealdb.Query[[]Document](ctx, s.db, sql, vars)
+	if err != nil {
+		return 0, fmt.Errorf("document: clear workspace project stamps: %w", err)
 	}
 	if results == nil || len(*results) == 0 {
 		return 0, nil

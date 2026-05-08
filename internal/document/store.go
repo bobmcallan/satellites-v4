@@ -188,6 +188,16 @@ type Store interface {
 	// to update. Returns the number of rows mutated.
 	ClearSystemTenantStamps(ctx context.Context, now time.Time) (int, error)
 
+	// ClearWorkspaceProjectStamps clears project_id on every
+	// scope=workspace row where it is currently set (sty_21d4d830:
+	// workspace tier is workspace-shared, so a stamped project_id
+	// pins the row to one project and breaks cross-project
+	// resolution). Bypasses the Upsert body-hash short-circuit that
+	// would otherwise leave a stale stamp from a prior unscoped
+	// BackfillProjectID pass intact. Idempotent: a clean DB finds
+	// zero rows to update. Returns the number of rows mutated.
+	ClearWorkspaceProjectStamps(ctx context.Context, now time.Time) (int, error)
+
 	// ListVersions returns prior versions of the document with id
 	// documentID, in DESC version order. The live document.Document
 	// itself is not included in the result. Workspace scoping reuses
@@ -836,6 +846,26 @@ func (m *MemoryStore) ClearSystemTenantStamps(ctx context.Context, now time.Time
 			continue
 		}
 		d.WorkspaceID = ""
+		d.ProjectID = nil
+		d.UpdatedAt = now
+		m.rows[k] = d
+		n++
+	}
+	return n, nil
+}
+
+// ClearWorkspaceProjectStamps implements Store for MemoryStore.
+func (m *MemoryStore) ClearWorkspaceProjectStamps(ctx context.Context, now time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for k, d := range m.rows {
+		if d.Scope != ScopeWorkspace {
+			continue
+		}
+		if d.ProjectID == nil || *d.ProjectID == "" {
+			continue
+		}
 		d.ProjectID = nil
 		d.UpdatedAt = now
 		m.rows[k] = d

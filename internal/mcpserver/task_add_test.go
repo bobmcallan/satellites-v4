@@ -337,6 +337,64 @@ func TestTaskAdd_WorkspaceTier_CrossWorkspaceRejected(t *testing.T) {
 	require.Contains(t, errorText(res), "agent_unavailable")
 }
 
+// TestTaskAdd_WorkspaceTier_CrossProjectInSameWorkspace is the
+// sty_21d4d830 AC2 regression: a scope=workspace agent must be
+// callable against any project in its workspace via story_id, even
+// when neither callerActiveProjectID nor defaultProjectID resolves to
+// a project in the agent's workspace. Pre-fix, task_add returned
+// `agent_unavailable: ... no caller project resolvable in agent
+// workspace`; post-fix, the supplied story_id's project is preferred.
+func TestTaskAdd_WorkspaceTier_CrossProjectInSameWorkspace(t *testing.T) {
+	t.Parallel()
+	f := newOrchestratorFixture(t)
+	ctx := context.Background()
+
+	// Workspace-tier agent in the fixture's workspace.
+	settings, _ := document.MarshalAgentSettings(document.AgentSettings{
+		Delivers: []string{task.ContractAction("develop")},
+	})
+	wsAgent, err := f.server.docs.Create(ctx, document.Document{
+		Type:        document.TypeAgent,
+		Scope:       document.ScopeWorkspace,
+		Name:        "ws_developer_cross",
+		WorkspaceID: f.wsID,
+		Body:        "agent body",
+		Status:      document.StatusActive,
+		Structured:  settings,
+	}, f.now)
+	require.NoError(t, err)
+
+	// Mint a SECOND project in the same workspace + a story scoped to it.
+	otherProj, err := f.server.projects.Create(ctx, "user_alice", f.wsID, "p2", f.now)
+	require.NoError(t, err)
+	otherStory, err := f.server.stories.Create(ctx, story.Story{
+		WorkspaceID: f.wsID,
+		ProjectID:   otherProj.ID,
+		Title:       "cross-project story",
+	}, f.now)
+	require.NoError(t, err)
+
+	// Force the resolution paths that previously decided cross-project
+	// dispatch to fail: clear defaultProjectID and the session-bound
+	// active project so the only viable resolution route is the story
+	// supplied on the call.
+	f.server.defaultProjectID = ""
+
+	res := callAddHandler(t, f, map[string]any{
+		"agent_id": wsAgent.ID,
+		"prompt":   "ship the cross-project develop work",
+		"story_id": otherStory.ID,
+		"action":   task.ContractAction("develop"),
+	})
+	require.False(t, res.IsError, "ws-tier cross-project failed: %s", errorText(res))
+
+	out := decodeResult(t, res)
+	row, err := f.taskStore.GetByID(ctx, out["task_id"].(string), nil)
+	require.NoError(t, err)
+	require.Equal(t, f.wsID, row.WorkspaceID, "task workspace matches agent workspace")
+	require.Equal(t, otherProj.ID, row.ProjectID, "task project resolved from supplied story_id")
+}
+
 // errorText returns the inner text of a tool result regardless of whether
 // it came back as IsError or as success — both shapes carry the message
 // in Content[0].

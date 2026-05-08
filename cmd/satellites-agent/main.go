@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/bobmcallan/satellites/internal/agent/worker"
@@ -26,7 +27,32 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	os.Exit(run(ctx, os.Args, os.Stdout, os.Stderr))
+	os.Exit(dispatch(ctx, os.Args, os.Stdout, os.Stderr))
+}
+
+// dispatch routes argv to the right entry point. The default (no
+// args, or first arg starting with '-') is the foreground run loop —
+// the existing run() entry the binary has used since order:02.
+// Subcommand words {run, start, stop, status} route to the lifecycle
+// helpers in lifecycle.go.
+func dispatch(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+		return run(ctx, args, stdout, stderr)
+	}
+	switch args[1] {
+	case "run":
+		// foreground; flags follow the subcommand word.
+		return run(ctx, append([]string{args[0]}, args[2:]...), stdout, stderr)
+	case "start":
+		return runStart(args[2:], stdout, stderr)
+	case "stop":
+		return runStop(args[2:], stdout, stderr)
+	case "status":
+		return runStatus(args[2:], stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "satellites-agent: unknown subcommand %q (want: run | start | stop | status)\n", args[1])
+		return 1
+	}
 }
 
 // run is the binary's testable entry point. It parses args, loads

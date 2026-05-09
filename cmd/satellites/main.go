@@ -39,6 +39,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/repo"
 	"github.com/bobmcallan/satellites/internal/session"
 	"github.com/bobmcallan/satellites/internal/story"
+	"github.com/bobmcallan/satellites/internal/storystatus"
 	"github.com/bobmcallan/satellites/internal/task"
 	"github.com/bobmcallan/satellites/internal/workspace"
 	"github.com/bobmcallan/satellites/internal/wshandler"
@@ -459,6 +460,17 @@ func main() {
 		attachPublisher(ledgerStore, publisher)
 		attachPublisher(taskStore, publisher)
 		attachPublisher(storyStore, publisher)
+
+		// sty_051bd266: wire the storystatus reconciler. The task store's
+		// listener fan-out fires on every status transition; the
+		// reconciler advances a backlog/ready story to in_progress when
+		// its first open task arrives. UpdateStatusDerived bypasses the
+		// forward-only guard so the flip lands without a manual walk.
+		if storyStore != nil && taskStore != nil {
+			if a, ok := taskStore.(interface{ AddListener(task.Listener) }); ok {
+				a.AddListener(storystatus.New(storyStore, logger))
+			}
+		}
 
 		// sty_0233fabd: wire the open-tasks gate. UpdateStatus rejects
 		// transitions to done|cancelled while the chain has any task at

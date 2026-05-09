@@ -13,14 +13,12 @@ import (
 	surrealmodels "github.com/surrealdb/surrealdb.go/pkg/models"
 
 	"github.com/bobmcallan/satellites/internal/embeddings"
-	"github.com/bobmcallan/satellites/internal/hubemit"
 )
 
 // SurrealStore is a SurrealDB-backed Store. The caller must have already
 // authenticated and selected ns/db on the supplied *surrealdb.DB.
 type SurrealStore struct {
 	db        *surrealdb.DB
-	publisher hubemit.Publisher
 	embedder  embeddings.Embedder
 	chunks    ChunkStore
 	listenMu  sync.Mutex
@@ -35,10 +33,7 @@ func (s *SurrealStore) WithEmbeddings(embedder embeddings.Embedder, chunks Chunk
 	return s
 }
 
-// SetPublisher installs the hub emit sink for subsequent mutations.
-func (s *SurrealStore) SetPublisher(p hubemit.Publisher) { s.publisher = p }
-
-// AddListener registers l on the bus-subscriber slice (sty_e805a01a).
+// AddListener registers l on the listener slice (sty_e805a01a).
 func (s *SurrealStore) AddListener(l Listener) {
 	if l == nil {
 		return
@@ -186,7 +181,6 @@ func (s *SurrealStore) Append(ctx context.Context, entry LedgerEntry, now time.T
 	if _, err := surrealdb.Query[[]LedgerEntry](ctx, s.db, sql, vars); err != nil {
 		return LedgerEntry{}, fmt.Errorf("ledger: append: %w", err)
 	}
-	emitAppended(ctx, s.publisher, entry)
 	s.listenMu.Lock()
 	listeners := append([]Listener(nil), s.listeners...)
 	s.listenMu.Unlock()
@@ -453,7 +447,6 @@ func (s *SurrealStore) Dereference(ctx context.Context, id, reason, actor string
 	if s.chunks != nil {
 		_ = s.chunks.DeleteByLedgerID(ctx, id)
 	}
-	emitDereferenced(ctx, s.publisher, target.WorkspaceID, id, reason)
 	return written, nil
 }
 

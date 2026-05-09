@@ -30,7 +30,6 @@ import (
 	"github.com/bobmcallan/satellites/internal/dispatcher"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/httpserver"
-	"github.com/bobmcallan/satellites/internal/hub"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/mcpserver"
 	"github.com/bobmcallan/satellites/internal/permhook"
@@ -443,31 +442,22 @@ func main() {
 		JWTSecret: []byte(cfg.JWTSecret),
 	})
 
-	// Websocket hub (slice 10.1) + workspace-aware AuthHub (slice 10.2) +
-	// store-layer emit hooks (slice 10.3). One hub instance per process.
-	sharedHub := hub.New()
-	var authHub *hub.AuthHub
+	// sty_010a0543 cutover: wshandler reads workspace-scoped events
+	// from a surreallive-backed source. The in-process hub is gone.
+	// Workspace-membership enforcement moves into wshandler's
+	// SurrealLiveSource.
 	var wsHandlers *wshandler.Handler
-	if wsStore != nil && ledgerStore != nil {
-		audit := &ledgerMismatchAudit{
-			ledger:    ledgerStore,
-			projectID: defaultProjectID,
-			logger:    logger,
-		}
-		authHub = hub.NewAuthHub(sharedHub, wsStore, audit)
+	if wsStore != nil && ledgerStore != nil && surrealConn != nil {
+		liveSub := surreallive.New(surreallive.NewSDKAdapter(surrealConn), surreallive.Config{}, logger)
+		liveSource := wshandler.NewSurrealLiveSource(liveSub, wsStore, logger)
+		go liveSource.Run(ctx)
+
 		wsHandlers = wshandler.New(wshandler.Deps{
-			AuthHub:         authHub,
+			Source:          liveSource,
 			Sessions:        &sessionResolverAdapter{sessions: sessions, users: users},
 			BearerValidator: bearerValidator,
 			Logger:          logger,
 		})
-
-		// Attach the store-layer publisher so ledger / task / story
-		// mutations fan to the hub on every write.
-		publisher := &hubPublisher{authHub: authHub}
-		attachPublisher(ledgerStore, publisher)
-		attachPublisher(taskStore, publisher)
-		attachPublisher(storyStore, publisher)
 
 		// sty_051bd266: wire the storystatus reconciler. The task store's
 		// listener fan-out fires on every status transition; the
@@ -479,29 +469,7 @@ func main() {
 				a.AddListener(storystatus.New(storyStore, logger))
 			}
 		}
-
-		// sty_010a0543: surreallive Subscriber boots unconditionally
-		// when a Surreal connection is available. The wshandler reads
-		// from this path post-cutover; no consumer-side flag.
-		if surrealConn != nil {
-			liveSub := surreallive.New(surreallive.NewSDKAdapter(surrealConn), surreallive.Config{}, logger)
-			liveCtx, liveCancel := context.WithCancel(ctx)
-			_ = liveCancel // tied to the parent ctx
-			for _, table := range []string{"tasks", "stories", "ledger"} {
-				go func(table string) {
-					if err := liveSub.Subscribe(liveCtx, table, nil, func(ev surreallive.Event) {
-						// wshandler attaches its own per-subscriber
-						// hooks; this default callback is the
-						// no-consumer fallback while the wshandler
-						// migration is in flight.
-					}); err != nil && err != context.Canceled {
-						logger.Warn().Str("table", table).Str("error", err.Error()).
-							Msg("surreallive: subscribe ended")
-					}
-				}(table)
-			}
-			logger.Info().Msg("surreallive: subscribers wired")
-		}
+		logger.Info().Msg("wshandler: SurrealLiveSource wired")
 
 		// sty_0233fabd: wire the open-tasks gate. UpdateStatus rejects
 		// transitions to done|cancelled while the chain has any task at

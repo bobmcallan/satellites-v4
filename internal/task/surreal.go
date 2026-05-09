@@ -9,8 +9,6 @@ import (
 
 	"github.com/surrealdb/surrealdb.go"
 	surrealmodels "github.com/surrealdb/surrealdb.go/pkg/models"
-
-	"github.com/bobmcallan/satellites/internal/hubemit"
 )
 
 // SurrealStore is a SurrealDB-backed Store. Atomic Claim uses a single
@@ -18,17 +16,14 @@ import (
 // the same row.
 type SurrealStore struct {
 	db        *surrealdb.DB
-	publisher hubemit.Publisher
 	listenMu  sync.Mutex
 	listeners []Listener
 }
 
-// SetPublisher installs the hub emit sink for subsequent mutations.
-func (s *SurrealStore) SetPublisher(p hubemit.Publisher) { s.publisher = p }
-
-// AddListener registers l on the bus-subscriber slice (sty_c6d76a5b).
-// Listeners fire on every status transition after the existing per-
-// workspace hub publish.
+// AddListener registers l on the listener slice (sty_c6d76a5b).
+// Consumers like internal/storystatus + internal/wshandler observe via
+// this seam. Post-hub-cutover (sty_010a0543) this is the only fan-out
+// path.
 func (s *SurrealStore) AddListener(l Listener) {
 	if l == nil {
 		return
@@ -51,11 +46,8 @@ func (s *SurrealStore) snapshotListeners() []Listener {
 	return out
 }
 
-// emit fires the per-workspace hub publish + the listener fan-out.
-// Used at every status-changing mutation site so the two emit paths
-// stay in lockstep.
+// emit fans every status transition out to registered listeners.
 func (s *SurrealStore) emit(ctx context.Context, t Task) {
-	emitStatus(ctx, s.publisher, t)
 	fanoutListeners(ctx, s.snapshotListeners(), t)
 }
 

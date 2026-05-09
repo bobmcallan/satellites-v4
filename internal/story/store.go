@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bobmcallan/satellites/internal/hubemit"
 	"github.com/bobmcallan/satellites/internal/ledger"
 )
 
@@ -149,12 +148,8 @@ type MemoryStore struct {
 	mu          sync.Mutex
 	rows        map[string]Story
 	ledger      ledger.Store
-	publisher   hubemit.Publisher
 	openTasksFn OpenTasksFunc
 }
-
-// SetPublisher installs the hub emit sink for subsequent mutations.
-func (m *MemoryStore) SetPublisher(p hubemit.Publisher) { m.publisher = p }
 
 // SetOpenTasksFunc wires the terminal-transition gate. When set,
 // UpdateStatus rejects transitions to done|cancelled while the story's
@@ -188,7 +183,6 @@ func (m *MemoryStore) Create(ctx context.Context, s Story, now time.Time) (Story
 		s.Tags = []string{}
 	}
 	m.rows[s.ID] = s
-	emitStatus(ctx, m.publisher, s)
 	return s, nil
 }
 
@@ -303,7 +297,6 @@ func (m *MemoryStore) UpdateStatus(ctx context.Context, id, newStatus, actor str
 		m.rows[id] = s
 		return Story{}, fmt.Errorf("story: ledger emission failed (status reverted): %w", err)
 	}
-	emitStatus(ctx, m.publisher, s)
 	return s, nil
 }
 
@@ -354,7 +347,6 @@ func (m *MemoryStore) UpdateStatusDerived(ctx context.Context, id, newStatus str
 		m.rows[id] = s
 		return Story{}, fmt.Errorf("story: derived ledger emission failed (status reverted): %w", err)
 	}
-	emitStatus(ctx, m.publisher, s)
 	return s, nil
 }
 

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satellites/internal/embeddings"
-	"github.com/bobmcallan/satellites/internal/hubemit"
 )
 
 // DefaultListLimit is applied when ListOptions.Limit <= 0.
@@ -88,7 +87,6 @@ type Store interface {
 type MemoryStore struct {
 	mu        sync.Mutex
 	rows      []LedgerEntry
-	publisher hubemit.Publisher
 	embedder  embeddings.Embedder
 	chunks    ChunkStore
 	listeners []Listener
@@ -113,15 +111,12 @@ func NewMemoryStoreWithEmbeddings(embedder embeddings.Embedder, chunks ChunkStor
 	}
 }
 
-// SetPublisher installs the hub emit sink for subsequent mutations.
-// A nil value disables publishes — the default state.
-func (m *MemoryStore) SetPublisher(p hubemit.Publisher) { m.publisher = p }
-
 // AddListener registers l on the bus-subscriber slice. Listeners fire
-// inline at Append time after the workspace hub publish; panics are
-// recovered per listener so a buggy subscriber cannot abort the writer.
-// Cross-workspace consumers (e.g. the storystatus reconciler) attach
-// here at boot time. Sty_e805a01a.
+// inline at Append time; panics are recovered per listener so a buggy
+// subscriber cannot abort the writer. Cross-workspace consumers
+// (e.g. the storystatus reconciler) attach here at boot time
+// (sty_e805a01a). Post-cutover (sty_010a0543) this is the only fan-out
+// path — surreallive picks up the row mutation for WS subscribers.
 func (m *MemoryStore) AddListener(l Listener) {
 	if l == nil {
 		return
@@ -142,10 +137,8 @@ func (m *MemoryStore) Append(ctx context.Context, entry LedgerEntry, now time.Ti
 	entry.ID = NewID()
 	entry.CreatedAt = now
 	m.rows = append(m.rows, entry)
-	pub := m.publisher
 	listeners := append([]Listener(nil), m.listeners...)
 	m.mu.Unlock()
-	emitAppended(ctx, pub, entry)
 	fanoutListeners(ctx, listeners, entry)
 	return entry, nil
 }
@@ -423,19 +416,15 @@ func (m *MemoryStore) Dereference(ctx context.Context, id, reason, actor string,
 			break
 		}
 	}
-	pub := m.publisher
 	chunks := m.chunks
 	m.mu.Unlock()
 	// Cascade: drop the dereferenced row's chunks so it vanishes from
-	// SearchSemantic results. Best-effort — a failed delete logs upstream
-	// (caller-supplied logger via the publisher path) but does not block
-	// the dereference write. The SearchSemantic parent-status filter is
-	// the defence-in-depth: even if the cascade fails, dereferenced rows
-	// are excluded from results.
+	// SearchSemantic results. Best-effort. The SearchSemantic
+	// parent-status filter is the defence-in-depth: even if the
+	// cascade fails, dereferenced rows are excluded from results.
 	if chunks != nil {
 		_ = chunks.DeleteByLedgerID(ctx, id)
 	}
-	emitDereferenced(ctx, pub, target.WorkspaceID, id, reason)
 	return written, nil
 }
 

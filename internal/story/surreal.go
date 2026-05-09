@@ -9,7 +9,6 @@ import (
 	"github.com/surrealdb/surrealdb.go"
 	surrealmodels "github.com/surrealdb/surrealdb.go/pkg/models"
 
-	"github.com/bobmcallan/satellites/internal/hubemit"
 	"github.com/bobmcallan/satellites/internal/ledger"
 )
 
@@ -21,12 +20,8 @@ import (
 type SurrealStore struct {
 	db          *surrealdb.DB
 	ledger      ledger.Store
-	publisher   hubemit.Publisher
 	openTasksFn OpenTasksFunc
 }
-
-// SetPublisher installs the hub emit sink for subsequent mutations.
-func (s *SurrealStore) SetPublisher(p hubemit.Publisher) { s.publisher = p }
 
 // SetOpenTasksFunc wires the terminal-transition gate; see MemoryStore
 // for the contract. Sty_0233fabd.
@@ -62,7 +57,6 @@ func (s *SurrealStore) Create(ctx context.Context, st Story, now time.Time) (Sto
 	if err := s.write(ctx, st); err != nil {
 		return Story{}, err
 	}
-	emitStatus(ctx, s.publisher, st)
 	return st, nil
 }
 
@@ -178,7 +172,6 @@ func (s *SurrealStore) UpdateStatus(ctx context.Context, id, newStatus, actor st
 		}
 		return Story{}, fmt.Errorf("story: ledger emission failed (status reverted): %w", err)
 	}
-	emitStatus(ctx, s.publisher, current)
 	return current, nil
 }
 
@@ -225,7 +218,6 @@ func (s *SurrealStore) UpdateStatusDerived(ctx context.Context, id, newStatus st
 		}
 		return Story{}, fmt.Errorf("story: derived ledger emission failed (status reverted): %w", err)
 	}
-	emitStatus(ctx, s.publisher, current)
 	return current, nil
 }
 

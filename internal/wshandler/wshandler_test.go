@@ -1,3 +1,7 @@
+// wshandler exercises the /ws upgrade + reader/writer goroutine
+// pair against a stub EventSource. The hub-coupled tests from the
+// pre-cutover era are gone with the hub; auth + subscribe + delivery
+// + clean-disconnect + bearer/query-token paths survive.
 package wshandler
 
 import (
@@ -7,7 +11,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"runtime"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,7 +21,6 @@ import (
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
 	"github.com/bobmcallan/satellites/internal/auth"
-	"github.com/bobmcallan/satellites/internal/hub"
 )
 
 // --- test doubles ----------------------------------------------------------
@@ -30,7 +32,7 @@ type stubResolver struct {
 func (s *stubResolver) Resolve(_ context.Context, sessionID string) (auth.User, error) {
 	u, ok := s.users[sessionID]
 	if !ok {
-		return auth.User{}, errHTTP("bad session")
+		return auth.User{}, errString("bad session")
 	}
 	return u, nil
 }
@@ -38,51 +40,6 @@ func (s *stubResolver) Resolve(_ context.Context, sessionID string) (auth.User, 
 type errString string
 
 func (e errString) Error() string { return string(e) }
-
-func errHTTP(s string) error { return errString(s) }
-
-type memberSet struct {
-	mu      sync.Mutex
-	members map[string]map[string]bool
-}
-
-func newMemberSet() *memberSet {
-	return &memberSet{members: map[string]map[string]bool{}}
-}
-
-func (m *memberSet) add(wsID, userID string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.members[wsID] == nil {
-		m.members[wsID] = map[string]bool{}
-	}
-	m.members[wsID][userID] = true
-}
-
-func (m *memberSet) IsMember(_ context.Context, wsID, userID string) (bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.members[wsID][userID], nil
-}
-
-type auditRecorder struct {
-	mu   sync.Mutex
-	hits []hub.Event
-}
-
-func (a *auditRecorder) HubMismatch(_ context.Context, event hub.Event, _ string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.hits = append(a.hits, event)
-}
-
-func (a *auditRecorder) count() int {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return len(a.hits)
-}
-
-// --- fixtures --------------------------------------------------------------
 
 // stubBearer is a deterministic BearerValidator: tokens map to
 // BearerInfo on hit, returns an error on miss.
@@ -97,30 +54,97 @@ func (s *stubBearer) Validate(_ context.Context, token string) (auth.BearerInfo,
 	return auth.BearerInfo{}, errString("invalid bearer")
 }
 
+// stubSource is the testable EventSource. push() injects a WireEvent
+// into the channel of any subscriber registered against the matching
+// topic.
+type stubSource struct {
+	mu      sync.Mutex
+	chans   map[string]chan WireEvent  // subID → ch
+	topics  map[string]map[string]bool // topic → subID → present
+	members map[string]map[string]bool // wsID → userID → member
+}
+
+func newStubSource() *stubSource {
+	return &stubSource{
+		chans:   make(map[string]chan WireEvent),
+		topics:  make(map[string]map[string]bool),
+		members: make(map[string]map[string]bool),
+	}
+}
+
+func (s *stubSource) addMember(wsID, userID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.members[wsID] == nil {
+		s.members[wsID] = map[string]bool{}
+	}
+	s.members[wsID][userID] = true
+}
+
+func (s *stubSource) Subscribe(_ context.Context, topic, subID, userID string) (<-chan WireEvent, error) {
+	wsID, err := ParseTopicWorkspace(topic)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.members[wsID][userID] {
+		return nil, ErrNotMember
+	}
+	ch := make(chan WireEvent, 16)
+	s.chans[subID] = ch
+	if s.topics[topic] == nil {
+		s.topics[topic] = map[string]bool{}
+	}
+	s.topics[topic][subID] = true
+	return ch, nil
+}
+
+func (s *stubSource) Unsubscribe(subID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ch, ok := s.chans[subID]; ok {
+		close(ch)
+		delete(s.chans, subID)
+	}
+	for _, subs := range s.topics {
+		delete(subs, subID)
+	}
+}
+
+func (s *stubSource) push(topic string, ev WireEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for subID := range s.topics[topic] {
+		select {
+		case s.chans[subID] <- ev:
+		default:
+		}
+	}
+}
+
+// --- fixture ---------------------------------------------------------------
+
 type fixture struct {
 	server   *httptest.Server
 	handler  *Handler
-	authHub  *hub.AuthHub
-	members  *memberSet
-	audit    *auditRecorder
+	source   *stubSource
 	resolver *stubResolver
 	bearer   *stubBearer
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	members := newMemberSet()
-	audit := &auditRecorder{}
-	authHub := hub.NewAuthHub(hub.New(), members, audit)
+	source := newStubSource()
 	resolver := &stubResolver{users: map[string]auth.User{}}
 	bearer := &stubBearer{tokens: map[string]auth.BearerInfo{}}
 
 	h := New(Deps{
-		AuthHub:         authHub,
+		Source:          source,
 		Sessions:        resolver,
 		BearerValidator: bearer,
 		Logger:          satarbor.New("info"),
-		PingInterval:    time.Hour, // disable ping chatter for tests
+		PingInterval:    time.Hour,
 		WriteTimeout:    500 * time.Millisecond,
 		ReadTimeout:     2 * time.Second,
 	})
@@ -133,21 +157,16 @@ func newFixture(t *testing.T) *fixture {
 	return &fixture{
 		server:   ts,
 		handler:  h,
-		authHub:  authHub,
-		members:  members,
-		audit:    audit,
+		source:   source,
 		resolver: resolver,
 		bearer:   bearer,
 	}
 }
 
-// seedUser registers a session+user pair and returns the session cookie value.
 func (f *fixture) seedUser(sessID, userID string) {
 	f.resolver.users[sessID] = auth.User{ID: userID, Email: userID + "@example.com"}
 }
 
-// dial opens a websocket to the fixture's server. sessionCookie may be empty
-// to simulate an unauth'd client.
 func (f *fixture) dial(t *testing.T, sessionCookie string) (*websocket.Conn, *http.Response, error) {
 	t.Helper()
 	u, err := url.Parse(f.server.URL + "/ws")
@@ -160,7 +179,6 @@ func (f *fixture) dial(t *testing.T, sessionCookie string) (*websocket.Conn, *ht
 	return websocket.DefaultDialer.Dial(u.String(), hdr)
 }
 
-// dialBearer opens a websocket carrying an Authorization: Bearer header.
 func (f *fixture) dialBearer(t *testing.T, token string) (*websocket.Conn, *http.Response, error) {
 	t.Helper()
 	u, err := url.Parse(f.server.URL + "/ws")
@@ -171,7 +189,6 @@ func (f *fixture) dialBearer(t *testing.T, token string) (*websocket.Conn, *http
 	return websocket.DefaultDialer.Dial(u.String(), hdr)
 }
 
-// dialQueryToken opens a websocket carrying ?token= as the auth signal.
 func (f *fixture) dialQueryToken(t *testing.T, token string) (*websocket.Conn, *http.Response, error) {
 	t.Helper()
 	u, err := url.Parse(f.server.URL + "/ws?token=" + token)
@@ -193,22 +210,21 @@ func TestWS_NoCookie_Returns401(t *testing.T) {
 func TestWS_SubscribeAsMember_ReceivesEvent(t *testing.T) {
 	f := newFixture(t)
 	f.seedUser("sess-alice", "alice")
-	f.members.add("wksp_A", "alice")
+	f.source.addMember("wksp_A", "alice")
 
 	conn, _, err := f.dial(t, "sess-alice")
 	require.NoError(t, err)
 	defer conn.Close()
 
 	require.NoError(t, conn.WriteJSON(subscribeMsg{Type: "subscribe", Topic: "ws:wksp_A"}))
-
-	// Give the reader goroutine a moment to install the subscription.
 	time.Sleep(50 * time.Millisecond)
-	f.authHub.Publish(context.Background(), "ws:wksp_A", hub.Event{
-		Kind: "ledger.append", WorkspaceID: "wksp_A", Data: "hello",
+
+	f.source.push("ws:wksp_A", WireEvent{
+		Kind: "ledger.append", WorkspaceID: "wksp_A", Data: map[string]any{"x": "hello"},
 	})
 
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
-	var got hub.Event
+	var got WireEvent
 	require.NoError(t, conn.ReadJSON(&got))
 	assert.Equal(t, "ledger.append", got.Kind)
 	assert.Equal(t, "wksp_A", got.WorkspaceID)
@@ -234,105 +250,32 @@ func TestWS_SubscribeAsNonMember_Closed(t *testing.T) {
 	assert.Equal(t, "error", em.Type)
 	assert.Equal(t, "not_member", em.Code)
 
-	// Subsequent read should fail — server closed the connection after
-	// the error frame.
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(500*time.Millisecond)))
 	_, _, err = conn.ReadMessage()
 	assert.Error(t, err)
 }
 
-func TestWS_Reconnect_SinceID_Replays(t *testing.T) {
-	f := newFixture(t)
-	f.seedUser("sess-alice", "alice")
-	f.members.add("wksp_A", "alice")
-
-	// Pre-publish three events before any subscribe. The underlying ring
-	// buffer (hub 10.1) stamps monotonic IDs; we capture the first id so
-	// we can ask for "everything after event 1".
-	for i := 0; i < 3; i++ {
-		f.authHub.Publish(context.Background(), "ws:wksp_A", hub.Event{
-			Kind: "ledger.append", WorkspaceID: "wksp_A", Data: i,
-		})
-	}
-	buffered := f.authHub.ReplayBuffer("ws:wksp_A", "")
-	require.Len(t, buffered, 3)
-	firstID := buffered[0].ID
-
-	// Connect and subscribe with since_id=firstID.
-	conn, _, err := f.dial(t, "sess-alice")
-	require.NoError(t, err)
-	defer conn.Close()
-
-	require.NoError(t, conn.WriteJSON(subscribeMsg{
-		Type: "subscribe", Topic: "ws:wksp_A", SinceID: firstID,
-	}))
-
-	require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
-	var e1, e2 hub.Event
-	require.NoError(t, conn.ReadJSON(&e1))
-	require.NoError(t, conn.ReadJSON(&e2))
-	assert.Equal(t, buffered[1].ID, e1.ID)
-	assert.Equal(t, buffered[2].ID, e2.ID)
-}
-
-func TestWS_PublishWrongWorkspace_Dropped(t *testing.T) {
-	f := newFixture(t)
-	f.seedUser("sess-alice", "alice")
-	f.members.add("wksp_A", "alice")
-
-	conn, _, err := f.dial(t, "sess-alice")
-	require.NoError(t, err)
-	defer conn.Close()
-
-	require.NoError(t, conn.WriteJSON(subscribeMsg{Type: "subscribe", Topic: "ws:wksp_A"}))
-	time.Sleep(50 * time.Millisecond)
-
-	// Publish with mismatched workspace_id — AuthHub guard should drop.
-	f.authHub.Publish(context.Background(), "ws:wksp_A", hub.Event{
-		Kind: "leak-attempt", WorkspaceID: "wksp_B", Data: "sensitive",
-	})
-
-	require.NoError(t, conn.SetReadDeadline(time.Now().Add(300*time.Millisecond)))
-	_, _, err = conn.ReadMessage()
-	assert.Error(t, err, "no event should arrive — publish was dropped")
-
-	// Audit records the mismatch.
-	assert.Equal(t, 1, f.audit.count())
-}
-
 func TestWS_DisconnectCleansGoroutines(t *testing.T) {
-	// Per AC6: abrupt disconnect (TCP close without a proper close frame)
-	// must not leak reader/writer goroutines. We use runtime.NumGoroutine
-	// as a lightweight stand-in for `goleak`.
 	before := countSettledGoroutines(t)
 
 	f := newFixture(t)
 	f.seedUser("sess-alice", "alice")
-	f.members.add("wksp_A", "alice")
+	f.source.addMember("wksp_A", "alice")
 
 	conn, _, err := f.dial(t, "sess-alice")
 	require.NoError(t, err)
 	require.NoError(t, conn.WriteJSON(subscribeMsg{Type: "subscribe", Topic: "ws:wksp_A"}))
 	time.Sleep(50 * time.Millisecond)
 
-	// Rude disconnect: close the underlying TCP without a websocket
-	// close frame.
 	require.NoError(t, conn.UnderlyingConn().Close())
 
 	f.server.Close()
 
-	// Allow server-side goroutines to observe the close + cancel.
 	after := countSettledGoroutines(t)
-
-	// Strict equality is too noisy because Go test runtime adds/retires
-	// goroutines on its own; tolerate ≤2 delta (runtime churn).
 	assert.LessOrEqualf(t, after-before, 2,
 		"goroutine leak suspected: before=%d after=%d", before, after)
 }
 
-// countSettledGoroutines polls runtime.NumGoroutine until the count is
-// stable for 3 consecutive samples or a short deadline is reached. The
-// returned value is the last reading.
 func countSettledGoroutines(t *testing.T) int {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -357,7 +300,7 @@ func countSettledGoroutines(t *testing.T) int {
 func TestServeWS_BearerHeader_OK(t *testing.T) {
 	f := newFixture(t)
 	f.bearer.tokens["valid-tok"] = auth.BearerInfo{UserID: "u_alice", Email: "alice@example.com"}
-	f.members.add("wksp_A", "u_alice")
+	f.source.addMember("wksp_A", "u_alice")
 
 	conn, _, err := f.dialBearer(t, "valid-tok")
 	require.NoError(t, err)
@@ -365,12 +308,11 @@ func TestServeWS_BearerHeader_OK(t *testing.T) {
 
 	require.NoError(t, conn.WriteJSON(subscribeMsg{Type: "subscribe", Topic: "ws:wksp_A"}))
 	time.Sleep(50 * time.Millisecond)
-	f.authHub.Publish(context.Background(), "ws:wksp_A", hub.Event{
-		Kind: "ledger.append", WorkspaceID: "wksp_A", Data: "hi",
-	})
+
+	f.source.push("ws:wksp_A", WireEvent{Kind: "ledger.append", WorkspaceID: "wksp_A"})
 
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
-	var got hub.Event
+	var got WireEvent
 	require.NoError(t, conn.ReadJSON(&got))
 	assert.Equal(t, "ledger.append", got.Kind)
 }
@@ -378,18 +320,21 @@ func TestServeWS_BearerHeader_OK(t *testing.T) {
 func TestServeWS_QueryToken_OK(t *testing.T) {
 	f := newFixture(t)
 	f.bearer.tokens["valid-q"] = auth.BearerInfo{UserID: "u_q", Email: "q@example.com"}
-	f.members.add("wksp_A", "u_q")
+	f.source.addMember("wksp_A", "u_q")
 
 	conn, _, err := f.dialQueryToken(t, "valid-q")
 	require.NoError(t, err)
 	defer conn.Close()
+
 	require.NoError(t, conn.WriteJSON(subscribeMsg{Type: "subscribe", Topic: "ws:wksp_A"}))
 	time.Sleep(50 * time.Millisecond)
-	f.authHub.Publish(context.Background(), "ws:wksp_A", hub.Event{
+
+	f.source.push("ws:wksp_A", WireEvent{
 		Kind: "task.published", WorkspaceID: "wksp_A", Data: map[string]any{"task_id": "t1"},
 	})
+
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
-	var got hub.Event
+	var got WireEvent
 	require.NoError(t, conn.ReadJSON(&got))
 	assert.Equal(t, "task.published", got.Kind)
 }
@@ -409,6 +354,3 @@ func TestServeWS_InvalidBearer_401(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
-
-// Keep import shaping happy in grep-based validators.
-var _ = strings.HasPrefix

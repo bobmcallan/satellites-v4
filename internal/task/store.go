@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bobmcallan/satellites/internal/hubemit"
 )
 
 // ErrNotFound is returned when a task lookup misses.
@@ -119,7 +118,6 @@ type Store interface {
 type MemoryStore struct {
 	mu        sync.Mutex
 	rows      map[string]Task
-	publisher hubemit.Publisher
 	listeners []Listener
 }
 
@@ -128,13 +126,9 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{rows: make(map[string]Task)}
 }
 
-// SetPublisher installs the hub emit sink for subsequent mutations.
-func (m *MemoryStore) SetPublisher(p hubemit.Publisher) { m.publisher = p }
-
 // AddListener registers l on the bus-subscriber slice (sty_c6d76a5b).
-// Listeners fire on every status transition after the existing per-
-// workspace hub publish. Mirrors the pattern in
-// internal/ledger/store.go.
+// Listeners fire on every status transition; consumers like
+// internal/storystatus + internal/wshandler observe via this seam.
 func (m *MemoryStore) AddListener(l Listener) {
 	if l == nil {
 		return
@@ -157,12 +151,12 @@ func (m *MemoryStore) snapshotListeners() []Listener {
 	return out
 }
 
-// emit fires the per-workspace hub publish + the listener fan-out.
-// Used at every status-changing mutation site so the two emit paths
-// stay in lockstep. Caller has already released the store lock so
-// listener callbacks may re-enter the store safely.
-func (m *MemoryStore) emit(ctx context.Context, pub hubemit.Publisher, t Task) {
-	emitStatus(ctx, pub, t)
+// emit fans every status transition out to the registered listeners.
+// Caller has already released the store lock so listener callbacks
+// may re-enter the store safely. The pre-cutover hub publish path
+// (sty_010a0543) is gone; surreallive picks up the row mutation
+// directly from Surreal.
+func (m *MemoryStore) emit(ctx context.Context, t Task) {
 	fanoutListeners(ctx, m.snapshotListeners(), t)
 }
 
@@ -201,9 +195,8 @@ func (m *MemoryStore) Enqueue(ctx context.Context, t Task, now time.Time) (Task,
 	}
 	t.CreatedAt = now
 	m.rows[t.ID] = t
-	pub := m.publisher
 	m.mu.Unlock()
-	m.emit(ctx, pub, t)
+	m.emit(ctx, t)
 	return t, nil
 }
 
@@ -299,9 +292,8 @@ func (m *MemoryStore) Claim(ctx context.Context, workerID string, workspaceIDs [
 	claimedAt := now
 	picked.ClaimedAt = &claimedAt
 	m.rows[picked.ID] = picked
-	pub := m.publisher
 	m.mu.Unlock()
-	m.emit(ctx, pub, picked)
+	m.emit(ctx, picked)
 	return picked, nil
 }
 
@@ -326,9 +318,8 @@ func (m *MemoryStore) ClaimByID(ctx context.Context, id, workerID string, now ti
 	claimedAt := now
 	t.ClaimedAt = &claimedAt
 	m.rows[id] = t
-	pub := m.publisher
 	m.mu.Unlock()
-	m.emit(ctx, pub, t)
+	m.emit(ctx, t)
 	return t, nil
 }
 
@@ -352,9 +343,8 @@ func (m *MemoryStore) Close(ctx context.Context, id, outcome string, now time.Ti
 	completed := now
 	t.CompletedAt = &completed
 	m.rows[id] = t
-	pub := m.publisher
 	m.mu.Unlock()
-	m.emit(ctx, pub, t)
+	m.emit(ctx, t)
 	return t, nil
 }
 
@@ -375,9 +365,8 @@ func (m *MemoryStore) Reclaim(ctx context.Context, id, reason string, now time.T
 	t.ClaimedAt = nil
 	t.ReclaimCount++
 	m.rows[id] = t
-	pub := m.publisher
 	m.mu.Unlock()
-	m.emit(ctx, pub, t)
+	m.emit(ctx, t)
 	return t, nil
 }
 
@@ -399,9 +388,8 @@ func (m *MemoryStore) Archive(ctx context.Context, id string, now time.Time, mem
 	}
 	t.Status = StatusArchived
 	m.rows[id] = t
-	pub := m.publisher
 	m.mu.Unlock()
-	m.emit(ctx, pub, t)
+	m.emit(ctx, t)
 	return t, nil
 }
 
@@ -442,8 +430,7 @@ func (m *MemoryStore) Publish(ctx context.Context, id string, now time.Time, mem
 	}
 	t.Status = StatusPublished
 	m.rows[id] = t
-	pub := m.publisher
-	go m.emit(context.Background(), pub, t)
+	go m.emit(context.Background(), t)
 	return t, nil
 }
 

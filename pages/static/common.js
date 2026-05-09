@@ -280,8 +280,14 @@ function storyPanel() {
             for (let i = 0; i < t.tags.length; i++) {
                 chips.push({ key: 'tags', value: t.tags[i], isDefault: false });
             }
+            // sty_672f9719 — order is now a first-class default chip.
+            // Empty t.order surfaces a dimmed `order:updated` chip
+            // alongside the other defaults; the user-set value renders
+            // bright + removable per is-user styling.
             if (t.order) {
                 chips.push({ key: 'order', value: t.order, isDefault: false });
+            } else {
+                chips.push({ key: 'order', value: 'updated', isDefault: true });
             }
             if (t.text) {
                 chips.push({ key: 'search', value: t.text, isDefault: false });

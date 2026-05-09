@@ -22,7 +22,6 @@ import (
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
 	"github.com/bobmcallan/satellites/internal/auth"
-	"github.com/bobmcallan/satellites/internal/busparity"
 	"github.com/bobmcallan/satellites/internal/changelog"
 	"github.com/bobmcallan/satellites/internal/codeindex"
 	"github.com/bobmcallan/satellites/internal/config"
@@ -481,79 +480,27 @@ func main() {
 			}
 		}
 
-		// sty_c7c3850f: surreallive Subscriber wired as a SECOND emit
-		// path alongside the in-process hub, behind
-		// SATELLITES_SURREAL_LIVE_ENABLED=true. Default off — the two
-		// BLOCKED behavioural questions from order:01
-		// (RBAC scoping under the privileged-credential connection;
-		// multi-node cluster delivery) need empirical resolution
-		// against pprod's Surreal before any consumer reads from this
-		// path. order:03's parity verifier is the next gate.
-		if surrealConn != nil && os.Getenv("SATELLITES_SURREAL_LIVE_ENABLED") == "true" {
+		// sty_010a0543: surreallive Subscriber boots unconditionally
+		// when a Surreal connection is available. The wshandler reads
+		// from this path post-cutover; no consumer-side flag.
+		if surrealConn != nil {
 			liveSub := surreallive.New(surreallive.NewSDKAdapter(surrealConn), surreallive.Config{}, logger)
 			liveCtx, liveCancel := context.WithCancel(ctx)
-			_ = liveCancel // tied to the parent ctx; explicit cancel reserved for future Stop
-
-			// sty_2ba48616: optional dual-emit parity verifier. Gated on
-			// SATELLITES_BUS_PARITY_VERIFIER=true (in addition to the
-			// LIVE flag above; both are required). When enabled, the
-			// verifier subscribes to both buses, correlates events on
-			// (table, row_id), writes kind:bus-parity-mismatch on
-			// disagreement, and writes kind:bus-parity-stats on a
-			// 60s tick. The 7-day pprod observation that gates
-			// order:04 is calendar work the operator owns.
-			var verifier *busparity.Verifier
-			if os.Getenv("SATELLITES_BUS_PARITY_VERIFIER") == "true" && ledgerStore != nil {
-				verifier = busparity.New(ledgerStore, busparity.Config{
-					ProjectID: defaultProjectID,
-				}, logger)
-				go verifier.Run(liveCtx)
-				// Hub side of the verifier: each store's emit fans into
-				// the hub Publisher via attachPublisher above. We layer
-				// a second listener path through the existing task /
-				// story / ledger listener slices to also feed the
-				// verifier without duplicating the publisher contract.
-				if a, ok := taskStore.(interface{ AddListener(task.Listener) }); ok {
-					a.AddListener(task.ListenerFunc(func(ctx context.Context, t task.Task) {
-						verifier.Observe(busparity.Observation{
-							Source:      busparity.SourceHub,
-							Table:       "tasks",
-							RowID:       t.ID,
-							WorkspaceID: t.WorkspaceID,
-							ProjectID:   t.ProjectID,
-						})
-					}))
-				}
-				logger.Info().Msg("busparity: verifier wired (60s window + 60s stats)")
-			}
-
+			_ = liveCancel // tied to the parent ctx
 			for _, table := range []string{"tasks", "stories", "ledger"} {
 				go func(table string) {
 					if err := liveSub.Subscribe(liveCtx, table, nil, func(ev surreallive.Event) {
-						if verifier != nil {
-							rowID, _ := ev.Row["id"].(string)
-							if rowID == "" {
-								// Fall back to per-table id keys when
-								// the row's `id` is shaped differently.
-								rowID, _ = ev.Row[table+"_id"].(string)
-							}
-							verifier.Observe(busparity.Observation{
-								Source:      busparity.SourceLive,
-								Table:       table,
-								RowID:       rowID,
-								WorkspaceID: ev.WorkspaceID,
-								ProjectID:   ev.ProjectID,
-							})
-						}
+						// wshandler attaches its own per-subscriber
+						// hooks; this default callback is the
+						// no-consumer fallback while the wshandler
+						// migration is in flight.
 					}); err != nil && err != context.Canceled {
 						logger.Warn().Str("table", table).Str("error", err.Error()).
 							Msg("surreallive: subscribe ended")
 					}
 				}(table)
 			}
-			logger.Info().Msg("surreallive: subscriber wired (alongside hub)")
-		} else if surrealConn != nil {
-			logger.Info().Msg("surreallive: disabled (set SATELLITES_SURREAL_LIVE_ENABLED=true to enable)")
+			logger.Info().Msg("surreallive: subscribers wired")
 		}
 
 		// sty_0233fabd: wire the open-tasks gate. UpdateStatus rejects

@@ -280,14 +280,13 @@ function storyPanel() {
             for (let i = 0; i < t.tags.length; i++) {
                 chips.push({ key: 'tags', value: t.tags[i], isDefault: false });
             }
-            // sty_672f9719 — order is now a first-class default chip.
-            // Empty t.order surfaces a dimmed `order:updated` chip
-            // alongside the other defaults; the user-set value renders
-            // bright + removable per is-user styling.
+            // sty_9ee73e66 — V3 parity: order is NOT seeded as a
+            // default chip. V3's getEffectiveChips only seeds status /
+            // priority / category defaults; order surfaces only when the
+            // user types `order:<field>` and parseStoryQuery accepts it.
+            // Empty t.order leaves the strip clean.
             if (t.order) {
                 chips.push({ key: 'order', value: t.order, isDefault: false });
-            } else {
-                chips.push({ key: 'order', value: 'updated', isDefault: true });
             }
             if (t.text) {
                 chips.push({ key: 'search', value: t.text, isDefault: false });

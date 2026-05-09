@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/surrealdb/surrealdb.go"
 	"github.com/ternarybob/arbor"
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
@@ -40,6 +41,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/session"
 	"github.com/bobmcallan/satellites/internal/story"
 	"github.com/bobmcallan/satellites/internal/storystatus"
+	"github.com/bobmcallan/satellites/internal/surreallive"
 	"github.com/bobmcallan/satellites/internal/task"
 	"github.com/bobmcallan/satellites/internal/workspace"
 	"github.com/bobmcallan/satellites/internal/wshandler"
@@ -119,6 +121,11 @@ func main() {
 		defaultProjectID string
 		dbPing           httpserver.HealthCheck
 
+		// surrealConn is hoisted out of the DBDSN-gated block so the
+		// surreallive Subscriber wiring (sty_c7c3850f) at the
+		// store-emit-attach point can reach it. Nil when DBDSN is empty.
+		surrealConn *surrealdb.DB
+
 		oauthServer *auth.OAuthServer
 	)
 	if cfg.DBDSN != "" {
@@ -132,6 +139,7 @@ func main() {
 			logger.Error().Str("error", err.Error()).Msg("db connect failed")
 			os.Exit(1)
 		}
+		surrealConn = conn
 		// MCP OAuth 2.1 Authorization Server — needs Surreal for client/
 		// session/code/refresh-token persistence. Wired here inside the
 		// db-available block so the !DBDSN path skips it entirely (the
@@ -470,6 +478,38 @@ func main() {
 			if a, ok := taskStore.(interface{ AddListener(task.Listener) }); ok {
 				a.AddListener(storystatus.New(storyStore, logger))
 			}
+		}
+
+		// sty_c7c3850f: surreallive Subscriber wired as a SECOND emit
+		// path alongside the in-process hub, behind
+		// SATELLITES_SURREAL_LIVE_ENABLED=true. Default off — the two
+		// BLOCKED behavioural questions from order:01
+		// (RBAC scoping under the privileged-credential connection;
+		// multi-node cluster delivery) need empirical resolution
+		// against pprod's Surreal before any consumer reads from this
+		// path. order:03's parity verifier is the next gate.
+		if surrealConn != nil && os.Getenv("SATELLITES_SURREAL_LIVE_ENABLED") == "true" {
+			liveSub := surreallive.New(surreallive.NewSDKAdapter(surrealConn), surreallive.Config{}, logger)
+			liveCtx, liveCancel := context.WithCancel(ctx)
+			_ = liveCancel // tied to the parent ctx; explicit cancel reserved for future Stop
+			for _, table := range []string{"tasks", "stories", "ledger"} {
+				go func(table string) {
+					if err := liveSub.Subscribe(liveCtx, table, nil, func(ev surreallive.Event) {
+						// No consumer reads from this path yet —
+						// order:03 (parity verifier) is the first
+						// reader. The boot wiring exists so the
+						// dial loop and reconnect path are
+						// exercised in production well before any
+						// consumer depends on the events.
+					}); err != nil && err != context.Canceled {
+						logger.Warn().Str("table", table).Str("error", err.Error()).
+							Msg("surreallive: subscribe ended")
+					}
+				}(table)
+			}
+			logger.Info().Msg("surreallive: subscriber wired (alongside hub, no consumer yet)")
+		} else if surrealConn != nil {
+			logger.Info().Msg("surreallive: disabled (set SATELLITES_SURREAL_LIVE_ENABLED=true to enable)")
 		}
 
 		// sty_0233fabd: wire the open-tasks gate. UpdateStatus rejects

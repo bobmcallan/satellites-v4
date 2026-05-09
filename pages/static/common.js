@@ -503,6 +503,7 @@ function storyPanel() {
                 table.setAttribute('data-testid', 'panel-stories-table');
                 table.innerHTML =
                     '<thead><tr>' +
+                    '<th class="col-select"><span class="visually-hidden">select</span></th>' +
                     '<th class="col-id">id</th>' +
                     '<th class="col-title">title</th>' +
                     '<th class="col-status">status</th>' +
@@ -540,6 +541,12 @@ function storyPanel() {
                 '<button type="button" class="tag-chip is-clickable" data-tag="' + this._escape(t) + '" @click.stop="addTagToQuery" title="Click to filter by this tag">' + this._escape(t) + '</button>'
             ).join('');
             row.innerHTML =
+                '<td class="col-select" @click.stop>' +
+                '<input type="checkbox"' +
+                ' data-testid="story-row-select-' + this._escape(storyID) + '"' +
+                ' :checked="isSelected(\'' + this._escape(storyID) + '\')"' +
+                ' @change="toggleRowSelection(\'' + this._escape(storyID) + '\', $event)" />' +
+                '</td>' +
                 '<td class="col-id"><code>' + this._escape(storyID) + '</code></td>' +
                 '<td class="col-title">' +
                 '<div class="story-row-title">' + this._escape(title) + '</div>' +
@@ -555,7 +562,7 @@ function storyPanel() {
             detail.setAttribute('data-testid', 'story-detail-' + storyID);
             detail.setAttribute('x-show', 'isExpanded($el)');
             detail.innerHTML =
-                '<td colspan="5">' +
+                '<td colspan="6">' +
                 '<div class="story-detail-flat">' +
                 '<section class="story-detail-block"><h4>description</h4><p class="muted">—</p></section>' +
                 '<section class="story-detail-block"><h4>acceptance criteria</h4><p class="muted">—</p></section>' +

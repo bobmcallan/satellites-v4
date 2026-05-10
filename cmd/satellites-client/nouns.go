@@ -57,8 +57,8 @@ func registerStoryNoun(root *cobra.Command) {
 		newStoryGetCmd(), // order:04
 		verbStub("list", "story list", "List stories."),
 		verbStub("update", "story update", "Update a story."),
-		verbStub("update-status", "story update-status", "Transition the story's status."),
-		verbStub("field-set", "story field-set", "Set a single template-defined field."),
+		newStoryUpdateStatusCmd(), // order:05
+		newStoryFieldSetCmd(),     // order:05
 		verbStub("template-get", "story template-get", "Return the parsed template for a category."),
 		verbStub("template-list", "story template-list", "List story templates."),
 		verbStub("export-walk", "story export-walk", "Render the contract walk as paste-ready markdown."),
@@ -69,13 +69,13 @@ func registerStoryNoun(root *cobra.Command) {
 func registerTaskNoun(root *cobra.Command) {
 	noun := nounStub("task", "Tasks — the dispatch unit.")
 	noun.AddCommand(
-		verbStub("add", "task add", "Mint a new task at status=published."),
-		newTaskGetCmd(), // order:04
+		newTaskAddCmd(),  // order:05
+		newTaskGetCmd(),  // order:04
 		verbStub("list", "task list", "List tasks."),
-		verbStub("claim", "task claim", "Atomic claim of the highest-priority queued task."),
-		verbStub("update", "task update", "Mutate a task's lifecycle state."),
-		newTaskWalkCmd(), // order:04
-		verbStub("plan", "task plan", "Mint a task at status=planned."),
+		newTaskClaimCmd(),  // order:05
+		newTaskUpdateCmd(), // order:05
+		newTaskWalkCmd(),   // order:04
+		newTaskPlanCmd(),   // order:05
 	)
 	root.AddCommand(noun)
 }
@@ -83,7 +83,7 @@ func registerTaskNoun(root *cobra.Command) {
 func registerLedgerNoun(root *cobra.Command) {
 	noun := nounStub("ledger", "Ledger — append-only audit log.")
 	noun.AddCommand(
-		verbStub("append", "ledger append", "Append an event row."),
+		newLedgerAppendCmd(), // order:05
 		newLedgerGetCmd(),    // order:04
 		newLedgerListCmd(),   // order:04
 		newLedgerSearchCmd(), // order:04
@@ -101,7 +101,7 @@ func registerProjectNoun(root *cobra.Command) {
 		verbStub("list", "project list", "List the caller's projects."),
 		verbStub("update", "project update", "Update a project's name / mcp_url."),
 		verbStub("delete", "project delete", "Archive a project."),
-		verbStub("set", "project set", "Bind the session to the project that owns the git remote."),
+		newProjectSetCmd(), // order:05
 		verbStub("seed-run", "project seed-run", "Re-run the project-tier configseed loader."),
 	)
 	root.AddCommand(noun)

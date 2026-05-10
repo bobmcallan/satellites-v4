@@ -81,12 +81,12 @@ func TestStubReturnsServerExitCode(t *testing.T) {
 	// contract get, principle list, ledger get/list/search) reach
 	// the remote and must be tested via integration paths instead.
 	verbs := [][]string{
-		{"task", "claim"},
-		{"ledger", "append"},
 		{"kv", "get"},
 		{"agent", "compose"},
 		{"project", "create"},
 		{"document", "create"},
+		{"contract", "create"},
+		{"reviewer", "create"},
 	}
 	for _, args := range verbs {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {

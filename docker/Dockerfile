@@ -15,7 +15,7 @@ ARG BUILD
 ARG GIT_COMMIT
 
 RUN apk add --no-cache git && \
-    VERSION="${VERSION:-$(awk '/^\[satellites\]/{f=1;next} /^\[/{f=0} f && /^version/{gsub(/version\s*=\s*/,""); gsub(/ /,""); print; exit}' .version 2>/dev/null || echo dev)}" && \
+    VERSION="${VERSION:-$(awk '/^\[satellites-server\]/{f=1;next} /^\[/{f=0} f && /^version/{gsub(/version\s*=\s*/,""); gsub(/ /,""); print; exit}' .version 2>/dev/null || echo dev)}" && \
     BUILD="${BUILD:-$(date -u +"%Y-%m-%d-%H-%M-%S")}" && \
     GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}" && \
     go build -ldflags="-s -w \

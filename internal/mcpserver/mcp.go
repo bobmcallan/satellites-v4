@@ -230,6 +230,24 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	)
 	s.mcp.AddTool(infoTool, s.handleInfo)
 
+	// Per cli-primary order:07c (sty_0881d04b): the two surviving
+	// advisory verbs alongside satellites_info. order:07d will
+	// delete every other tool; these three remain.
+	helpTool := mcpgo.NewTool("satellites_help",
+		mcpgo.WithDescription("Return the bin/satellites-client CLI catalogue (noun groups + verbs + flags + persistent-flag list + exit-code map) as structured JSON. IDE agents call this once at session boot to discover the surface without paying the per-MCP-tool token cost."),
+	)
+	s.mcp.AddTool(helpTool, s.handleSatellitesHelp)
+
+	execTool := mcpgo.NewTool("satellites_exec",
+		mcpgo.WithDescription("Proxy a bin/satellites-client invocation. Spawns the CLI server-side with the supplied argv + optional stdin; returns stdout, stderr, exit_code. Caller's bearer is forwarded via SATELLITES_TOKEN env. Output is bounded by SATELLITES_EXEC_PAYLOAD_CAP (default 1 MiB); wall clock by SATELLITES_EXEC_TIMEOUT (default 30s)."),
+		mcpgo.WithArray("argv", mcpgo.Required(),
+			mcpgo.Description("CLI argument vector, e.g. [\"task\", \"get\", \"task_xxx\"]."),
+			mcpgo.Items(map[string]any{"type": "string"})),
+		mcpgo.WithString("stdin",
+			mcpgo.Description("Optional stdin body forwarded to the subprocess.")),
+	)
+	s.mcp.AddTool(execTool, s.handleSatellitesExec)
+
 	if s.docs != nil {
 		ingestTool := mcpgo.NewTool("document_ingest_file",
 			mcpgo.WithDescription("Ingest a file from the server's docs volume (SATELLITES_DOCS_DIR) into the document store. Path is repo-relative; server reads the file and upserts by (project_id, name). If project_id is omitted, defaults to the caller's first owned project or the system default."),

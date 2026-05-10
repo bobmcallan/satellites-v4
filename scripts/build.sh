@@ -55,7 +55,7 @@ stamp_ldflags() {
 }
 
 cmd_server() {
-  go build -ldflags "$(stamp_ldflags satellites)" -o satellites-server ./cmd/satellites-server
+  go build -ldflags "$(stamp_ldflags satellites-server)" -o satellites-server ./cmd/satellites-server
 }
 
 cmd_agent() {
@@ -63,7 +63,7 @@ cmd_agent() {
 }
 
 cmd_client() {
-  go build -ldflags "$(stamp_ldflags satellites)" -o satellites-client ./cmd/satellites-client
+  go build -ldflags "$(stamp_ldflags satellites-client)" -o satellites-client ./cmd/satellites-client
 }
 
 cmd_build() {
@@ -98,7 +98,7 @@ cmd_clean() {
 
 cmd_docker() {
   local version build commit
-  version="$(read_kv satellites version)"
+  version="$(read_kv satellites-server version)"
   [ -z "$version" ] && version="dev"
   build="$(build_timestamp)"
   commit="$(git_commit)"

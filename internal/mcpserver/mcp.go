@@ -20,6 +20,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/agentprocess"
 	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/changelog"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/codeindex"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/document"
@@ -58,6 +59,11 @@ type Server struct {
 	replicateRunner  func(ctx context.Context, opts portalreplicate.RunOptions, actions []portalreplicate.Action) ([]portalreplicate.Result, portalreplicate.Summary, error)
 	nowFunc          func() time.Time
 	audit            *auditLogger
+	// client is the typed business surface extracted under cli-primary
+	// order:02 (sty_66c02002). Handlers shrink to thin adapters that
+	// delegate here. Populated unconditionally at New(); each typed
+	// method tolerates nil store deps and returns a structured error.
+	client *client.Client
 }
 
 // HandshakeFallbackInstructions is the literal MCP server-instructions
@@ -67,6 +73,28 @@ type Server struct {
 // out-of-band MCP clients that grep for it during integration testing
 // continue to match.
 const HandshakeFallbackInstructions = "Satellites v4 — walking skeleton."
+
+// cli returns the typed business surface used by handlers extracted
+// under cli-primary order:02. Lazy-init lets unit tests that build
+// `Server` literals (without calling New) still reach typed methods —
+// a nil `s.client` materialises with the same store deps the literal
+// already carries. story_66c02002.
+func (s *Server) cli() *client.Client {
+	if s.client == nil {
+		s.client = client.New(client.Deps{
+			Documents:  s.docs,
+			Projects:   s.projects,
+			Ledger:     s.ledger,
+			Stories:    s.stories,
+			Workspaces: s.workspaces,
+			Sessions:   s.sessions,
+			Tasks:      s.tasks,
+			Repos:      s.repos,
+			Changelog:  s.changelog,
+		})
+	}
+	return s.client
+}
 
 // resolveHandshakeInstructions returns the MCP server-instructions
 // string emitted at handshake. Sourced from the agent-process
@@ -152,6 +180,21 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	if s.indexer == nil {
 		s.indexer = codeindex.NewStub()
 	}
+	// sty_66c02002: typed business surface. Handlers extracted under
+	// cli-primary order:02 delegate here. Stores may be nil; the typed
+	// methods short-circuit with structured errors on nil deps so the
+	// wire shape stays identical pre/post-extraction.
+	s.client = client.New(client.Deps{
+		Documents:  s.docs,
+		Projects:   s.projects,
+		Ledger:     s.ledger,
+		Stories:    s.stories,
+		Workspaces: s.workspaces,
+		Sessions:   s.sessions,
+		Tasks:      s.tasks,
+		Repos:      s.repos,
+		Changelog:  s.changelog,
+	})
 
 	// sty_1493c077: per-call audit logger. Wraps every tool handler via
 	// mcp-go's middleware seam; writes one ledger row per call tagged
@@ -1871,8 +1914,10 @@ func (s *Server) handleLedgerGet(ctx context.Context, req mcpgo.CallToolRequest)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	memberships := s.resolveCallerMemberships(ctx, caller)
-	e, err := s.ledger.GetByID(ctx, id, memberships)
+	e, err := s.cli().LedgerGet(ctx, client.Caller{
+		UserID:      caller.UserID,
+		Memberships: s.resolveCallerMemberships(ctx, caller),
+	}, client.LedgerGetInput{ID: id})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -1898,17 +1943,8 @@ func (s *Server) handleLedgerSearch(ctx context.Context, req mcpgo.CallToolReque
 		Query:       req.GetString("query", ""),
 		TopK:        int(req.GetFloat("top_k", 0)),
 	}
-	// Route non-empty-query branch to SearchSemantic with graceful
-	// fallback on ErrSemanticUnavailable.
-	var rows []ledger.LedgerEntry
-	if opts.Query != "" {
-		rows, err = s.ledger.SearchSemantic(ctx, resolvedID, opts.Query, opts, memberships)
-		if errors.Is(err, ledger.ErrSemanticUnavailable) {
-			rows, err = s.ledger.Search(ctx, resolvedID, opts, memberships)
-		}
-	} else {
-		rows, err = s.ledger.Search(ctx, resolvedID, opts, memberships)
-	}
+	rows, err := s.cli().LedgerSearch(ctx, client.Caller{UserID: caller.UserID, Memberships: memberships},
+		client.LedgerSearchInput{ResolvedProjectID: resolvedID, Memberships: memberships, Options: opts})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -1925,7 +1961,8 @@ func (s *Server) handleLedgerRecall(ctx context.Context, req mcpgo.CallToolReque
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	rows, err := s.ledger.Recall(ctx, rootID, memberships)
+	rows, err := s.cli().LedgerRecall(ctx, client.Caller{UserID: caller.UserID, Memberships: memberships},
+		client.LedgerRecallInput{RootID: rootID, Memberships: memberships})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -1946,7 +1983,8 @@ func (s *Server) handleLedgerDereference(ctx context.Context, req mcpgo.CallTool
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	audit, err := s.ledger.Dereference(ctx, id, reason, caller.UserID, time.Now().UTC(), memberships)
+	audit, err := s.cli().LedgerDereference(ctx, client.Caller{UserID: caller.UserID, Memberships: memberships},
+		client.LedgerDereferenceInput{ID: id, Reason: reason, Memberships: memberships, Now: s.nowUTC()})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}

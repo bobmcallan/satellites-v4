@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -28,7 +29,7 @@ func (s *Server) createTask(ctx context.Context, req mcpgo.CallToolRequest, stat
 	if s.tasks == nil {
 		return mcpgo.NewToolResultError(verbName + " unavailable: task store not configured"), nil
 	}
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	args := req.GetArguments()
 	origin := getString(args, "origin")
@@ -135,7 +136,7 @@ func (s *Server) handleTaskGet(ctx context.Context, req mcpgo.CallToolRequest) (
 	if s.tasks == nil {
 		return mcpgo.NewToolResultError("task_get unavailable"), nil
 	}
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	id, err := req.RequireString("id")
 	if err != nil {
@@ -153,7 +154,7 @@ func (s *Server) handleTaskList(ctx context.Context, req mcpgo.CallToolRequest) 
 	if s.tasks == nil {
 		return mcpgo.NewToolResultError("task_list unavailable"), nil
 	}
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	args := req.GetArguments()
 	opts := task.ListOptions{
@@ -183,7 +184,7 @@ func (s *Server) handleTaskClaim(ctx context.Context, req mcpgo.CallToolRequest)
 	if s.tasks == nil {
 		return mcpgo.NewToolResultError("task_claim unavailable"), nil
 	}
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	args := req.GetArguments()
 	workerID := getString(args, "worker_id")

@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"strings"
 	"time"
 
@@ -30,7 +31,7 @@ import (
 // handleTaskAdd implements `task_add`.
 func (s *Server) handleTaskAdd(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 
 	if s.tasks == nil || s.docs == nil || s.stories == nil || s.ledger == nil {
 		return mcpgo.NewToolResultError("task_add unavailable: required stores not configured"), nil
@@ -275,7 +276,7 @@ func fallback(s, def string) string {
 // callerActiveProjectID returns the project id stamped on the caller's
 // session row (set by project_set / session_register), or "" when the
 // caller has no resolvable session.
-func (s *Server) callerActiveProjectID(ctx context.Context, caller CallerIdentity) string {
+func (s *Server) callerActiveProjectID(ctx context.Context, caller auth.CallerIdentity) string {
 	if s.sessions == nil {
 		return ""
 	}

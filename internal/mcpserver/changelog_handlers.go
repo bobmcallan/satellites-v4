@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -37,7 +38,7 @@ func parseChangelogEffectiveDate(req mcpgo.CallToolRequest) (time.Time, error) {
 
 func (s *Server) handleChangelogAdd(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	projectID, err := s.resolveProjectID(ctx, req.GetString("project_id", ""), caller, memberships)
 	if err != nil {
@@ -81,7 +82,7 @@ func (s *Server) handleChangelogAdd(ctx context.Context, req mcpgo.CallToolReque
 
 func (s *Server) handleChangelogGet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	id, err := req.RequireString("id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -101,7 +102,7 @@ func (s *Server) handleChangelogGet(ctx context.Context, req mcpgo.CallToolReque
 
 func (s *Server) handleChangelogList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	projectID, err := s.resolveProjectID(ctx, req.GetString("project_id", ""), caller, memberships)
 	if err != nil {
@@ -122,7 +123,7 @@ func (s *Server) handleChangelogList(ctx context.Context, req mcpgo.CallToolRequ
 
 func (s *Server) handleChangelogUpdate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	id, err := req.RequireString("id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -167,7 +168,7 @@ func (s *Server) handleChangelogUpdate(ctx context.Context, req mcpgo.CallToolRe
 
 func (s *Server) handleChangelogDelete(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	id, err := req.RequireString("id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil

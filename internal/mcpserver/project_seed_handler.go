@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -32,7 +33,7 @@ type ProjectSeedRunResult struct {
 }
 
 func (s *Server) handleProjectSeedRun(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	if !caller.GlobalAdmin {
 		body, _ := json.Marshal(map[string]any{"error": "forbidden"})
 		return mcpgo.NewToolResultError(string(body)), nil

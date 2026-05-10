@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"strings"
 	"time"
 
@@ -225,7 +226,7 @@ func (a *auditLogger) resolveStoryID(ctx context.Context, args map[string]any, w
 // auditCallerUserID returns the resolved user id from ctx, or "" when
 // the auth middleware didn't attach one (test paths, anonymous calls).
 func auditCallerUserID(ctx context.Context) string {
-	caller, ok := UserFrom(ctx)
+	caller, ok := auth.UserFrom(ctx)
 	if !ok {
 		return ""
 	}

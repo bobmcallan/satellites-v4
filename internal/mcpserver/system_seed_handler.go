@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -29,7 +30,7 @@ type SystemSeedRunResult struct {
 // outcome on the ledger. Gated to global_admin: non-admins receive a
 // structured "forbidden" error.
 func (s *Server) handleSystemSeedRun(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	if !caller.GlobalAdmin {
 		body, _ := json.Marshal(map[string]any{"error": "forbidden"})
 		return mcpgo.NewToolResultError(string(body)), nil

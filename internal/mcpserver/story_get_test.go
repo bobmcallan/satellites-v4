@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ func TestStoryGet_HappyPath(t *testing.T) {
 	t.Parallel()
 	s := newStoryUpdateTestServer(t)
 	storyID, projectID, wsID := seedStoryAlice(t, s)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice"})
 	now := time.Now().UTC()
 
 	// Seed an agent_process system-default artifact so AgentProcess
@@ -93,7 +94,7 @@ func TestStoryGet_HappyPath(t *testing.T) {
 func TestStoryGet_StoryNotFound(t *testing.T) {
 	t.Parallel()
 	s := newStoryUpdateTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice"})
 	res, err := s.handleStoryGet(ctx, newCallToolReq("story_get", map[string]any{
 		"id": "sty_missing0",
 	}))
@@ -115,7 +116,7 @@ func TestStoryGet_CrossOwnerRejected(t *testing.T) {
 	t.Parallel()
 	s := newStoryUpdateTestServer(t)
 	storyID, _, _ := seedStoryAlice(t, s)
-	bobCtx := withCaller(context.Background(), CallerIdentity{UserID: "u_bob"})
+	bobCtx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_bob"})
 	res, err := s.handleStoryGet(bobCtx, newCallToolReq("story_get", map[string]any{
 		"id": storyID,
 	}))
@@ -135,7 +136,7 @@ func TestStoryGet_CrossOwnerRejected(t *testing.T) {
 func TestStoryGet_RequiresID(t *testing.T) {
 	t.Parallel()
 	s := newStoryUpdateTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice"})
 	res, err := s.handleStoryGet(ctx, newCallToolReq("story_get", map[string]any{}))
 	if err != nil {
 		t.Fatalf("handler error: %v", err)

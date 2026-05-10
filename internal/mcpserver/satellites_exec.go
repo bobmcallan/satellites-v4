@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"io"
 	"os"
 	"os/exec"
@@ -129,7 +130,7 @@ func (s *Server) handleSatellitesExec(ctx context.Context, req mcpgo.CallToolReq
 	// authoritative for the satellites_exec call already. The
 	// subprocess receives it via SATELLITES_TOKEN env so the CLI's
 	// internal/clicred chain picks it up.
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	_ = caller
 
 	execCtx, cancel := context.WithTimeout(ctx, timeout)

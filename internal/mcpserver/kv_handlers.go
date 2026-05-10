@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"sort"
 	"time"
 
@@ -39,7 +40,7 @@ func validKVScope(s string) (ledger.KVScope, bool) {
 //
 // Returns nil on permit and a structured "forbidden: scope=X requires
 // role=Y" error on reject. Errors are user-safe.
-func (s *Server) kvCheckWriteAuth(ctx context.Context, scope ledger.KVScope, opts ledger.KVProjectionOptions, caller CallerIdentity) error {
+func (s *Server) kvCheckWriteAuth(ctx context.Context, scope ledger.KVScope, opts ledger.KVProjectionOptions, caller auth.CallerIdentity) error {
 	switch scope {
 	case ledger.KVScopeSystem:
 		if !caller.GlobalAdmin {
@@ -97,7 +98,7 @@ func (s *Server) kvCheckWriteAuth(ctx context.Context, scope ledger.KVScope, opt
 //
 // Returns the populated options + a memberships slice that includes the
 // system sentinel ("") for system-scope reads. Errors are user-safe.
-func (s *Server) resolveKVScopeArgs(ctx context.Context, scope ledger.KVScope, req mcpgo.CallToolRequest, caller CallerIdentity) (ledger.KVProjectionOptions, []string, error) {
+func (s *Server) resolveKVScopeArgs(ctx context.Context, scope ledger.KVScope, req mcpgo.CallToolRequest, caller auth.CallerIdentity) (ledger.KVProjectionOptions, []string, error) {
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	opts := ledger.KVProjectionOptions{Scope: scope}
 	switch scope {
@@ -174,7 +175,7 @@ func kvScopeTag(scope ledger.KVScope) string {
 // tombstone row for (scope, ids, key) and returns {key, value, scope}.
 func (s *Server) handleKVGet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	scopeStr, err := req.RequireString("scope")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -224,7 +225,7 @@ func (s *Server) handleKVGet(ctx context.Context, req mcpgo.CallToolRequest) (*m
 // scope-shape requirements (system scope requires GlobalAdmin).
 func (s *Server) handleKVSet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	scopeStr, err := req.RequireString("scope")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -274,7 +275,7 @@ func (s *Server) handleKVSet(ctx context.Context, req mcpgo.CallToolRequest) (*m
 // suppresses keys whose latest row carries the tombstone tag.
 func (s *Server) handleKVDelete(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	scopeStr, err := req.RequireString("scope")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -323,7 +324,7 @@ func (s *Server) handleKVDelete(ctx context.Context, req mcpgo.CallToolRequest) 
 // filter handles tenancy). The caller's user_id defaults to caller.UserID.
 func (s *Server) handleKVGetResolved(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	key, err := req.RequireString("key")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -372,7 +373,7 @@ func (s *Server) handleKVGetResolved(ctx context.Context, req mcpgo.CallToolRequ
 // projection for a (scope, ids) tuple as a sorted array.
 func (s *Server) handleKVList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	scopeStr, err := req.RequireString("scope")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil

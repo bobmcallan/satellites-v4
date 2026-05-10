@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +30,7 @@ type repoFixture struct {
 	projects   project.Store
 	wsID       string
 	projectID  string
-	caller     CallerIdentity
+	caller     auth.CallerIdentity
 	ctx        context.Context
 }
 
@@ -72,7 +73,7 @@ func newRepoFixture(t *testing.T) *repoFixture {
 		projects:   projStore,
 		wsID:       ws.ID,
 		projectID:  proj.ID,
-		caller:     CallerIdentity{UserID: "user_alice", Source: "session"},
+		caller:     auth.CallerIdentity{UserID: "user_alice", Source: "session"},
 		ctx:        ctx,
 	}
 }
@@ -159,7 +160,7 @@ func TestRepoGet_NotFoundCrossWorkspace(t *testing.T) {
 	if _, err := f.workspaces.Create(f.ctx, "user_bob", "beta", time.Now().UTC()); err != nil {
 		t.Fatalf("ws bob: %v", err)
 	}
-	bobCtx := withCaller(f.ctx, CallerIdentity{UserID: "user_bob", Source: "session"})
+	bobCtx := withCaller(f.ctx, auth.CallerIdentity{UserID: "user_bob", Source: "session"})
 	cross, _ := f.server.handleRepoGet(bobCtx, newCallToolReq("repo_get", map[string]any{"repo_id": repoID}))
 	if !cross.IsError {
 		t.Errorf("cross-workspace get should isError; got %s", firstText(cross))
@@ -312,7 +313,7 @@ func TestRepoSearch_NotFoundCrossWorkspace(t *testing.T) {
 	if _, err := f.workspaces.Create(f.ctx, "user_bob", "beta", time.Now().UTC()); err != nil {
 		t.Fatalf("ws bob: %v", err)
 	}
-	bobCtx := withCaller(f.ctx, CallerIdentity{UserID: "user_bob", Source: "session"})
+	bobCtx := withCaller(f.ctx, auth.CallerIdentity{UserID: "user_bob", Source: "session"})
 	res, _ := f.server.handleRepoSearch(bobCtx, newCallToolReq("repo_search", map[string]any{
 		"repo_id": repoID,
 		"query":   "x",

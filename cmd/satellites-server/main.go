@@ -624,7 +624,7 @@ func main() {
 			}
 		}
 	}()
-	mcpAuth := mcpserver.AuthMiddleware(mcpserver.AuthDeps{
+	mcpAuth := auth.AuthMiddleware(auth.AuthDeps{
 		Sessions:       sessions,
 		Users:          users,
 		APIKeys:        cfg.APIKeys,

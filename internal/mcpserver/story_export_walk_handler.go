@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"strings"
 	"time"
 
@@ -26,7 +27,7 @@ func (s *Server) handleStoryExportWalk(ctx context.Context, req mcpgo.CallToolRe
 	if format != "markdown" {
 		return mcpgo.NewToolResultError(fmt.Sprintf("story_export_walk: unsupported format %q", format)), nil
 	}
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 
 	st, err := s.stories.GetByID(ctx, storyID, memberships)

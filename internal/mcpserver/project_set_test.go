@@ -7,6 +7,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"strings"
 	"testing"
 	"time"
@@ -62,7 +63,7 @@ func decodeProjectSet(t *testing.T, raw string) map[string]any {
 func TestProjectSet_HappyPath_StampsActiveProject(t *testing.T) {
 	t.Parallel()
 	s := newProjectSetTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 	now := time.Now().UTC()
 
 	ws, err := s.workspaces.Create(ctx, "u_alice", "alpha", now)
@@ -115,7 +116,7 @@ func TestProjectSet_HappyPath_StampsActiveProject(t *testing.T) {
 func TestProjectSet_NoProjectForRemote(t *testing.T) {
 	t.Parallel()
 	s := newProjectSetTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 	now := time.Now().UTC()
 	ws, _ := s.workspaces.Create(ctx, "u_alice", "alpha", now)
 	_ = s.workspaces.AddMember(ctx, ws.ID, "u_alice", "admin", "u_alice", now)
@@ -157,7 +158,7 @@ func TestProjectSet_NormalisationParity(t *testing.T) {
 	}
 	for _, in := range cases {
 		s := newProjectSetTestServer(t)
-		ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+		ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 		now := time.Now().UTC()
 		ws, _ := s.workspaces.Create(ctx, "u_alice", "alpha", now)
 		_ = s.workspaces.AddMember(ctx, ws.ID, "u_alice", "admin", "u_alice", now)
@@ -188,7 +189,7 @@ func TestProjectSet_CrossWorkspaceIsolation(t *testing.T) {
 	seedProjectWithRemote(t, s, ctx, "u_alice", wsA.ID, "shared", "https://github.com/owner/shared", now)
 
 	// Bob (in workspace B) can't see Alice's project.
-	bobCtx := withCaller(ctx, CallerIdentity{UserID: "u_bob", Source: "session"})
+	bobCtx := withCaller(ctx, auth.CallerIdentity{UserID: "u_bob", Source: "session"})
 	res, _ := s.handleProjectSet(bobCtx, newCallToolReq("project_set", map[string]any{
 		"repo_url": "git@github.com:owner/shared.git",
 	}))
@@ -198,7 +199,7 @@ func TestProjectSet_CrossWorkspaceIsolation(t *testing.T) {
 	}
 
 	// Alice resolves it.
-	aliceCtx := withCaller(ctx, CallerIdentity{UserID: "u_alice", Source: "session"})
+	aliceCtx := withCaller(ctx, auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 	res, _ = s.handleProjectSet(aliceCtx, newCallToolReq("project_set", map[string]any{
 		"repo_url": "git@github.com:owner/shared.git",
 	}))
@@ -211,7 +212,7 @@ func TestProjectSet_CrossWorkspaceIsolation(t *testing.T) {
 func TestProjectSet_MalformedInput(t *testing.T) {
 	t.Parallel()
 	s := newProjectSetTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 
 	// Missing param.
 	res, _ := s.handleProjectSet(ctx, newCallToolReq("project_set", map[string]any{}))

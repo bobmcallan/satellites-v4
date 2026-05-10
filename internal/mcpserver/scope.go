@@ -2,10 +2,15 @@ package mcpserver
 
 import "context"
 
+// ctxKey is the package-local context-key type. The auth-pipeline ctx
+// key (CallerIdentity) lives in internal/auth (sty_f2d342e2 relocation);
+// scopes here cover transport-state values that never crossed into auth.
+type ctxKey int
+
 // scopedProjectKey is the context key under which Server.ServeHTTP stores
 // the URL-scoped project_id (when the MCP request was made against a URL
-// like `/mcp?project_id=proj_xxx`). Distinct from userKey — the scope is
-// per-request transport state, not caller identity.
+// like `/mcp?project_id=proj_xxx`). Per-request transport state, not
+// caller identity (which lives on auth's ctx key).
 const scopedProjectKey ctxKey = 1
 
 // requestBaseURLKey is the context key under which Server.ServeHTTP

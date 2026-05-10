@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"sort"
 	"time"
 
@@ -77,7 +78,7 @@ func (s *Server) handleTaskWalk(ctx context.Context, req mcpgo.CallToolRequest) 
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	resp, err := s.buildTaskWalk(ctx, storyID, memberships)
 	if err != nil {

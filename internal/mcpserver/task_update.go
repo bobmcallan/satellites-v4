@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"strings"
 	"time"
 
@@ -26,7 +27,7 @@ import (
 // handleTaskUpdate implements `task_update`.
 func (s *Server) handleTaskUpdate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 
 	if s.tasks == nil {
 		return mcpgo.NewToolResultError("task_update unavailable: task store not configured"), nil
@@ -58,7 +59,7 @@ func (s *Server) handleTaskUpdate(ctx context.Context, req mcpgo.CallToolRequest
 // taskUpdateClose closes a task and optionally tags evidence rows.
 // Closure mutates exactly the target row; no other task is published
 // or rewritten as a side effect.
-func (s *Server) taskUpdateClose(ctx context.Context, req mcpgo.CallToolRequest, current task.Task, caller CallerIdentity, memberships []string, start time.Time) (*mcpgo.CallToolResult, error) {
+func (s *Server) taskUpdateClose(ctx context.Context, req mcpgo.CallToolRequest, current task.Task, caller auth.CallerIdentity, memberships []string, start time.Time) (*mcpgo.CallToolResult, error) {
 	outcome := req.GetString("outcome", task.OutcomeSuccess)
 	if outcome != task.OutcomeSuccess && outcome != task.OutcomeFailure {
 		return mcpgo.NewToolResultError(fmt.Sprintf("invalid_outcome: %q (expected %q or %q)", outcome, task.OutcomeSuccess, task.OutcomeFailure)), nil

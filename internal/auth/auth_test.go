@@ -233,7 +233,7 @@ func TestRequireSession_AcceptsValidSession(t *testing.T) {
 	sess, _ := sessions.Create(u.ID, DefaultSessionTTL)
 
 	mw := RequireSession(sessions, users, CookieOptions{})
-	var seen User
+	var seen CallerIdentity
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen, _ = UserFrom(r.Context())
 	}))
@@ -243,8 +243,8 @@ func TestRequireSession_AcceptsValidSession(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	if seen.ID != u.ID {
-		t.Errorf("user on ctx = %+v, want id=%q", seen, u.ID)
+	if seen.UserID != u.ID || seen.Source != "session" {
+		t.Errorf("caller on ctx = %+v, want UserID=%q Source=session", seen, u.ID)
 	}
 }
 

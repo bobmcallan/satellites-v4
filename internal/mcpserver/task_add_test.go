@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"strings"
 	"testing"
 
@@ -233,7 +234,7 @@ func TestTaskAdd_SeedAgentResolvesForOtherWorkspaceCaller(t *testing.T) {
 	}, f.now)
 	require.NoError(t, err)
 
-	otherCtx := withCaller(context.Background(), CallerIdentity{UserID: "user_other", Source: "session"})
+	otherCtx := withCaller(context.Background(), auth.CallerIdentity{UserID: "user_other", Source: "session"})
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
 		"agent_id": devID,
@@ -323,7 +324,7 @@ func TestTaskAdd_WorkspaceTier_CrossWorkspaceRejected(t *testing.T) {
 	}, f.now)
 	require.NoError(t, err)
 
-	otherCtx := withCaller(context.Background(), CallerIdentity{UserID: "user_other", Source: "session"})
+	otherCtx := withCaller(context.Background(), auth.CallerIdentity{UserID: "user_other", Source: "session"})
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
 		"agent_id": wsAgent.ID,

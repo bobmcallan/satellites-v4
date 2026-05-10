@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"os"
 	"strconv"
 	"time"
@@ -52,7 +53,7 @@ func resolveSessionStaleness() time.Duration {
 // handleSessionWhoami returns the caller's registered session row, or
 // a structured not-registered error.
 func (s *Server) handleSessionWhoami(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	sessionID := resolveSessionID(ctx, req.GetString("session_id", ""))
 	out, err := s.cli().SessionWhoami(ctx, client.Caller{UserID: caller.UserID},
 		client.SessionWhoamiInput{SessionID: sessionID})
@@ -93,7 +94,7 @@ func (s *Server) handleSessionWhoami(ctx context.Context, req mcpgo.CallToolRequ
 // exposing it as a verb keeps tests honest and gives callers a way to
 // re-register after an unexpected restart.
 func (s *Server) handleSessionRegister(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	out, err := s.cli().SessionRegister(ctx, client.Caller{UserID: caller.UserID}, client.SessionRegisterInput{
 		SessionID:   resolveSessionID(ctx, req.GetString("session_id", "")),
 		Source:      req.GetString("source", session.SourceSessionStart),
@@ -122,4 +123,3 @@ func (s *Server) handleSessionRegister(ctx context.Context, req mcpgo.CallToolRe
 	body, _ := json.Marshal(payload)
 	return mcpgo.NewToolResultText(string(body)), nil
 }
-

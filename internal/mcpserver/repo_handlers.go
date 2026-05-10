@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -23,7 +24,7 @@ func (s *Server) handleRepoAdd(ctx context.Context, req mcpgo.CallToolRequest) (
 	if s.repos == nil {
 		return mcpgo.NewToolResultError("repo_add unavailable: repo store not configured"), nil
 	}
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	rawRemote, err := req.RequireString("git_remote")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -85,7 +86,7 @@ func (s *Server) handleRepoGet(ctx context.Context, req mcpgo.CallToolRequest) (
 	if s.repos == nil {
 		return mcpgo.NewToolResultError("repo_get unavailable"), nil
 	}
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	repoID, err := req.RequireString("repo_id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -104,7 +105,7 @@ func (s *Server) handleRepoList(ctx context.Context, req mcpgo.CallToolRequest) 
 	if s.repos == nil {
 		return mcpgo.NewToolResultError("repo_list unavailable"), nil
 	}
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	projectID, err := s.resolveProjectID(ctx, req.GetString("project_id", ""), caller, memberships)
 	if err != nil {
@@ -147,7 +148,7 @@ func (s *Server) handleRepoSearch(ctx context.Context, req mcpgo.CallToolRequest
 	kind := getString(args, "kind")
 	language := getString(args, "language")
 
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	now := time.Now().UTC()
 	s.appendRepoAuditRow(ctx, r, "kind:repo-query", caller.UserID, map[string]any{
 		"action":   "search",
@@ -176,7 +177,7 @@ func (s *Server) handleRepoSearchText(ctx context.Context, req mcpgo.CallToolReq
 	}
 	filePattern := req.GetString("file_pattern", "")
 
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	now := time.Now().UTC()
 	s.appendRepoAuditRow(ctx, r, "kind:repo-query", caller.UserID, map[string]any{
 		"action":       "search_text",
@@ -202,7 +203,7 @@ func (s *Server) handleRepoGetSymbolSource(ctx context.Context, req mcpgo.CallTo
 		return mcpgo.NewToolResultError(serr.Error()), nil
 	}
 
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	now := time.Now().UTC()
 	s.appendRepoAuditRow(ctx, r, "kind:repo-query", caller.UserID, map[string]any{
 		"action":    "get_symbol_source",
@@ -227,7 +228,7 @@ func (s *Server) handleRepoGetFile(ctx context.Context, req mcpgo.CallToolReques
 		return mcpgo.NewToolResultError(perr.Error()), nil
 	}
 
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	now := time.Now().UTC()
 	s.appendRepoAuditRow(ctx, r, "kind:repo-query", caller.UserID, map[string]any{
 		"action": "get_file",
@@ -252,7 +253,7 @@ func (s *Server) handleRepoGetOutline(ctx context.Context, req mcpgo.CallToolReq
 		return mcpgo.NewToolResultError(perr.Error()), nil
 	}
 
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	now := time.Now().UTC()
 	s.appendRepoAuditRow(ctx, r, "kind:repo-query", caller.UserID, map[string]any{
 		"action": "get_outline",
@@ -272,7 +273,7 @@ func (s *Server) resolveRepoForProxy(ctx context.Context, req mcpgo.CallToolRequ
 	if s.repos == nil {
 		return repo.Repo{}, errors.New("repo verbs unavailable: repo store not configured")
 	}
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	repoID, err := req.RequireString("repo_id")
 	if err != nil {
 		return repo.Repo{}, err

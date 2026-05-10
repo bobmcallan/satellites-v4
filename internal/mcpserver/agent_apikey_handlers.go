@@ -60,7 +60,7 @@ func toAPIKeyMetadata(k auth.APIKey) apiKeyMetadata {
 // retrievable after this call.
 func (s *Server) handleAgentAPIKeyCreate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	if s.apiKeys == nil {
 		return mcpgo.NewToolResultError("agent_apikey: store not configured"), nil
 	}
@@ -192,7 +192,7 @@ func (s *Server) handleAgentAPIKeyCreate(ctx context.Context, req mcpgo.CallTool
 // The raw key, key_hash, and key_salt are absent from every row.
 func (s *Server) handleAgentAPIKeyList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	if s.apiKeys == nil {
 		return mcpgo.NewToolResultError("agent_apikey: store not configured"), nil
 	}
@@ -233,7 +233,7 @@ func (s *Server) handleAgentAPIKeyList(ctx context.Context, req mcpgo.CallToolRe
 // forbidden unless the caller is a global admin.
 func (s *Server) handleAgentAPIKeyDelete(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	if s.apiKeys == nil {
 		return mcpgo.NewToolResultError("agent_apikey: store not configured"), nil
 	}

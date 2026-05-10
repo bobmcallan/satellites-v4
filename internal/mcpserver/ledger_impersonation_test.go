@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"testing"
 	"time"
 
@@ -28,7 +29,7 @@ type impersonationFixture struct {
 	foreignWS      string
 	homeProject    string
 	foreignProject string
-	caller         CallerIdentity
+	caller         auth.CallerIdentity
 }
 
 func newImpersonationFixture(t *testing.T, callerGlobalAdmin bool) *impersonationFixture {
@@ -70,7 +71,7 @@ func newImpersonationFixture(t *testing.T, callerGlobalAdmin bool) *impersonatio
 		SessionStore:   sessionStore,
 	})
 
-	caller := CallerIdentity{
+	caller := auth.CallerIdentity{
 		Email:       "alice@example.com",
 		UserID:      "u_alice",
 		Source:      "session",
@@ -90,7 +91,7 @@ func newImpersonationFixture(t *testing.T, callerGlobalAdmin bool) *impersonatio
 }
 
 func (f *impersonationFixture) callerCtx() context.Context {
-	return context.WithValue(f.ctx, userKey, f.caller)
+	return auth.WithCaller(f.ctx, f.caller)
 }
 
 // readEntry parses the handleLedgerAppend response into a LedgerEntry.

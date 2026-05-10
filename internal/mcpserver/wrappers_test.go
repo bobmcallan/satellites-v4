@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func mustDoc(t *testing.T, typ, scope, name, binding string) document.Document {
 func TestWrapper_RejectsCallerType(t *testing.T) {
 	t.Parallel()
 	s := newDocumentTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_a", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_a", Source: "session"})
 
 	cases := []struct {
 		kind string
@@ -60,7 +61,7 @@ func TestWrapper_RejectsCallerType(t *testing.T) {
 func TestWrapper_PerTypePayloadValidation(t *testing.T) {
 	t.Parallel()
 	s := newDocumentTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_a", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_a", Source: "session"})
 
 	t.Run("contract_create requires structured", func(t *testing.T) {
 		res, _ := s.wrapperCreate("contract")(ctx, newCallToolReq("contract_create", map[string]any{
@@ -115,7 +116,7 @@ func TestWrapper_PerTypePayloadValidation(t *testing.T) {
 func TestWrapper_ListPinsType(t *testing.T) {
 	t.Parallel()
 	s := newDocumentTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_a", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_a", Source: "session"})
 
 	res, _ := s.wrapperList("principle")(ctx, newCallToolReq("principle_list", map[string]any{
 		"type": "contract", // try to escape

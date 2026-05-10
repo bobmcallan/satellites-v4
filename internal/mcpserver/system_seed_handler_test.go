@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,7 +69,7 @@ func newSystemSeedFixture(t *testing.T) (*Server, string) {
 // receive a structured forbidden error.
 func TestSystemSeedRun_ForbiddenForNonAdmin(t *testing.T) {
 	server, _ := newSystemSeedFixture(t)
-	ctx := context.WithValue(context.Background(), userKey, CallerIdentity{
+	ctx := auth.WithCaller(context.Background(), auth.CallerIdentity{
 		UserID: "u_alice", Email: "alice@x.io", Source: "session", GlobalAdmin: false,
 	})
 	res, err := server.handleSystemSeedRun(ctx, newCallToolReq("system_seed_run", map[string]any{}))
@@ -89,7 +90,7 @@ func TestSystemSeedRun_ForbiddenForNonAdmin(t *testing.T) {
 // kind:system-seed-run ledger row is written.
 func TestSystemSeedRun_AdminSucceedsAndWritesLedger(t *testing.T) {
 	server, _ := newSystemSeedFixture(t)
-	ctx := context.WithValue(context.Background(), userKey, CallerIdentity{
+	ctx := auth.WithCaller(context.Background(), auth.CallerIdentity{
 		UserID: "u_bob", Email: "bob@x.io", Source: "session", GlobalAdmin: true,
 	})
 	res, err := server.handleSystemSeedRun(ctx, newCallToolReq("system_seed_run", map[string]any{}))

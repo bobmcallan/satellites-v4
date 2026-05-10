@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"testing"
 	"time"
 
@@ -27,7 +28,7 @@ func resumeTestServer(t *testing.T) *Server {
 
 func registerWithProject(t *testing.T, s *Server, userID, sessionID, projectID string) map[string]any {
 	t.Helper()
-	ctx := context.WithValue(context.Background(), userKey, CallerIdentity{UserID: userID, Email: userID + "@example.com", Source: "apikey"})
+	ctx := auth.WithCaller(context.Background(), auth.CallerIdentity{UserID: userID, Email: userID + "@example.com", Source: "apikey"})
 	args := map[string]any{}
 	if sessionID != "" {
 		args["session_id"] = sessionID

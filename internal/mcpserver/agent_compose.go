@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"os"
 	"strconv"
 	"strings"
@@ -74,7 +75,7 @@ func isRecognisedPattern(p string) bool {
 // completion.
 func (s *Server) handleAgentCompose(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	name, err := req.RequireString("name")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -248,7 +249,7 @@ func (s *Server) handleAgentCompose(ctx context.Context, req mcpgo.CallToolReque
 // to canonical?"). projectID may be empty for an all-projects summary.
 func (s *Server) handleAgentEphemeralSummary(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	projectID := req.GetString("project_id", "")
 	memberships := s.resolveCallerMemberships(ctx, caller)
 
@@ -323,7 +324,7 @@ func (s *Server) archiveEphemeralAgentsForStory(ctx context.Context, storyID str
 	if err != nil {
 		return 0, fmt.Errorf("list agents: %w", err)
 	}
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	now := time.Now().UTC()
 	archived := 0
 	for _, d := range rows {

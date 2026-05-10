@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"testing"
 	"time"
 
@@ -26,7 +27,7 @@ func taskTestServer(t *testing.T) *Server {
 
 func callTaskHandler(t *testing.T, handler func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error), userID string, args map[string]any) *mcpgo.CallToolResult {
 	t.Helper()
-	ctx := context.WithValue(context.Background(), userKey, CallerIdentity{UserID: userID, Source: "apikey"})
+	ctx := auth.WithCaller(context.Background(), auth.CallerIdentity{UserID: userID, Source: "apikey"})
 	req := mcpgo.CallToolRequest{}
 	req.Params.Arguments = args
 	res, err := handler(ctx, req)

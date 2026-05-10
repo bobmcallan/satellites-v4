@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,7 +73,7 @@ func newProjectSeedFixture(t *testing.T) (*Server, string, string) {
 
 func TestProjectSeedRun_ForbiddenForNonAdmin(t *testing.T) {
 	server, _, pid := newProjectSeedFixture(t)
-	ctx := context.WithValue(context.Background(), userKey, CallerIdentity{
+	ctx := auth.WithCaller(context.Background(), auth.CallerIdentity{
 		UserID: "u_alice", Email: "alice@x.io", Source: "session", GlobalAdmin: false,
 	})
 	res, err := server.handleProjectSeedRun(ctx, newCallToolReq("project_seed_run", map[string]any{
@@ -91,7 +92,7 @@ func TestProjectSeedRun_ForbiddenForNonAdmin(t *testing.T) {
 
 func TestProjectSeedRun_RejectsEmptyProjectID(t *testing.T) {
 	server, _, _ := newProjectSeedFixture(t)
-	ctx := context.WithValue(context.Background(), userKey, CallerIdentity{
+	ctx := auth.WithCaller(context.Background(), auth.CallerIdentity{
 		UserID: "u_bob", Email: "bob@x.io", Source: "session", GlobalAdmin: true,
 	})
 	res, err := server.handleProjectSeedRun(ctx, newCallToolReq("project_seed_run", map[string]any{}))
@@ -108,7 +109,7 @@ func TestProjectSeedRun_RejectsEmptyProjectID(t *testing.T) {
 
 func TestProjectSeedRun_AdminSucceedsAndWritesLedger(t *testing.T) {
 	server, _, pid := newProjectSeedFixture(t)
-	ctx := context.WithValue(context.Background(), userKey, CallerIdentity{
+	ctx := auth.WithCaller(context.Background(), auth.CallerIdentity{
 		UserID: "u_bob", Email: "bob@x.io", Source: "session", GlobalAdmin: true,
 	})
 	res, err := server.handleProjectSeedRun(ctx, newCallToolReq("project_seed_run", map[string]any{
@@ -163,7 +164,7 @@ func TestProjectSeedRun_AdminSucceedsAndWritesLedger(t *testing.T) {
 
 func TestProjectSeedRun_UnknownProject(t *testing.T) {
 	server, _, _ := newProjectSeedFixture(t)
-	ctx := context.WithValue(context.Background(), userKey, CallerIdentity{
+	ctx := auth.WithCaller(context.Background(), auth.CallerIdentity{
 		UserID: "u_bob", Email: "bob@x.io", Source: "session", GlobalAdmin: true,
 	})
 	res, err := server.handleProjectSeedRun(ctx, newCallToolReq("project_seed_run", map[string]any{

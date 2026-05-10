@@ -730,7 +730,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 
 	// story_33e1a323: re-seed the system-tier configuration markdown
 	// without restarting the server. Gated to global_admin via
-	// CallerIdentity.GlobalAdmin (story_3548cde2).
+	// auth.CallerIdentity.GlobalAdmin (story_3548cde2).
 	systemSeedTool := mcpgo.NewTool("system_seed_run",
 		mcpgo.WithDescription("Re-run the system-tier configseed loader (config/seed + config/help). Global admin only. Returns a summary {loaded, created, updated, skipped, errors, ledger_id}. Each invocation writes a kind:system-seed-run ledger row."),
 	)
@@ -996,7 +996,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// URL resolver can derive a value without requiring SATELLITES_PUBLIC_URL.
 	// V3 parity — the caller is already connected, so the host they
 	// reached is the right one to echo back as mcp_url.
-	r = r.WithContext(withRequestBaseURL(r.Context(), schemeAndHost(r)))
+	r = r.WithContext(withRequestBaseURL(r.Context(), auth.SchemeAndHost(r)))
 	s.streamable.ServeHTTP(w, r)
 }
 
@@ -1004,7 +1004,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleInfo(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	var userEmail string
-	if u, ok := UserFrom(ctx); ok {
+	if u, ok := auth.UserFrom(ctx); ok {
 		userEmail = u.Email
 	}
 	payload := map[string]any{
@@ -1046,7 +1046,7 @@ func (s *Server) nowUTC() time.Time {
 // it must be the system default; cross-project access returns an error.
 // (3) otherwise, fall back to the caller's first owned project.
 // (4) otherwise, fall back to the system default.
-func (s *Server) resolveProjectID(ctx context.Context, requested string, caller CallerIdentity, memberships []string) (string, error) {
+func (s *Server) resolveProjectID(ctx context.Context, requested string, caller auth.CallerIdentity, memberships []string) (string, error) {
 	effective, ok := enforceScopedProject(ctx, requested)
 	if !ok {
 		return "", errors.New("project_id parameter does not match the URL-scoped project_id")
@@ -1103,7 +1103,7 @@ func (s *Server) projectsSafe() project.Store {
 // like API keys that didn't flow through the auth bootstrap path). Returns
 // nil when the workspace store is disabled (pre-tenant mode). Empty slice
 // only when the caller is unauthenticated.
-func (s *Server) ensureCallerWorkspaces(ctx context.Context, caller CallerIdentity) []string {
+func (s *Server) ensureCallerWorkspaces(ctx context.Context, caller auth.CallerIdentity) []string {
 	if s.workspaces == nil {
 		return nil
 	}
@@ -1129,7 +1129,7 @@ func (s *Server) ensureCallerWorkspaces(ctx context.Context, caller CallerIdenti
 // resolveCallerWorkspaceID returns the caller's default workspace id, or
 // empty when the caller is unauthenticated or the workspace store is off.
 // Write paths use this to stamp workspace_id on new rows.
-func (s *Server) resolveCallerWorkspaceID(ctx context.Context, caller CallerIdentity) string {
+func (s *Server) resolveCallerWorkspaceID(ctx context.Context, caller auth.CallerIdentity) string {
 	ids := s.ensureCallerWorkspaces(ctx, caller)
 	if len(ids) == 0 {
 		return ""
@@ -1141,7 +1141,7 @@ func (s *Server) resolveCallerWorkspaceID(ctx context.Context, caller CallerIden
 // store reads expect: nil when the workspace store is disabled (pre-tenant
 // behaviour), empty slice when the caller has no membership yet (deny-all),
 // non-empty workspace ids otherwise. See docs/architecture.md §8.
-func (s *Server) resolveCallerMemberships(ctx context.Context, caller CallerIdentity) []string {
+func (s *Server) resolveCallerMemberships(ctx context.Context, caller auth.CallerIdentity) []string {
 	return s.ensureCallerWorkspaces(ctx, caller)
 }
 
@@ -1179,7 +1179,7 @@ func (s *Server) resolveProjectWorkspaceID(ctx context.Context, projectID string
 
 func (s *Server) handleDocumentIngestFile(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	path, err := req.RequireString("path")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -1219,7 +1219,7 @@ func (s *Server) handleDocumentIngestFile(ctx context.Context, req mcpgo.CallToo
 
 func (s *Server) handleDocumentGet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	id := req.GetString("id", "")
 	if id != "" {
@@ -1283,7 +1283,7 @@ var immutableUpdateFields = []string{"workspace_id", "project_id", "type", "scop
 
 func (s *Server) handleDocumentCreate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	if caller.UserID == "" {
 		return mcpgo.NewToolResultError("no caller identity"), nil
 	}
@@ -1363,7 +1363,7 @@ func (s *Server) handleDocumentCreate(ctx context.Context, req mcpgo.CallToolReq
 
 func (s *Server) handleDocumentUpdate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	id, err := req.RequireString("id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -1425,7 +1425,7 @@ func (s *Server) handleDocumentUpdate(ctx context.Context, req mcpgo.CallToolReq
 
 func (s *Server) handleDocumentList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	// Hierarchical list lookup: project → workspace → system. Mirrors
 	// handleDocumentGet's project-resolution shape (sty_e2bfeffa) so the
@@ -1474,7 +1474,7 @@ func (s *Server) handleDocumentList(ctx context.Context, req mcpgo.CallToolReque
 
 func (s *Server) handleDocumentSearch(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	opts := document.SearchOptions{
 		ListOptions: document.ListOptions{
@@ -1519,7 +1519,7 @@ func (s *Server) handleDocumentSearch(ctx context.Context, req mcpgo.CallToolReq
 
 func (s *Server) handleDocumentDelete(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	id, err := req.RequireString("id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -1595,7 +1595,7 @@ func (s *Server) buildProjectView(ctx context.Context, p project.Project) projec
 
 func (s *Server) handleProjectCreate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	if caller.UserID == "" {
 		return mcpgo.NewToolResultError("no caller identity"), nil
 	}
@@ -1626,7 +1626,7 @@ func (s *Server) handleProjectCreate(ctx context.Context, req mcpgo.CallToolRequ
 // session-keyed `project_context` no-arg refresh.
 func (s *Server) handleProjectGet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	id, err := req.RequireString("id")
 	if err != nil {
@@ -1665,7 +1665,7 @@ func (s *Server) handleProjectGet(ctx context.Context, req mcpgo.CallToolRequest
 //	{"status":"no_project_for_remote","repo_url_canonical":"…"}
 func (s *Server) handleProjectSet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	if caller.UserID == "" {
 		return mcpgo.NewToolResultError("no caller identity"), nil
 	}
@@ -1762,7 +1762,7 @@ func (s *Server) resolveProjectByRemote(ctx context.Context, workspaceID, canoni
 
 func (s *Server) handleProjectUpdate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	id, err := req.RequireString("id")
 	if err != nil {
@@ -1807,7 +1807,7 @@ func (s *Server) handleProjectUpdate(ctx context.Context, req mcpgo.CallToolRequ
 
 func (s *Server) handleProjectDelete(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	id, err := req.RequireString("id")
 	if err != nil {
@@ -1836,7 +1836,7 @@ func (s *Server) handleProjectDelete(ctx context.Context, req mcpgo.CallToolRequ
 
 func (s *Server) handleProjectList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	if caller.UserID == "" {
 		return mcpgo.NewToolResultError("no caller identity"), nil
 	}
@@ -1858,7 +1858,7 @@ func (s *Server) handleProjectList(ctx context.Context, req mcpgo.CallToolReques
 
 func (s *Server) handleLedgerAppend(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	projectID, err := req.RequireString("project_id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -1927,7 +1927,7 @@ func (s *Server) handleLedgerAppend(ctx context.Context, req mcpgo.CallToolReque
 
 func (s *Server) handleLedgerGet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	id, err := req.RequireString("id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -1946,7 +1946,7 @@ func (s *Server) handleLedgerGet(ctx context.Context, req mcpgo.CallToolRequest)
 
 func (s *Server) handleLedgerSearch(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	projectID, err := req.RequireString("project_id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -1973,7 +1973,7 @@ func (s *Server) handleLedgerSearch(ctx context.Context, req mcpgo.CallToolReque
 
 func (s *Server) handleLedgerRecall(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	rootID, err := req.RequireString("root_id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -1991,7 +1991,7 @@ func (s *Server) handleLedgerRecall(ctx context.Context, req mcpgo.CallToolReque
 
 func (s *Server) handleLedgerDereference(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	id, err := req.RequireString("id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -2036,7 +2036,7 @@ func buildLedgerListOptions(req mcpgo.CallToolRequest) ledger.ListOptions {
 
 func (s *Server) handleStoryCreate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	projectID, err := req.RequireString("project_id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -2086,7 +2086,7 @@ func (s *Server) handleStoryCreate(ctx context.Context, req mcpgo.CallToolReques
 // list. Status transitions remain on story_update_status.
 func (s *Server) handleStoryUpdate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	id, err := req.RequireString("id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -2200,7 +2200,7 @@ func (s *Server) loadStoryTemplate(ctx context.Context, category string) (story.
 
 func (s *Server) handleStoryList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	projectID, err := req.RequireString("project_id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -2233,7 +2233,7 @@ func (s *Server) handleStoryList(ctx context.Context, req mcpgo.CallToolRequest)
 
 func (s *Server) handleStoryUpdateStatus(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	id, err := req.RequireString("id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -2287,7 +2287,7 @@ func (s *Server) handleStoryUpdateStatus(ctx context.Context, req mcpgo.CallTool
 // list of what the template does declare. Sty_d2a03cea.
 func (s *Server) handleStoryFieldSet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	id, err := req.RequireString("id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -2395,7 +2395,7 @@ func (s *Server) handleStoryTemplateList(ctx context.Context, req mcpgo.CallTool
 
 func (s *Server) handleWorkspaceCreate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	if caller.UserID == "" {
 		return mcpgo.NewToolResultError("no caller identity"), nil
 	}
@@ -2420,7 +2420,7 @@ func (s *Server) handleWorkspaceCreate(ctx context.Context, req mcpgo.CallToolRe
 
 func (s *Server) handleWorkspaceGet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	if caller.UserID == "" {
 		return mcpgo.NewToolResultError("no caller identity"), nil
 	}
@@ -2448,7 +2448,7 @@ func (s *Server) handleWorkspaceGet(ctx context.Context, req mcpgo.CallToolReque
 
 func (s *Server) handleWorkspaceList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	if caller.UserID == "" {
 		return mcpgo.NewToolResultError("no caller identity"), nil
 	}
@@ -2469,7 +2469,7 @@ func (s *Server) handleWorkspaceList(ctx context.Context, req mcpgo.CallToolRequ
 
 // requireWorkspaceAdmin asserts the caller is an admin of the given
 // workspace. Returns a user-friendly error on mismatch.
-func (s *Server) requireWorkspaceAdmin(ctx context.Context, caller CallerIdentity, workspaceID string) error {
+func (s *Server) requireWorkspaceAdmin(ctx context.Context, caller auth.CallerIdentity, workspaceID string) error {
 	if caller.UserID == "" {
 		return errors.New("no caller identity")
 	}
@@ -2538,7 +2538,7 @@ func classifyLedgerEvent(eventType string) (string, []string) {
 
 func (s *Server) handleWorkspaceMemberAdd(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	workspaceID, err := req.RequireString("workspace_id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -2579,7 +2579,7 @@ func (s *Server) handleWorkspaceMemberAdd(ctx context.Context, req mcpgo.CallToo
 
 func (s *Server) handleWorkspaceMemberList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	workspaceID, err := req.RequireString("workspace_id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -2608,7 +2608,7 @@ func (s *Server) handleWorkspaceMemberList(ctx context.Context, req mcpgo.CallTo
 
 func (s *Server) handleWorkspaceMemberUpdateRole(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	workspaceID, err := req.RequireString("workspace_id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -2663,7 +2663,7 @@ func (s *Server) handleWorkspaceMemberUpdateRole(ctx context.Context, req mcpgo.
 
 func (s *Server) handleWorkspaceMemberRemove(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	workspaceID, err := req.RequireString("workspace_id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -2712,7 +2712,7 @@ func (s *Server) handleWorkspaceMemberRemove(ctx context.Context, req mcpgo.Call
 
 func (s *Server) handleLedgerList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	projectID, err := req.RequireString("project_id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil

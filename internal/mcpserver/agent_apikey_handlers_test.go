@@ -65,7 +65,7 @@ func mintViaHandler(t *testing.T, s *Server, ctx context.Context, args map[strin
 func TestAgentAPIKeyCreate_HappyPath(t *testing.T) {
 	t.Parallel()
 	s := newAPIKeyTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Email: "alice@local", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Email: "alice@local", Source: "session"})
 
 	resp := mintViaHandler(t, s, ctx, map[string]any{"name": "alice-laptop"})
 
@@ -114,7 +114,7 @@ func TestAgentAPIKeyCreate_HappyPath(t *testing.T) {
 func TestAgentAPIKeyCreate_HashAtRest(t *testing.T) {
 	t.Parallel()
 	s := newAPIKeyTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 	resp := mintViaHandler(t, s, ctx, map[string]any{"name": "hash-at-rest"})
 	id := resp["id"].(string)
 	cleartext := resp["key"].(string)
@@ -142,7 +142,7 @@ func TestAgentAPIKeyCreate_HashAtRest(t *testing.T) {
 func TestAgentAPIKeyList_RedactsHashAndSalt(t *testing.T) {
 	t.Parallel()
 	s := newAPIKeyTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 	mintViaHandler(t, s, ctx, map[string]any{"name": "k1"})
 
 	res, _ := s.handleAgentAPIKeyList(ctx, newCallToolReq("agent_apikey_list", map[string]any{}))
@@ -166,8 +166,8 @@ func TestAgentAPIKeyList_RedactsHashAndSalt(t *testing.T) {
 func TestAgentAPIKeyList_FiltersByOwnerAndProject(t *testing.T) {
 	t.Parallel()
 	s := newAPIKeyTestServer(t)
-	aliceCtx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
-	bobCtx := withCaller(context.Background(), CallerIdentity{UserID: "u_bob", Source: "session"})
+	aliceCtx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
+	bobCtx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_bob", Source: "session"})
 
 	mintViaHandler(t, s, aliceCtx, map[string]any{"name": "alice-1"})
 	mintViaHandler(t, s, aliceCtx, map[string]any{"name": "alice-2"})
@@ -198,7 +198,7 @@ func TestAgentAPIKeyList_FiltersByOwnerAndProject(t *testing.T) {
 func TestAgentAPIKeyDelete_HappyPath(t *testing.T) {
 	t.Parallel()
 	s := newAPIKeyTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 	mint := mintViaHandler(t, s, ctx, map[string]any{"name": "delete-me"})
 	id := mint["id"].(string)
 
@@ -237,8 +237,8 @@ func TestAgentAPIKeyDelete_HappyPath(t *testing.T) {
 func TestAgentAPIKeyDelete_CrossOwnerForbidden(t *testing.T) {
 	t.Parallel()
 	s := newAPIKeyTestServer(t)
-	aliceCtx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
-	bobCtx := withCaller(context.Background(), CallerIdentity{UserID: "u_bob", Source: "session"})
+	aliceCtx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
+	bobCtx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_bob", Source: "session"})
 	mint := mintViaHandler(t, s, aliceCtx, map[string]any{"name": "alice-secret"})
 	id := mint["id"].(string)
 
@@ -257,8 +257,8 @@ func TestAgentAPIKeyDelete_CrossOwnerForbidden(t *testing.T) {
 func TestAgentAPIKeyDelete_GlobalAdminCanDeleteAny(t *testing.T) {
 	t.Parallel()
 	s := newAPIKeyTestServer(t)
-	aliceCtx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
-	adminCtx := withCaller(context.Background(), CallerIdentity{UserID: "u_admin", Source: "session", GlobalAdmin: true})
+	aliceCtx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
+	adminCtx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_admin", Source: "session", GlobalAdmin: true})
 	mint := mintViaHandler(t, s, aliceCtx, map[string]any{"name": "alice-key"})
 	id := mint["id"].(string)
 
@@ -277,7 +277,7 @@ func TestAgentAPIKeyDelete_GlobalAdminCanDeleteAny(t *testing.T) {
 func TestAgentAPIKeyCreate_RejectsInvalidExpiresAt(t *testing.T) {
 	t.Parallel()
 	s := newAPIKeyTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 	res, _ := s.handleAgentAPIKeyCreate(ctx, newCallToolReq("agent_apikey_create", map[string]any{
 		"name":       "bad-expiry",
 		"expires_at": "yesterday",
@@ -296,7 +296,7 @@ func TestAgentAPIKeyCreate_RejectsInvalidExpiresAt(t *testing.T) {
 func TestAgentAPIKeyCreate_RejectsEmptyName(t *testing.T) {
 	t.Parallel()
 	s := newAPIKeyTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 	res, _ := s.handleAgentAPIKeyCreate(ctx, newCallToolReq("agent_apikey_create", map[string]any{}))
 	if !res.IsError {
 		t.Fatalf("expected required-arg error: %+v", res.Content)
@@ -308,9 +308,9 @@ func TestAgentAPIKeyCreate_RejectsEmptyName(t *testing.T) {
 func TestAgentAPIKeyList_GlobalAdminSeesAllOwners(t *testing.T) {
 	t.Parallel()
 	s := newAPIKeyTestServer(t)
-	aliceCtx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
-	bobCtx := withCaller(context.Background(), CallerIdentity{UserID: "u_bob", Source: "session"})
-	adminCtx := withCaller(context.Background(), CallerIdentity{UserID: "u_admin", Source: "session", GlobalAdmin: true})
+	aliceCtx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
+	bobCtx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_bob", Source: "session"})
+	adminCtx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_admin", Source: "session", GlobalAdmin: true})
 	mintViaHandler(t, s, aliceCtx, map[string]any{"name": "a"})
 	mintViaHandler(t, s, bobCtx, map[string]any{"name": "b"})
 

@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"strings"
 	"testing"
 	"time"
@@ -30,8 +31,8 @@ func newDocumentTestServer(t *testing.T) *Server {
 
 // withCaller wraps ctx with the supplied identity so handler calls see
 // the caller as if AuthMiddleware had run.
-func withCaller(ctx context.Context, id CallerIdentity) context.Context {
-	return context.WithValue(ctx, userKey, id)
+func withCaller(ctx context.Context, id auth.CallerIdentity) context.Context {
+	return auth.WithCaller(ctx, id)
 }
 
 func newCallToolReq(name string, args map[string]any) mcpgo.CallToolRequest {
@@ -47,7 +48,7 @@ func newCallToolReq(name string, args map[string]any) mcpgo.CallToolRequest {
 func TestHandleDocumentUpdate_RejectsImmutable(t *testing.T) {
 	t.Parallel()
 	s := newDocumentTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_a", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_a", Source: "session"})
 
 	// Seed a row to update.
 	doc, err := s.docs.Create(ctx, document.Document{
@@ -116,8 +117,8 @@ func TestHandleDocumentList_WorkspaceIsolation(t *testing.T) {
 		t.Fatalf("bob role: %v", err)
 	}
 
-	aliceCtx := withCaller(ctx, CallerIdentity{UserID: "user_alice", Source: "session"})
-	bobCtx := withCaller(ctx, CallerIdentity{UserID: "user_bob", Source: "session"})
+	aliceCtx := withCaller(ctx, auth.CallerIdentity{UserID: "user_alice", Source: "session"})
+	bobCtx := withCaller(ctx, auth.CallerIdentity{UserID: "user_bob", Source: "session"})
 
 	resA, _ := s.handleDocumentList(aliceCtx, newCallToolReq("document_list", map[string]any{"type": "role"}))
 	resB, _ := s.handleDocumentList(bobCtx, newCallToolReq("document_list", map[string]any{"type": "role"}))
@@ -138,7 +139,7 @@ func TestHandleDocumentList_WorkspaceIsolation(t *testing.T) {
 func TestHandleDocumentCreate_ScopeSystemRejectsProjectID(t *testing.T) {
 	t.Parallel()
 	s := newDocumentTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_a", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_a", Source: "session"})
 
 	res, err := s.handleDocumentCreate(ctx, newCallToolReq("document_create", map[string]any{
 		"type":       "principle",
@@ -162,7 +163,7 @@ func TestHandleDocumentCreate_ScopeSystemRejectsProjectID(t *testing.T) {
 func TestHandleDocumentCreate_ScopeSystemDropsWorkspaceID(t *testing.T) {
 	t.Parallel()
 	s := newDocumentTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "user_creator", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "user_creator", Source: "session"})
 
 	res, err := s.handleDocumentCreate(ctx, newCallToolReq("document_create", map[string]any{
 		"type":  "principle",
@@ -255,7 +256,7 @@ func TestHandleDocumentList_SystemScopeWorkspaceBlind(t *testing.T) {
 		t.Fatalf("seed principle: %v", err)
 	}
 
-	otherCtx := withCaller(ctx, CallerIdentity{UserID: "user_other", Source: "session"})
+	otherCtx := withCaller(ctx, auth.CallerIdentity{UserID: "user_other", Source: "session"})
 
 	res, _ := s.handleDocumentList(otherCtx, newCallToolReq("document_list", map[string]any{
 		"type":  "principle",
@@ -308,7 +309,7 @@ func TestHandleDocumentList_MixedScopeUnion(t *testing.T) {
 	mk(wsAlice.ID, document.ScopeWorkspace, "alice-row")
 	mk(wsBob.ID, document.ScopeWorkspace, "bob-row")
 
-	aliceCtx := withCaller(ctx, CallerIdentity{UserID: "user_alice", Source: "session"})
+	aliceCtx := withCaller(ctx, auth.CallerIdentity{UserID: "user_alice", Source: "session"})
 	res, _ := s.handleDocumentList(aliceCtx, newCallToolReq("document_list", map[string]any{
 		"type": "role",
 	}))
@@ -357,7 +358,7 @@ func TestHandleDocumentList_ProjectScopeTenantIsolation(t *testing.T) {
 		t.Fatalf("alice principle: %v", err)
 	}
 
-	bobCtx := withCaller(ctx, CallerIdentity{UserID: "user_bob", Source: "session"})
+	bobCtx := withCaller(ctx, auth.CallerIdentity{UserID: "user_bob", Source: "session"})
 	res, _ := s.handleDocumentList(bobCtx, newCallToolReq("document_list", map[string]any{
 		"type":       "principle",
 		"scope":      "project",
@@ -389,7 +390,7 @@ func TestHandleDocumentGet_SystemScopeByID(t *testing.T) {
 		t.Fatalf("seed agent: %v", err)
 	}
 
-	otherCtx := withCaller(ctx, CallerIdentity{UserID: "user_other", Source: "session"})
+	otherCtx := withCaller(ctx, auth.CallerIdentity{UserID: "user_other", Source: "session"})
 	res, _ := s.handleDocumentGet(otherCtx, newCallToolReq("document_get", map[string]any{
 		"id": doc.ID,
 	}))
@@ -428,7 +429,7 @@ func TestHandleDocumentGet_TenantIsolatedByID(t *testing.T) {
 		t.Fatalf("alice role: %v", err)
 	}
 
-	bobCtx := withCaller(ctx, CallerIdentity{UserID: "user_bob", Source: "session"})
+	bobCtx := withCaller(ctx, auth.CallerIdentity{UserID: "user_bob", Source: "session"})
 	res, _ := s.handleDocumentGet(bobCtx, newCallToolReq("document_get", map[string]any{
 		"id": doc.ID,
 	}))
@@ -457,7 +458,7 @@ func TestHandleDocumentGet_SystemScopeByName(t *testing.T) {
 		t.Fatalf("seed agent: %v", err)
 	}
 
-	otherCtx := withCaller(ctx, CallerIdentity{UserID: "user_other", Source: "session"})
+	otherCtx := withCaller(ctx, auth.CallerIdentity{UserID: "user_other", Source: "session"})
 	res, _ := s.handleDocumentGet(otherCtx, newCallToolReq("document_get", map[string]any{
 		"name": "developer_agent",
 	}))
@@ -494,7 +495,7 @@ func TestHandleDocumentGet_WorkspaceTierByName(t *testing.T) {
 		t.Fatalf("seed workspace role: %v", err)
 	}
 
-	aliceCtx := withCaller(ctx, CallerIdentity{UserID: "user_alice", Source: "session"})
+	aliceCtx := withCaller(ctx, auth.CallerIdentity{UserID: "user_alice", Source: "session"})
 	res, _ := s.handleDocumentGet(aliceCtx, newCallToolReq("document_get", map[string]any{
 		"name": "wksp_role",
 	}))
@@ -541,7 +542,7 @@ func TestAgentGetWrapper_TypeFilter(t *testing.T) {
 	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
 		t.Fatalf("other ws: %v", err)
 	}
-	otherCtx := withCaller(ctx, CallerIdentity{UserID: "user_other", Source: "session"})
+	otherCtx := withCaller(ctx, auth.CallerIdentity{UserID: "user_other", Source: "session"})
 	handler := s.wrapperGet(document.TypeAgent)
 	res, _ := handler(otherCtx, newCallToolReq("agent_get", map[string]any{
 		"name": "develop",
@@ -590,7 +591,7 @@ func TestAgentGetWrapper_TypeFilterByID(t *testing.T) {
 	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
 		t.Fatalf("other ws: %v", err)
 	}
-	otherCtx := withCaller(ctx, CallerIdentity{UserID: "user_other", Source: "session"})
+	otherCtx := withCaller(ctx, auth.CallerIdentity{UserID: "user_other", Source: "session"})
 	handler := s.wrapperGet(document.TypeAgent)
 
 	resMatch, _ := handler(otherCtx, newCallToolReq("agent_get", map[string]any{
@@ -638,7 +639,7 @@ func TestAgentListWrapper_SystemScopeWorkspaceBlind(t *testing.T) {
 		}
 	}
 
-	otherCtx := withCaller(ctx, CallerIdentity{UserID: "user_other", Source: "session"})
+	otherCtx := withCaller(ctx, auth.CallerIdentity{UserID: "user_other", Source: "session"})
 	handler := s.wrapperList(document.TypeAgent)
 	res, _ := handler(otherCtx, newCallToolReq("agent_list", map[string]any{
 		"scope": "system",
@@ -678,7 +679,7 @@ func TestContractListWrapper_HierarchicalTiers(t *testing.T) {
 		t.Fatalf("seed workspace contract: %v", err)
 	}
 
-	aliceCtx := withCaller(ctx, CallerIdentity{UserID: "user_alice", Source: "session"})
+	aliceCtx := withCaller(ctx, auth.CallerIdentity{UserID: "user_alice", Source: "session"})
 	handler := s.wrapperList(document.TypeContract)
 	res, _ := handler(aliceCtx, newCallToolReq("contract_list", map[string]any{}))
 	rows := decodeArray(t, res)

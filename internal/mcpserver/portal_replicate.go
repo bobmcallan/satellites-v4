@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"strings"
 	"time"
 
@@ -59,7 +60,7 @@ type portalReplicateRequest struct {
 
 func (s *Server) handlePortalReplicate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	caller, _ := UserFrom(ctx)
+	caller, _ := auth.UserFrom(ctx)
 	storyID, err := req.RequireString("story_id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil

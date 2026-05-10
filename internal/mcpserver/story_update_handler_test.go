@@ -8,6 +8,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"testing"
 	"time"
 
@@ -81,7 +82,7 @@ func TestStoryUpdate_AppliesEachField(t *testing.T) {
 	t.Parallel()
 	s := newStoryUpdateTestServer(t)
 	storyID, _, _ := seedStoryAlice(t, s)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice"})
 
 	res, err := s.handleStoryUpdate(ctx, newCallToolReq("story_update", map[string]any{
 		"id":                  storyID,
@@ -117,7 +118,7 @@ func TestStoryUpdate_TagsWholesaleReplace(t *testing.T) {
 	t.Parallel()
 	s := newStoryUpdateTestServer(t)
 	storyID, _, _ := seedStoryAlice(t, s)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice"})
 
 	res, _ := s.handleStoryUpdate(ctx, newCallToolReq("story_update", map[string]any{
 		"id":   storyID,
@@ -137,7 +138,7 @@ func TestStoryUpdate_TagsEmptyArrayClears(t *testing.T) {
 	t.Parallel()
 	s := newStoryUpdateTestServer(t)
 	storyID, _, _ := seedStoryAlice(t, s)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice"})
 
 	res, _ := s.handleStoryUpdate(ctx, newCallToolReq("story_update", map[string]any{
 		"id":   storyID,
@@ -157,7 +158,7 @@ func TestStoryUpdate_OmittedFieldsLeftUntouched(t *testing.T) {
 	t.Parallel()
 	s := newStoryUpdateTestServer(t)
 	storyID, _, _ := seedStoryAlice(t, s)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice"})
 
 	// Only update the title — every other field must be unchanged.
 	res, _ := s.handleStoryUpdate(ctx, newCallToolReq("story_update", map[string]any{
@@ -187,7 +188,7 @@ func TestStoryUpdate_InvalidCategoryRejected(t *testing.T) {
 	t.Parallel()
 	s := newStoryUpdateTestServer(t)
 	storyID, _, _ := seedStoryAlice(t, s)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice"})
 
 	res, _ := s.handleStoryUpdate(ctx, newCallToolReq("story_update", map[string]any{
 		"id":       storyID,
@@ -202,7 +203,7 @@ func TestStoryUpdate_CrossOwnerNotFound(t *testing.T) {
 	t.Parallel()
 	s := newStoryUpdateTestServer(t)
 	storyID, _, _ := seedStoryAlice(t, s)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_carol"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_carol"})
 
 	res, _ := s.handleStoryUpdate(ctx, newCallToolReq("story_update", map[string]any{
 		"id":    storyID,

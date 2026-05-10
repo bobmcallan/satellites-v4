@@ -4,6 +4,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"testing"
 	"time"
 
@@ -54,7 +55,7 @@ func TestChangelog_AddListGetUpdateDeleteRoundTrip(t *testing.T) {
 	t.Parallel()
 	s := newChangelogTestServer(t)
 	projectID := seedChangelogProject(t, s)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice"})
 
 	// add
 	addRes, _ := s.handleChangelogAdd(ctx, newCallToolReq("changelog_add", map[string]any{
@@ -129,7 +130,7 @@ func TestChangelog_CrossOwnerNotFound(t *testing.T) {
 	s := newChangelogTestServer(t)
 	projectID := seedChangelogProject(t, s)
 
-	aliceCtx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice"})
+	aliceCtx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice"})
 	addRes, _ := s.handleChangelogAdd(aliceCtx, newCallToolReq("changelog_add", map[string]any{
 		"project_id": projectID, "service": "satellites", "content": "x",
 	}))
@@ -140,7 +141,7 @@ func TestChangelog_CrossOwnerNotFound(t *testing.T) {
 	_ = json.Unmarshal([]byte(firstText(addRes)), &row)
 
 	// Carol tries to read Alice's row — must be rejected.
-	carolCtx := withCaller(context.Background(), CallerIdentity{UserID: "u_carol"})
+	carolCtx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_carol"})
 	getRes, _ := s.handleChangelogGet(carolCtx, newCallToolReq("changelog_get", map[string]any{"id": row.ID}))
 	if !getRes.IsError {
 		t.Errorf("cross-owner get should be rejected, got success: %s", firstText(getRes))

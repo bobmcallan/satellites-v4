@@ -15,8 +15,8 @@ import (
 	"github.com/bobmcallan/satellites/internal/auth"
 )
 
-func newAuthTestDeps() AuthDeps {
-	return AuthDeps{
+func newAuthTestDeps() auth.AuthDeps {
+	return auth.AuthDeps{
 		Sessions: auth.NewMemorySessionStore(),
 		Users:    auth.NewMemoryUserStore(),
 		APIKeys:  []string{"key_valid"},
@@ -26,7 +26,7 @@ func newAuthTestDeps() AuthDeps {
 
 func TestAuth_UnauthRejected(t *testing.T) {
 	t.Parallel()
-	mw := AuthMiddleware(newAuthTestDeps())
+	mw := auth.AuthMiddleware(newAuthTestDeps())
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("should not reach handler without auth")
 	}))
@@ -43,10 +43,10 @@ func TestAuth_UnauthRejected(t *testing.T) {
 
 func TestAuth_APIKeyAccepted(t *testing.T) {
 	t.Parallel()
-	mw := AuthMiddleware(newAuthTestDeps())
-	var seen CallerIdentity
+	mw := auth.AuthMiddleware(newAuthTestDeps())
+	var seen auth.CallerIdentity
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen, _ = UserFrom(r.Context())
+		seen, _ = auth.UserFrom(r.Context())
 	}))
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	req.Header.Set("Authorization", "Bearer key_valid")
@@ -59,7 +59,7 @@ func TestAuth_APIKeyAccepted(t *testing.T) {
 
 func TestAuth_APIKeyWrongRejected(t *testing.T) {
 	t.Parallel()
-	mw := AuthMiddleware(newAuthTestDeps())
+	mw := auth.AuthMiddleware(newAuthTestDeps())
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("should not reach handler with wrong key")
 	}))
@@ -81,10 +81,10 @@ func TestAuth_SessionCookieAccepted(t *testing.T) {
 	users.Add(user)
 	sess, _ := sessions.Create(user.ID, auth.DefaultSessionTTL)
 
-	mw := AuthMiddleware(deps)
-	var seen CallerIdentity
+	mw := auth.AuthMiddleware(deps)
+	var seen auth.CallerIdentity
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen, _ = UserFrom(r.Context())
+		seen, _ = auth.UserFrom(r.Context())
 	}))
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: sess.ID})
@@ -102,7 +102,7 @@ func TestAuth_SessionCookieAccepted(t *testing.T) {
 // TestAuth_OAuthBearerAccepted (story_512cc5cd AC1+AC2) — when an
 // OAuthValidator is wired and an Authorization: Bearer is presented that
 // neither matches an API key nor a session cookie, the validator gets
-// asked. A successful provider validation populates CallerIdentity with
+// asked. A successful provider validation populates auth.CallerIdentity with
 // source="oauth:<provider>".
 func TestAuth_OAuthBearerAccepted(t *testing.T) {
 	t.Parallel()
@@ -116,10 +116,10 @@ func TestAuth_OAuthBearerAccepted(t *testing.T) {
 		GithubUserURL:     stub.URL + "/github",
 	})
 
-	mw := AuthMiddleware(deps)
-	var seen CallerIdentity
+	mw := auth.AuthMiddleware(deps)
+	var seen auth.CallerIdentity
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen, _ = UserFrom(r.Context())
+		seen, _ = auth.UserFrom(r.Context())
 	}))
 
 	for _, tc := range []struct {
@@ -157,7 +157,7 @@ func TestAuth_OAuthBearerInvalid_401(t *testing.T) {
 		GoogleUserinfoURL: stub.URL + "/google",
 		GithubUserURL:     stub.URL + "/github",
 	})
-	mw := AuthMiddleware(deps)
+	mw := auth.AuthMiddleware(deps)
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not run for invalid bearer")
 	}))
@@ -199,10 +199,10 @@ func TestAuth_BearerStorePath_Owner(t *testing.T) {
 	_ = store.Create(context.Background(), row)
 	deps.APIKeyStore = store
 
-	mw := AuthMiddleware(deps)
-	var seen CallerIdentity
+	mw := auth.AuthMiddleware(deps)
+	var seen auth.CallerIdentity
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen, _ = UserFrom(r.Context())
+		seen, _ = auth.UserFrom(r.Context())
 	}))
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	req.Header.Set("Authorization", "Bearer "+cleartext)
@@ -242,7 +242,7 @@ func TestAuth_BearerStorePath_ExpiredKey(t *testing.T) {
 	_ = store.Create(context.Background(), row)
 	deps.APIKeyStore = store
 
-	mw := AuthMiddleware(deps)
+	mw := auth.AuthMiddleware(deps)
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("should not reach handler with expired key")
 	}))
@@ -275,7 +275,7 @@ func TestAuth_BearerStorePath_ArchivedKey(t *testing.T) {
 	_ = store.Create(context.Background(), row)
 	deps.APIKeyStore = store
 
-	mw := AuthMiddleware(deps)
+	mw := auth.AuthMiddleware(deps)
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("should not reach handler with archived key")
 	}))
@@ -313,7 +313,7 @@ func TestAuth_BearerStorePath_TouchFireAndForget(t *testing.T) {
 	_ = store.Create(context.Background(), row)
 	deps.APIKeyStore = store
 
-	mw := AuthMiddleware(deps)
+	mw := auth.AuthMiddleware(deps)
 	reached := false
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reached = true
@@ -351,10 +351,10 @@ func TestAuth_SatelliteBearerAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
-	mw := AuthMiddleware(deps)
-	var seen CallerIdentity
+	mw := auth.AuthMiddleware(deps)
+	var seen auth.CallerIdentity
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen, _ = UserFrom(r.Context())
+		seen, _ = auth.UserFrom(r.Context())
 	}))
 	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)

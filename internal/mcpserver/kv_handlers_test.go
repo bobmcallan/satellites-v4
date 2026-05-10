@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"testing"
 	"time"
 
@@ -56,7 +57,7 @@ func TestKVTools_Registered(t *testing.T) {
 func TestKVHandlers_RoundTrip_System(t *testing.T) {
 	t.Parallel()
 	s := newKVTestServer(t)
-	admin := CallerIdentity{UserID: "u_admin", Source: "session", GlobalAdmin: true}
+	admin := auth.CallerIdentity{UserID: "u_admin", Source: "session", GlobalAdmin: true}
 	ctx := withCaller(context.Background(), admin)
 
 	// kv_set
@@ -126,7 +127,7 @@ func TestKVHandlers_RoundTrip_Workspace(t *testing.T) {
 		t.Fatalf("seed member: %v", err)
 	}
 
-	alice := CallerIdentity{UserID: "u_alice", Source: "session"}
+	alice := auth.CallerIdentity{UserID: "u_alice", Source: "session"}
 	ctx = withCaller(ctx, alice)
 
 	setRes, err := s.handleKVSet(ctx, newCallToolReq("kv_set", map[string]any{
@@ -160,7 +161,7 @@ func TestKVHandlers_RoundTrip_User(t *testing.T) {
 	ws, _ := s.workspaces.Create(ctx, "u_alice", "alpha", now)
 	_ = s.workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now)
 
-	alice := CallerIdentity{UserID: "u_alice", Source: "session"}
+	alice := auth.CallerIdentity{UserID: "u_alice", Source: "session"}
 	ctx = withCaller(ctx, alice)
 
 	setRes, _ := s.handleKVSet(ctx, newCallToolReq("kv_set", map[string]any{
@@ -190,7 +191,7 @@ func TestKVHandlers_RoundTrip_User(t *testing.T) {
 func TestKVHandlers_InvalidScope(t *testing.T) {
 	t.Parallel()
 	s := newKVTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_a", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_a", Source: "session"})
 
 	res, _ := s.handleKVGet(ctx, newCallToolReq("kv_get", map[string]any{
 		"scope": "global",
@@ -204,7 +205,7 @@ func TestKVHandlers_InvalidScope(t *testing.T) {
 func TestKVHandlers_SystemSetRequiresGlobalAdmin(t *testing.T) {
 	t.Parallel()
 	s := newKVTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_a", Source: "session", GlobalAdmin: false})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_a", Source: "session", GlobalAdmin: false})
 
 	res, _ := s.handleKVSet(ctx, newCallToolReq("kv_set", map[string]any{
 		"scope": "system",
@@ -219,7 +220,7 @@ func TestKVHandlers_SystemSetRequiresGlobalAdmin(t *testing.T) {
 func TestKVHandlers_WorkspaceFKMissing(t *testing.T) {
 	t.Parallel()
 	s := newKVTestServer(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_a", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_a", Source: "session"})
 
 	res, _ := s.handleKVSet(ctx, newCallToolReq("kv_set", map[string]any{
 		"scope": "workspace",
@@ -252,28 +253,28 @@ func TestKVHandlers_AuthMatrix(t *testing.T) {
 
 	type tc struct {
 		name      string
-		caller    CallerIdentity
+		caller    auth.CallerIdentity
 		args      map[string]any
 		wantError bool
 	}
 	cases := []tc{
 		// system
-		{"system/admin/ok", CallerIdentity{UserID: "u_admin", GlobalAdmin: true}, map[string]any{"scope": "system", "key": "policy", "value": "v"}, false},
-		{"system/non-admin/forbidden", CallerIdentity{UserID: "u_alice"}, map[string]any{"scope": "system", "key": "policy", "value": "v"}, true},
+		{"system/admin/ok", auth.CallerIdentity{UserID: "u_admin", GlobalAdmin: true}, map[string]any{"scope": "system", "key": "policy", "value": "v"}, false},
+		{"system/non-admin/forbidden", auth.CallerIdentity{UserID: "u_alice"}, map[string]any{"scope": "system", "key": "policy", "value": "v"}, true},
 		// workspace
-		{"workspace/admin/ok", CallerIdentity{UserID: "u_alice"}, map[string]any{"scope": "workspace", "workspace_id": ws1.ID, "key": "tier", "value": "gold"}, false},
-		{"workspace/global-admin/ok", CallerIdentity{UserID: "u_admin", GlobalAdmin: true}, map[string]any{"scope": "workspace", "workspace_id": ws1.ID, "key": "tier", "value": "gold"}, false},
-		{"workspace/member/forbidden", CallerIdentity{UserID: "u_bob"}, map[string]any{"scope": "workspace", "workspace_id": ws1.ID, "key": "tier", "value": "gold"}, true},
-		{"workspace/non-member/forbidden", CallerIdentity{UserID: "u_carol"}, map[string]any{"scope": "workspace", "workspace_id": ws1.ID, "key": "tier", "value": "gold"}, true},
+		{"workspace/admin/ok", auth.CallerIdentity{UserID: "u_alice"}, map[string]any{"scope": "workspace", "workspace_id": ws1.ID, "key": "tier", "value": "gold"}, false},
+		{"workspace/global-admin/ok", auth.CallerIdentity{UserID: "u_admin", GlobalAdmin: true}, map[string]any{"scope": "workspace", "workspace_id": ws1.ID, "key": "tier", "value": "gold"}, false},
+		{"workspace/member/forbidden", auth.CallerIdentity{UserID: "u_bob"}, map[string]any{"scope": "workspace", "workspace_id": ws1.ID, "key": "tier", "value": "gold"}, true},
+		{"workspace/non-member/forbidden", auth.CallerIdentity{UserID: "u_carol"}, map[string]any{"scope": "workspace", "workspace_id": ws1.ID, "key": "tier", "value": "gold"}, true},
 		// project
-		{"project/owner/ok", CallerIdentity{UserID: "u_alice"}, map[string]any{"scope": "project", "project_id": proj.ID, "key": "feat", "value": "on"}, false},
-		{"project/ws-admin/ok", CallerIdentity{UserID: "u_alice"}, map[string]any{"scope": "project", "project_id": proj.ID, "key": "feat", "value": "on"}, false},
-		{"project/member-not-owner/forbidden", CallerIdentity{UserID: "u_bob"}, map[string]any{"scope": "project", "project_id": proj.ID, "key": "feat", "value": "on"}, true},
-		{"project/other-workspace/forbidden", CallerIdentity{UserID: "u_carol"}, map[string]any{"scope": "project", "project_id": proj.ID, "key": "feat", "value": "on"}, true},
+		{"project/owner/ok", auth.CallerIdentity{UserID: "u_alice"}, map[string]any{"scope": "project", "project_id": proj.ID, "key": "feat", "value": "on"}, false},
+		{"project/ws-admin/ok", auth.CallerIdentity{UserID: "u_alice"}, map[string]any{"scope": "project", "project_id": proj.ID, "key": "feat", "value": "on"}, false},
+		{"project/member-not-owner/forbidden", auth.CallerIdentity{UserID: "u_bob"}, map[string]any{"scope": "project", "project_id": proj.ID, "key": "feat", "value": "on"}, true},
+		{"project/other-workspace/forbidden", auth.CallerIdentity{UserID: "u_carol"}, map[string]any{"scope": "project", "project_id": proj.ID, "key": "feat", "value": "on"}, true},
 		// user
-		{"user/self/ok", CallerIdentity{UserID: "u_alice"}, map[string]any{"scope": "user", "workspace_id": ws1.ID, "key": "theme", "value": "dark"}, false},
-		{"user/cross-user/forbidden", CallerIdentity{UserID: "u_bob"}, map[string]any{"scope": "user", "workspace_id": ws1.ID, "user_id": "u_alice", "key": "theme", "value": "dark"}, true},
-		{"user/global-admin-cross/forbidden", CallerIdentity{UserID: "u_admin", GlobalAdmin: true}, map[string]any{"scope": "user", "workspace_id": ws1.ID, "user_id": "u_alice", "key": "theme", "value": "dark"}, true},
+		{"user/self/ok", auth.CallerIdentity{UserID: "u_alice"}, map[string]any{"scope": "user", "workspace_id": ws1.ID, "key": "theme", "value": "dark"}, false},
+		{"user/cross-user/forbidden", auth.CallerIdentity{UserID: "u_bob"}, map[string]any{"scope": "user", "workspace_id": ws1.ID, "user_id": "u_alice", "key": "theme", "value": "dark"}, true},
+		{"user/global-admin-cross/forbidden", auth.CallerIdentity{UserID: "u_admin", GlobalAdmin: true}, map[string]any{"scope": "user", "workspace_id": ws1.ID, "user_id": "u_alice", "key": "theme", "value": "dark"}, true},
 	}
 	for _, c := range cases {
 		c := c
@@ -302,8 +303,8 @@ func TestKVHandlers_GetResolved(t *testing.T) {
 	_ = s.workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now)
 	proj, _ := s.projects.Create(ctx, "u_alice", ws.ID, "alpha-1", now)
 
-	admin := CallerIdentity{UserID: "u_admin", GlobalAdmin: true}
-	alice := CallerIdentity{UserID: "u_alice"}
+	admin := auth.CallerIdentity{UserID: "u_admin", GlobalAdmin: true}
+	alice := auth.CallerIdentity{UserID: "u_alice"}
 
 	// Seed every tier with the same key.
 	_, _ = s.handleKVSet(withCaller(ctx, admin), newCallToolReq("kv_set", map[string]any{
@@ -348,7 +349,7 @@ func TestKVHandlers_GetResolved_NotFound(t *testing.T) {
 	ws, _ := s.workspaces.Create(ctx, "u_alice", "alpha", now)
 	_ = s.workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now)
 
-	res, _ := s.handleKVGetResolved(withCaller(ctx, CallerIdentity{UserID: "u_alice"}),
+	res, _ := s.handleKVGetResolved(withCaller(ctx, auth.CallerIdentity{UserID: "u_alice"}),
 		newCallToolReq("kv_get_resolved", map[string]any{
 			"key":          "nonexistent",
 			"workspace_id": ws.ID,
@@ -370,7 +371,7 @@ func TestKVHandlers_DeleteHonoursAuth(t *testing.T) {
 	_ = s.workspaces.AddMember(ctx, ws.ID, "u_bob", workspace.RoleMember, "u_alice", now)
 
 	// Workspace member (non-admin) cannot delete a workspace-scope key.
-	bobCtx := withCaller(ctx, CallerIdentity{UserID: "u_bob"})
+	bobCtx := withCaller(ctx, auth.CallerIdentity{UserID: "u_bob"})
 	res, _ := s.handleKVDelete(bobCtx, newCallToolReq("kv_delete", map[string]any{
 		"scope":        "workspace",
 		"workspace_id": ws.ID,

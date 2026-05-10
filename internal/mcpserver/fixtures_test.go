@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ type contractFixture struct {
 	t         *testing.T
 	ctx       context.Context
 	server    *Server
-	caller    CallerIdentity
+	caller    auth.CallerIdentity
 	projectID string
 	wsID      string
 	storyID   string
@@ -89,7 +90,7 @@ func newContractFixture(t *testing.T) *contractFixture {
 		t:         t,
 		ctx:       ctx,
 		server:    server,
-		caller:    CallerIdentity{UserID: "user_alice", Source: "session"},
+		caller:    auth.CallerIdentity{UserID: "user_alice", Source: "session"},
 		projectID: proj.ID,
 		wsID:      ws.ID,
 		storyID:   parent.ID,

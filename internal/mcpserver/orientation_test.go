@@ -7,6 +7,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"strings"
 	"testing"
 	"time"
@@ -51,7 +52,7 @@ func newOrientationFixture(t *testing.T) (*Server, project.Project, string) {
 		LedgerStore:    led,
 		StoryStore:     story.NewMemoryStore(led),
 	})
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 	now := time.Now().UTC()
 
 	ws, err := s.workspaces.Create(ctx, "u_alice", "alpha", now)
@@ -194,7 +195,7 @@ func TestBuildOrientation_IncludesWorkspaceTier(t *testing.T) {
 func TestProjectSet_ReturnsOrientationBundle(t *testing.T) {
 	t.Parallel()
 	s, p, _ := newOrientationFixture(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 
 	res, err := s.handleProjectSet(ctx, newCallToolReq("project_set", map[string]any{
 		"repo_url":   "git@github.com:owner/repo.git",
@@ -226,7 +227,7 @@ func TestProjectSet_ReturnsOrientationBundle(t *testing.T) {
 func TestProjectSet_AutoRegistersSessionWhenNotPresent(t *testing.T) {
 	t.Parallel()
 	s, p, _ := newOrientationFixture(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 
 	// No session pre-registered. project_set must create the row and
 	// stamp active_project_id on it (auto-bind).
@@ -252,7 +253,7 @@ func TestProjectSet_AutoRegistersSessionWhenNotPresent(t *testing.T) {
 func TestProjectGet_ReturnsOrientationBundle(t *testing.T) {
 	t.Parallel()
 	s, p, _ := newOrientationFixture(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 
 	res, err := s.handleProjectGet(ctx, newCallToolReq("project_get", map[string]any{
 		"id": p.ID,
@@ -284,7 +285,7 @@ func TestProjectGet_ReturnsOrientationBundle(t *testing.T) {
 func TestProjectGet_UnknownIDReturnsError(t *testing.T) {
 	t.Parallel()
 	s, _, _ := newOrientationFixture(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 	res, err := s.handleProjectGet(ctx, newCallToolReq("project_get", map[string]any{
 		"id": "proj_missing0",
 	}))
@@ -302,7 +303,7 @@ func TestProjectGet_UnknownIDReturnsError(t *testing.T) {
 func TestStoryGet_IncludesOrientationBundle(t *testing.T) {
 	t.Parallel()
 	s, p, wsID := newOrientationFixture(t)
-	ctx := withCaller(context.Background(), CallerIdentity{UserID: "u_alice", Source: "session"})
+	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 	now := time.Now().UTC()
 
 	st, err := s.stories.Create(ctx, story.Story{

@@ -76,13 +76,17 @@ func TestPersistentFlagsRecognised(t *testing.T) {
 }
 
 func TestStubReturnsServerExitCode(t *testing.T) {
+	// Only verbs that remain stubs after order:04. Migrated reads
+	// (info, session whoami, task get/walk, story get, agent get,
+	// contract get, principle list, ledger get/list/search) reach
+	// the remote and must be tested via integration paths instead.
 	verbs := [][]string{
-		{"story", "get"},
 		{"task", "claim"},
 		{"ledger", "append"},
 		{"kv", "get"},
 		{"agent", "compose"},
-		{"info"},
+		{"project", "create"},
+		{"document", "create"},
 	}
 	for _, args := range verbs {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {

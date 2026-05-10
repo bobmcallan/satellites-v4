@@ -54,7 +54,7 @@ func registerStoryNoun(root *cobra.Command) {
 	noun := nounStub("story", "Stories — units of deliverable work.")
 	noun.AddCommand(
 		verbStub("create", "story create", "Create a new story."),
-		verbStub("get", "story get", "Get a story by id."),
+		newStoryGetCmd(), // order:04
 		verbStub("list", "story list", "List stories."),
 		verbStub("update", "story update", "Update a story."),
 		verbStub("update-status", "story update-status", "Transition the story's status."),
@@ -70,11 +70,11 @@ func registerTaskNoun(root *cobra.Command) {
 	noun := nounStub("task", "Tasks — the dispatch unit.")
 	noun.AddCommand(
 		verbStub("add", "task add", "Mint a new task at status=published."),
-		verbStub("get", "task get", "Get a task by id."),
+		newTaskGetCmd(), // order:04
 		verbStub("list", "task list", "List tasks."),
 		verbStub("claim", "task claim", "Atomic claim of the highest-priority queued task."),
 		verbStub("update", "task update", "Mutate a task's lifecycle state."),
-		verbStub("walk", "task walk", "Return the story's task chain orientation."),
+		newTaskWalkCmd(), // order:04
 		verbStub("plan", "task plan", "Mint a task at status=planned."),
 	)
 	root.AddCommand(noun)
@@ -84,9 +84,9 @@ func registerLedgerNoun(root *cobra.Command) {
 	noun := nounStub("ledger", "Ledger — append-only audit log.")
 	noun.AddCommand(
 		verbStub("append", "ledger append", "Append an event row."),
-		verbStub("get", "ledger get", "Get a ledger row by id."),
-		verbStub("list", "ledger list", "List ledger rows newest-first."),
-		verbStub("search", "ledger search", "Search ledger rows."),
+		newLedgerGetCmd(),    // order:04
+		newLedgerListCmd(),   // order:04
+		newLedgerSearchCmd(), // order:04
 		verbStub("recall", "ledger recall", "Walk the dereferenced-row chain."),
 		verbStub("dereference", "ledger dereference", "Mark a row as dereferenced."),
 	)
@@ -152,7 +152,7 @@ func registerAgentNoun(root *cobra.Command) {
 	noun := nounStub("agent", "Agents — typed roles.")
 	noun.AddCommand(
 		verbStub("create", "agent create", "Create an agent doc."),
-		verbStub("get", "agent get", "Get an agent doc."),
+		newAgentGetCmd(), // order:04
 		verbStub("list", "agent list", "List agent docs."),
 		verbStub("update", "agent update", "Update an agent doc."),
 		verbStub("delete", "agent delete", "Archive an agent doc."),
@@ -170,7 +170,7 @@ func registerContractNoun(root *cobra.Command) {
 	noun := nounStub("contract", "Contracts — lifecycle phase rubrics.")
 	noun.AddCommand(
 		verbStub("create", "contract create", "Create a contract doc."),
-		verbStub("get", "contract get", "Get a contract doc."),
+		newContractGetCmd(), // order:04
 		verbStub("list", "contract list", "List contracts."),
 		verbStub("update", "contract update", "Update a contract doc."),
 		verbStub("delete", "contract delete", "Archive a contract."),
@@ -184,7 +184,8 @@ func registerPrincipleNoun(root *cobra.Command) {
 	noun.AddCommand(
 		verbStub("create", "principle create", "Create a principle."),
 		verbStub("get", "principle get", "Get a principle."),
-		verbStub("list", "principle list", "List principles."),
+		newPrincipleListCmd(), // order:04
+
 		verbStub("update", "principle update", "Update a principle."),
 		verbStub("delete", "principle delete", "Archive a principle."),
 		verbStub("search", "principle search", "Search principles."),
@@ -261,7 +262,7 @@ func registerSessionNoun(root *cobra.Command) {
 	noun := nounStub("session", "Session — registry + identity.")
 	noun.AddCommand(
 		verbStub("register", "session register", "Register / re-register the caller's session."),
-		verbStub("whoami", "session whoami", "Return the caller's registered session row."),
+		newSessionWhoamiCmd(), // order:04
 	)
 	root.AddCommand(noun)
 }

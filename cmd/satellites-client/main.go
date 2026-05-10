@@ -18,8 +18,20 @@ import (
 	"github.com/bobmcallan/satellites/internal/cliexit"
 	"github.com/bobmcallan/satellites/internal/clicred"
 	"github.com/bobmcallan/satellites/internal/cliio"
+	"github.com/bobmcallan/satellites/internal/cliremote"
 	"github.com/bobmcallan/satellites/internal/config"
 )
+
+// DefaultServer is the canonical satellites-server URL the CLI
+// defaults to when the operator does not set --server. Matches the
+// pprod deploy URL.
+const DefaultServer = "https://satellites-pprod.fly.dev/mcp"
+
+// remote is the shared cliremote client used by all read verbs in
+// orders 04+. PreRunE on the root constructs it lazily — verbs that
+// don't need it (the surviving info-only path) do not pay the
+// credential resolution cost.
+var remote *cliremote.Client
 
 // PersistentFlags carries the cli-printing-press subset adopted in
 // docs/cli-primary-design.md §3. All flags are persistent on the
@@ -44,9 +56,9 @@ type PersistentFlags struct {
 // auto-JSON resolution + credential resolution against it.
 var pf PersistentFlags
 
-// resolvedToken is populated by PreRunE from the credential chain.
-// Subcommands consume it (orders 04+05) when constructing the HTTP
-// client.
+// resolvedToken is populated by resolveCredentials() from the
+// credential chain. Subcommands consume it (orders 04+05) when
+// constructing the HTTP client.
 var resolvedToken string
 
 // resolvedMode is the auto-JSON-aware output mode for this
@@ -92,12 +104,9 @@ func newRootCmd() *cobra.Command {
 	}
 
 	// `info` is the surviving advisory verb; group on root for
-	// parity with `satellites_info`.
-	root.AddCommand(&cobra.Command{
-		Use:   "info",
-		Short: "Return server identity + version metadata.",
-		RunE:  func(cmd *cobra.Command, args []string) error { return cliexit.NotImplemented("info") },
-	})
+	// parity with `satellites_info`. Uses the concrete handler from
+	// reads.go (order:04).
+	root.AddCommand(newInfoCmd())
 
 	return root
 }
@@ -157,10 +166,33 @@ func resolveCredentials() (string, error) {
 	if resolvedToken != "" {
 		return resolvedToken, nil
 	}
-	tok, err := clicred.Resolve(pf.Token, pf.Server)
+	server := pf.Server
+	if server == "" {
+		server = DefaultServer
+	}
+	tok, err := clicred.Resolve(pf.Token, server)
 	if err != nil {
 		return "", cliexit.Wrap(cliexit.Auth, err)
 	}
 	resolvedToken = tok
 	return tok, nil
+}
+
+// ensureRemote constructs the cliremote.Client on first use. Verbs
+// that need the remote call this; verbs that don't (locally-resolved
+// like the future `auth login`) skip it.
+func ensureRemote() (*cliremote.Client, error) {
+	if remote != nil {
+		return remote, nil
+	}
+	tok, err := resolveCredentials()
+	if err != nil {
+		return nil, err
+	}
+	server := pf.Server
+	if server == "" {
+		server = DefaultServer
+	}
+	remote = cliremote.New(server, tok, nil)
+	return remote, nil
 }

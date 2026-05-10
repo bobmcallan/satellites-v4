@@ -117,7 +117,26 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		logger.Warn().Str("warning", w).Msg("agent: startup warning")
 	}
 
-	client := worker.NewClaudeClient(*cfg, logger)
+	// Per cli-primary order:06 (sty_9aa8c2c2): the substrate transport
+	// is configurable. transport=cli (default) shells out to
+	// bin/satellites-client; transport=mcp uses the legacy JSON-RPC
+	// path. The dispatched-Claude executor (claudeClient) currently
+	// embeds *placeholderClient for its callTool helper, so claudeClient
+	// remains MCP-rooted regardless. The Transport flag selects the
+	// substrate-side delegate (Claim/Heartbeat/Close/Shutdown). order:07
+	// deletes the flag once both surfaces have soaked.
+	var client worker.Client
+	switch cfg.Transport {
+	case "cli":
+		client = worker.NewCLIClient(*cfg, logger)
+		logger.Info().Str("transport", "cli").Str("cli_binary_path", cfg.CLIBinaryPath).Msg("agent: cli transport selected")
+	case "mcp", "":
+		client = worker.NewClaudeClient(*cfg, logger)
+		logger.Info().Str("transport", "mcp").Msg("agent: mcp transport selected (legacy)")
+	default:
+		logger.Warn().Str("transport", cfg.Transport).Msg("agent: unknown transport; falling back to cli")
+		client = worker.NewCLIClient(*cfg, logger)
+	}
 
 	// Wake-channel wiring: when hub_url is empty the agent runs in
 	// polling-only mode (Worker.Loop's IdleBackoff drives Claim);

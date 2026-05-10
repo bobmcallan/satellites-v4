@@ -96,6 +96,7 @@ func stubServers(t *testing.T) (cfgPath string, mcpCalls *[]mcpRecord, mu *sync.
 	body := []byte(`worker_id = "test-worker"
 workspace_ids = ["wksp_a"]
 mcp_url = "` + mcp.URL + `"
+transport = "mcp"
 auth_token = "tok-test"
 idle_backoff = "20ms"
 heartbeat_interval = "1h"
@@ -204,6 +205,7 @@ func TestMain_Run_NoHubURL_PollingFallback(t *testing.T) {
 	cfgPath := filepath.Join(tmp, "agent.toml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(`worker_id = "p"
 mcp_url = "`+mcp.URL+`"
+transport = "mcp"
 hub_url = ""
 idle_backoff = "20ms"
 heartbeat_interval = "1h"
@@ -253,6 +255,7 @@ func TestRun_StartupLogReflectsLoadedConfig(t *testing.T) {
 	cfgPath := filepath.Join(tmp, "agent.toml")
 	body := []byte(`worker_id = "smoke-startup-log"
 mcp_url = "` + mcp.URL + `"
+transport = "mcp"
 hub_url = ""
 idle_backoff = "20ms"
 heartbeat_interval = "1h"
@@ -339,6 +342,7 @@ func TestRun_LogPath_WritesFile(t *testing.T) {
 	cfgPath := filepath.Join(tmp, "agent.toml")
 	body := []byte(`worker_id = "smoke-logpath"
 mcp_url = "` + mcp.URL + `"
+transport = "mcp"
 hub_url = ""
 idle_backoff = "20ms"
 heartbeat_interval = "1h"

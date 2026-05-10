@@ -54,6 +54,19 @@ type AgentConfig struct {
 	WSReconnectMinBackoff time.Duration `toml:"ws_reconnect_min_backoff"`
 	WSReconnectMaxBackoff time.Duration `toml:"ws_reconnect_max_backoff"`
 
+	// Transport selects the agent's wire layer for substrate calls
+	// (Claim / Heartbeat / Close / Shutdown). Per cli-primary order:06
+	// (sty_9aa8c2c2): "cli" shells out to bin/satellites-client; "mcp"
+	// uses the legacy JSON-RPC client. Default: "cli". The flag exists
+	// as a rollback escape for the order:06 → order:07 rollout window;
+	// order:07 deletes both the flag and the MCP client.
+	Transport string `toml:"transport"`
+
+	// CLIBinaryPath is the resolved path to bin/satellites-client used
+	// by the cli transport. Empty falls back to looking up
+	// "satellites-client" on PATH at runtime. Per cli-primary order:06.
+	CLIBinaryPath string `toml:"cli_binary_path"`
+
 	// LogPath is the directory where the agent writes its rolling log
 	// file (filename: satellites-agent.log; rotation handled by arbor's
 	// phuslu/log backend). Empty disables the file writer — the agent
@@ -124,6 +137,8 @@ func defaultsAgent() *AgentConfig {
 		BranchTemplate:        "agent-{task_id}-from-{base_sha}",
 		WorktreeRoot:          ".satellites-agents/",
 		ClaudeBinaryPath:      "claude",
+		Transport:             "cli",
+		CLIBinaryPath:         "",
 		LogLevel:              "info",
 		LogPath:               logDir,
 		HubURL:                "ws://localhost:8080/ws",
@@ -151,6 +166,8 @@ type agentTOMLOverlay struct {
 	BranchTemplate    *string   `toml:"branch_template"`
 	WorktreeRoot      *string   `toml:"worktree_root"`
 	ClaudeBinaryPath  *string   `toml:"claude_binary_path"`
+	Transport         *string   `toml:"transport"`
+	CLIBinaryPath     *string   `toml:"cli_binary_path"`
 	LogLevel          *string   `toml:"log_level"`
 
 	HubURL                *string   `toml:"hub_url"`
@@ -292,6 +309,17 @@ func (o agentTOMLOverlay) applyTo(cfg *AgentConfig, warnings *[]string) {
 	}
 	if o.ClaudeBinaryPath != nil {
 		cfg.ClaudeBinaryPath = *o.ClaudeBinaryPath
+	}
+	if o.Transport != nil {
+		t := strings.ToLower(*o.Transport)
+		if t != "cli" && t != "mcp" {
+			*warnings = append(*warnings, fmt.Sprintf("agent config: transport=%q invalid (cli|mcp) — keeping %q", *o.Transport, cfg.Transport))
+		} else {
+			cfg.Transport = t
+		}
+	}
+	if o.CLIBinaryPath != nil {
+		cfg.CLIBinaryPath = *o.CLIBinaryPath
 	}
 	if o.LogLevel != nil {
 		lvl := strings.ToLower(*o.LogLevel)

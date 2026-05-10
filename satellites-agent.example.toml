@@ -54,6 +54,20 @@ worktree_root      = ".satellites-agents/"
 # Path to the claude binary the order:03 executor will spawn.
 claude_binary_path = "claude"
 
+# Substrate transport. Per cli-primary order:06 (sty_9aa8c2c2):
+#   "cli" (default) — Claim/Heartbeat/Close/Shutdown shell out to
+#                     bin/satellites-client. Saves the dispatched
+#                     Claude ~30k tokens of MCP tool definitions per
+#                     turn.
+#   "mcp"           — Legacy JSON-RPC over HTTP transport. Rollback
+#                     escape until order:07 deletes both the flag and
+#                     the MCP path.
+transport          = "cli"
+
+# Resolved path to the satellites-client binary used when
+# transport=cli. Empty falls back to "satellites-client" on PATH.
+cli_binary_path    = ""
+
 # Arbor log level. trace | debug | info | warn | error.
 log_level          = "info"
 

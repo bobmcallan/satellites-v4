@@ -109,6 +109,12 @@ type promptInputs struct {
 // dispatched agents receive. It tells the agent which row identifiers
 // to fetch and which lifecycle close it owes; the substantive work
 // instruction lives in the task body the agent fetches via task_get.
+//
+// Per cli-primary order:06 (sty_9aa8c2c2), the verb syntax is the
+// `satellites-client <noun> <verb>` shape, not MCP-call form. The
+// dispatched Claude has bin/satellites-client on PATH; it shells
+// the substrate calls directly. order:07 deletes the legacy MCP
+// catalogue entries the prompt no longer references.
 const promptTemplate = `You are dispatched on satellites task {{task_id}}.
 
 Role:      {{agent_name}}
@@ -117,16 +123,23 @@ Story:     {{story_id}}
 Project:   {{project_id}}
 Workspace: {{workspace_id}}
 
-Read your context via MCP:
-  task_get(id="{{task_id}}")              — your work instruction.
-  agent_get(name="{{agent_name}}")        — your role, voice, capability envelope.
-  contract_get(name="{{contract_name}}")  — close-criteria rubric for this action.
-  story_get(id="{{story_id}}")            — parent story body and references.
-  task_walk(story_id="{{story_id}}")      — chain + any prior_task_id verdict.
-  principle_list(active_only=true, project_id="{{project_id}}") — principles in force.
+Read your context via the satellites CLI (auto-JSON when piped):
+  satellites-client task get {{task_id}}                                 — your work instruction.
+  satellites-client agent get --name {{agent_name}}                      — your role, voice, capability envelope.
+  satellites-client contract get --name {{contract_name}} --project-id {{project_id}}
+                                                                         — close-criteria rubric.
+  satellites-client story get {{story_id}}                               — parent story body + references.
+  satellites-client task walk --story-id {{story_id}}                    — chain + any prior_task_id verdict.
+  satellites-client principle list --active-only --project-id {{project_id}}
+                                                                         — principles in force.
 
-Execute the task body's instructions. Write evidence rows via ledger_append.
-Close your task with task_update(id="{{task_id}}", status="closed", outcome="success" | "failure").
+Execute the task body's instructions. Write evidence rows via:
+  satellites-client ledger append --project-id {{project_id}} --type evidence \
+    --content "..." --tags task_id:{{task_id}},kind:evidence
+
+Close your task with:
+  satellites-client task update --id {{task_id}} --status closed --outcome success
+  (or --outcome failure on a failed run)
 
 Working directory: {{work_dir}}
 HOME:              {{home_path}}

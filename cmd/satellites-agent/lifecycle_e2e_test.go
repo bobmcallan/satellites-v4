@@ -56,6 +56,7 @@ func TestLifecycle_StartStatusStop_E2E(t *testing.T) {
 	cfgPath := filepath.Join(dir, "agent.toml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(`worker_id = "lifecycle-e2e"
 mcp_url = "`+mcp.URL+`"
+transport = "mcp"
 hub_url = ""
 idle_backoff = "1s"
 heartbeat_interval = "1h"

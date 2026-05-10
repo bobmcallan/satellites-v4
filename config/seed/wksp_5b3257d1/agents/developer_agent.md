@@ -40,6 +40,20 @@ Role-shaped agent covering the read-and-author phases of the
 lifecycle: **plan** and **develop**. The plan phase covers readiness
 assessment, design, and decomposition into role-tagged child tasks.
 
+## CLI surface (cli-primary)
+
+Verb-call references below map 1:1 to `satellites-client <noun>
+<verb>` invocations per `docs/cli-primary-design.md` §2. The
+dispatched-agent prompt template
+(`internal/agent/worker/client_claude.go`, post-order:06) lists
+the concrete commands explicitly. Reading guide: where this doc
+says `task_claim(task_id)` consume it as `satellites-client task
+claim`; `ledger_append(...)` as `satellites-client ledger append
+--project-id <pid> --type evidence --content "..." --tags
+<tags>`; `task_update(id=<id>, status=closed,
+evidence_ledger_ids=[…])` as `satellites-client task update --id
+<id> --status closed --outcome <o> --evidence-ledger-ids <ids>`.
+
 ## What it does
 
 - **plan** — reads code, git history, and ledger context to produce

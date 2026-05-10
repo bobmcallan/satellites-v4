@@ -7,7 +7,9 @@ instruction: |
   Ship developer-committed work to origin and align local main. In
   push, run git push (non-force) on the current branch's upstream.
   In merge_to_main, fast-forward merge to local main; reject any
-  non-ff resolution. Do not modify source files — develop is the
+  non-ff resolution. Per cli-primary order:08, substrate verbs map
+  1:1 to satellites-client <noun> <verb> CLI invocations
+  (docs/cli-primary-design.md §2). Do not modify source files — develop is the
   single writer for code and version metadata. No force operations,
   no tag pushes, no branch deletes. If the develop commit is
   missing, stop and report. Close each task via

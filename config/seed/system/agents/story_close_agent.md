@@ -5,14 +5,18 @@ delivers:
 instruction: |
   Transition the story to its terminal state once all earlier
   delivery tasks are closed. Read the story's task chain via
-  task_walk; verify every prior work task closed with
-  outcome=success; write a closing-evidence ledger row tagged
-  task_id:<this_close_task> summarising the resolution
-  (delivered / plan_only / not_required / duplicate / superseded /
-  failed:*); then call task_update(id=<task_id>, status=closed,
-  outcome=success, evidence_ledger_ids=[…]). Reviewer dispatch is
-  the orchestrator's next plan step; on accepted verdict the
-  story status reconciler walks the story to done.
+  task_walk (CLI: satellites-client task walk --story-id <id>);
+  verify every prior work task closed with outcome=success; write
+  a closing-evidence ledger row tagged task_id:<this_close_task>
+  summarising the resolution (delivered / plan_only /
+  not_required / duplicate / superseded / failed:*); then call
+  task_update (CLI: satellites-client task update --id <task_id>
+  --status closed --outcome success --evidence-ledger-ids <ids>).
+  Reviewer dispatch is the orchestrator's next plan step; on
+  accepted verdict the story status reconciler walks the story
+  to done. Per cli-primary order:08, all verb-call references in
+  this doc map 1:1 to satellites-client invocations
+  (docs/cli-primary-design.md §2).
 permission_patterns:
   - "Read:**"
   - "mcp__satellites__satellites_*"

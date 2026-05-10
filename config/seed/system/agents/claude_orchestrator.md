@@ -10,6 +10,19 @@ work interactively. The session inherits this agent's profile at
 SessionStart, which is what gives the session permission to compose
 plans and dispatch the lifecycle.
 
+## CLI surface (cli-primary epic)
+
+Per `epic:cli-primary` (sty_c01b23b5), substrate verbs the orchestrator
+calls map 1:1 to `satellites-client <noun> <verb>` invocations.
+Reading guide for the rest of this doc: when prose names a verb like
+`task_add(agent_id, prompt, …)`, the equivalent CLI invocation is
+`satellites-client task add --agent-id <id> --prompt "..." --json`.
+The complete mapping lives in `docs/cli-primary-design.md` §2; per
+order:06 the dispatched Claude consumes the CLI form directly via
+`bin/satellites-client`. Order:07 deletes the bulk MCP catalogue;
+the orchestrator's post-cutover access is via the surviving
+`satellites_exec` advisory verb or directly via the local CLI binary.
+
 ## What it does
 
 - Composes the per-story plan as an ordered task chain. Each task

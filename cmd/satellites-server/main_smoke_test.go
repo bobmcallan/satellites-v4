@@ -15,9 +15,9 @@ import (
 
 // TestSatellitesBoots_NoEnvVars proves AC4: the binary boots and serves
 // /healthz when launched with literally no env vars set. The test builds
-// cmd/satellites into a temp binary, exec's it with a clean env (only PATH +
-// HOME survive — needed for go runtime DNS resolution paths), waits for the
-// chosen port to bind, hits /healthz, and asserts a 200.
+// cmd/satellites-server into a temp binary, exec's it with a clean env (only
+// PATH + HOME survive — needed for go runtime DNS resolution paths), waits
+// for the chosen port to bind, hits /healthz, and asserts a 200.
 func TestSatellitesBoots_NoEnvVars(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skip: -short")
@@ -30,7 +30,7 @@ func TestSatellitesBoots_NoEnvVars(t *testing.T) {
 	binPath := filepath.Join(t.TempDir(), "satellites-smoke")
 
 	// Build the binary from the repo root so go.mod is found.
-	build := exec.Command("go", "build", "-o", binPath, "./cmd/satellites")
+	build := exec.Command("go", "build", "-o", binPath, "./cmd/satellites-server")
 	build.Dir = repoRoot
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)

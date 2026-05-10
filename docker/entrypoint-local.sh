@@ -6,4 +6,4 @@
 # seed hook; keep this stub until story 10.9 introduces the doc seeding path.
 set -e
 
-exec /app/satellites
+exec /app/satellites-server

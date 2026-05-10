@@ -106,7 +106,7 @@ var GitCommit = "unknown" // overridden by ldflags from git rev-parse --short HE
 func GetFullVersion() string  // "<version> (build: <build>, commit: <commit>)"
 ```
 
-Both `cmd/satellites/main.go` and `cmd/satellites-agent/main.go` call `config.GetFullVersion()` in their boot line. A plain `go build ./...` produces a runnable binary stamped with the three defaults above.
+Both `cmd/satellites-server/main.go` and `cmd/satellites-agent/main.go` call `config.GetFullVersion()` in their boot line. A plain `go build ./...` produces a runnable binary stamped with the three defaults above.
 
 ## Server configuration
 
@@ -220,7 +220,7 @@ Tests use `EMBEDDINGS_PROVIDER=stub` (deterministic, no network); see
 ### Reviewer (Gemini)
 
 When `GEMINI_API_KEY` is set, the contract reviewer is the Gemini-backed
-implementation (`cmd/satellites/main.go::buildReviewer`). When unset, the
+implementation (`cmd/satellites-server/main.go::buildReviewer`). When unset, the
 reviewer falls back to `AcceptAll` with a startup warning so dev/test
 boots stay green.
 

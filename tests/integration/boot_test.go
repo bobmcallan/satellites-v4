@@ -24,7 +24,7 @@ const bootTimeout = 10 * time.Second
 // For docker-image verification see TestHealthzReturnsVersion in http_test.go.
 func TestServerBootsWithVersionLine(t *testing.T) {
 	t.Parallel()
-	bin := buildBinary(t, "satellites")
+	bin := buildBinary(t, "satellites-server")
 
 	// Use a non-default port so the test doesn't collide with a running
 	// local instance. Port 0 would be nice but the binary doesn't parse

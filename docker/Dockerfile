@@ -22,12 +22,17 @@ RUN apk add --no-cache git && \
         -X 'github.com/bobmcallan/satellites/internal/config.Version=${VERSION}' \
         -X 'github.com/bobmcallan/satellites/internal/config.Build=${BUILD}' \
         -X 'github.com/bobmcallan/satellites/internal/config.GitCommit=${GIT_COMMIT}'" \
-        -o /bin/satellites ./cmd/satellites && \
+        -o /bin/satellites-server ./cmd/satellites-server && \
     go build -ldflags="-s -w \
         -X 'github.com/bobmcallan/satellites/internal/config.Version=${VERSION}' \
         -X 'github.com/bobmcallan/satellites/internal/config.Build=${BUILD}' \
         -X 'github.com/bobmcallan/satellites/internal/config.GitCommit=${GIT_COMMIT}'" \
-        -o /bin/satellites-agent ./cmd/satellites-agent
+        -o /bin/satellites-agent ./cmd/satellites-agent && \
+    go build -ldflags="-s -w \
+        -X 'github.com/bobmcallan/satellites/internal/config.Version=${VERSION}' \
+        -X 'github.com/bobmcallan/satellites/internal/config.Build=${BUILD}' \
+        -X 'github.com/bobmcallan/satellites/internal/config.GitCommit=${GIT_COMMIT}'" \
+        -o /bin/satellites-client ./cmd/satellites-client
 
 FROM alpine:3.21
 
@@ -49,8 +54,9 @@ ENV CHROME_BIN=/usr/bin/chromium-browser
 
 WORKDIR /app
 
-COPY --from=builder /bin/satellites /app/satellites
+COPY --from=builder /bin/satellites-server /app/satellites-server
 COPY --from=builder /bin/satellites-agent /app/satellites-agent
+COPY --from=builder /bin/satellites-client /app/satellites-client
 COPY docker/entrypoint-local.sh /app/docker/
 # story_7bfd629c: ship the system-tier configuration markdown into the
 # image. The boot path resolves these via SATELLITES_SEED_DIR /
@@ -60,4 +66,4 @@ RUN chmod +x /app/docker/entrypoint-local.sh
 
 EXPOSE 8080
 
-ENTRYPOINT ["/app/satellites"]
+ENTRYPOINT ["/app/satellites-server"]

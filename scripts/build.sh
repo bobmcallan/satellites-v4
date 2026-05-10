@@ -55,16 +55,21 @@ stamp_ldflags() {
 }
 
 cmd_server() {
-  go build -ldflags "$(stamp_ldflags satellites)" -o satellites ./cmd/satellites
+  go build -ldflags "$(stamp_ldflags satellites)" -o satellites-server ./cmd/satellites-server
 }
 
 cmd_agent() {
   go build -trimpath -ldflags "$(stamp_ldflags satellites-agent)" -o satellites-agent ./cmd/satellites-agent
 }
 
+cmd_client() {
+  go build -ldflags "$(stamp_ldflags satellites)" -o satellites-client ./cmd/satellites-client
+}
+
 cmd_build() {
   cmd_server
   cmd_agent
+  cmd_client
 }
 
 cmd_fmt() {
@@ -88,7 +93,7 @@ cmd_test() {
 }
 
 cmd_clean() {
-  rm -f satellites satellites-agent
+  rm -f satellites satellites-server satellites-agent satellites-client
 }
 
 cmd_docker() {
@@ -112,10 +117,11 @@ usage() {
 usage: script/build.sh <command>
 
 Commands:
-  build    Build satellites and satellites-agent, each stamped from its own
-           .version section (default)
-  server   Build satellites only (reads [satellites])
+  build    Build satellites-server, satellites-agent, satellites-client
+           (default; each binary stamped from its .version section)
+  server   Build satellites-server only (reads [satellites])
   agent    Build satellites-agent only (reads [satellites-agent])
+  client   Build satellites-client only (reads [satellites])
   fmt      Run gofmt -s -w .
   vet      Run go vet ./...
   lint     Run golangci-lint run (skipped if not installed)
@@ -132,6 +138,7 @@ main() {
     build)  cmd_build ;;
     server) cmd_server ;;
     agent)  cmd_agent ;;
+    client) cmd_client ;;
     fmt)    cmd_fmt ;;
     vet)    cmd_vet ;;
     lint)   cmd_lint ;;

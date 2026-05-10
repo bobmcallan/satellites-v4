@@ -721,7 +721,7 @@ func (o *oauthRoutes) Register(mux *http.ServeMux) {
 
 // projectListAller is the optional ListAll surface a project store may
 // implement. Both project.MemoryStore and project.SurrealStore satisfy
-// it today; the interface is declared here so cmd/satellites stays
+// it today; the interface is declared here so cmd/satellites-server stays
 // decoupled from the concrete types.
 type projectListAller interface {
 	ListAll(ctx context.Context) ([]project.Project, error)

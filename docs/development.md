@@ -20,7 +20,7 @@ go test ./tests/integration/... -v
 
 ## What the harness exercises today
 
-- **`cmd/satellites`** — builds from source, runs, asserts the output begins with `satellites-server ` and contains the `build: …, commit: …` fragments from `internal/config.GetFullVersion()`.
+- **`cmd/satellites-server`** — builds from source, runs, asserts the output begins with `satellites-server ` and contains the `build: …, commit: …` fragments from `internal/config.GetFullVersion()`.
 - **`cmd/satellites-agent`** — same shape, prefix `satellites-agent `.
 
 Tests run in parallel (`t.Parallel()`). The bounded `runBinary` timeout is 10 s, generous for one-shot stubs and safe for future short-running modes.

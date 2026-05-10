@@ -14,7 +14,9 @@ scripts/satellites.toml
 
 # Go build output
 /satellites
+/satellites-server
 /satellites-agent
+/satellites-client
 /bin/
 *.exe
 *.test

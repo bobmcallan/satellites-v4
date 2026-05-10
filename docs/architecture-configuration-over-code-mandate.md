@@ -162,13 +162,13 @@ problem.
 ## Gemini wiring
 
 `internal/reviewer/reviewer.go` already defines the `Reviewer` interface
-and a default `AcceptAll` implementation. `cmd/satellites/main.go`
+and a default `AcceptAll` implementation. `cmd/satellites-server/main.go`
 constructs `mcpserver.Deps` without a `Reviewer:` field today, so the
 server runs with `AcceptAll` in production — every `validation_mode=llm`
 contract close is silently auto-accepted.
 
 Story_b4d1107c lands a Gemini-backed `reviewer.Reviewer` at
-`internal/reviewer/gemini.go`. Wiring in `cmd/satellites/main.go`
+`internal/reviewer/gemini.go`. Wiring in `cmd/satellites-server/main.go`
 constructs the Gemini reviewer when `GEMINI_API_KEY` is present and
 falls back to `AcceptAll` with a warning log when not. Tests retain
 `AcceptAll` via the existing test injection — no test breakage.

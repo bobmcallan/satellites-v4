@@ -55,7 +55,7 @@ emits are wired.
 | Source | File | Topics | Replay | Notes |
 |---|---|---|---|---|
 | `internal/wshandler/wshandler.go` | `wshandler.go:257` (`SubscribeSince`) | one per portal client; format `ws:<workspace_id>` | hub ring buffer (cap 500) replays from `since_id` cursor | The only first-class consumer. Forwards every event to the connected gorilla/websocket client. Fail modes: `ErrNotMember`, `ErrInvalidTopic` produce typed JSON error frames. |
-| `internal/storystatus/reconciler.go` | (registered via `task.Store.AddListener` at `cmd/satellites/main.go`) | n/a — listener fan-out, not topic-keyed | n/a | sty_051bd266 — task.Listener, not a hub subscriber. Out of scope for this migration. |
+| `internal/storystatus/reconciler.go` | (registered via `task.Store.AddListener` at `cmd/satellites-server/main.go`) | n/a — listener fan-out, not topic-keyed | n/a | sty_051bd266 — task.Listener, not a hub subscriber. Out of scope for this migration. |
 
 ### Client-side subscribers
 
@@ -75,7 +75,7 @@ emits are wired.
   `WorkspaceID` matches the topic suffix (`Publish` path). Mismatches
   produce a `kind:hub-mismatch` ledger row.
 - `internal/hubemit.Publisher` is the typed contract; today only
-  `cmd/satellites/main.go`'s `hubPublisher` (a thin adapter onto
+  `cmd/satellites-server/main.go`'s `hubPublisher` (a thin adapter onto
   `*hub.AuthHub`) implements it.
 
 ## Migration target — what each consumer becomes
@@ -151,7 +151,7 @@ the model this doc describes:
   `SELECT … FROM <table> WHERE updated_at > $cursor AND
   workspace_id IN $ids` runs first, replaying any events missed
   during the outage; then the live stream resumes.
-- The subscriber is wired in `cmd/satellites/main.go` as a SECOND
+- The subscriber is wired in `cmd/satellites-server/main.go` as a SECOND
   emit path alongside the hub. No consumer reads from it yet.
 
 ## Out of scope for this story

@@ -203,7 +203,7 @@ Sweep cron (mirrors `SurrealSessionStore.Sweep`): delete expired `oauth_code` an
 
 ---
 
-## 8. Wiring (cmd/satellites/main.go)
+## 8. Wiring (cmd/satellites-server/main.go)
 
 After the existing `auth.NewBearerValidator` call:
 
@@ -305,7 +305,7 @@ For reviewability, split the port into focused PRs. Each is independently testab
 | 3 | OAuthServer handlers (no wiring yet) | `internal/auth/oauth_server.go` + tests with stub store | low |
 | 4 | Config additions (fields, defaults, env, warnings) | `internal/config/config.go` + tests | very low |
 | 5 | BearerValidator JWT branch + WWW-Authenticate augmentation | `internal/auth/bearer.go`, `internal/mcpserver/auth.go` + tests | medium (touches existing /mcp middleware) |
-| 6 | mcp_session_id bridge in login handler + main.go wiring + route registration | `internal/auth/handlers.go`, `cmd/satellites/main.go` | medium (touches existing login flow) |
+| 6 | mcp_session_id bridge in login handler + main.go wiring + route registration | `internal/auth/handlers.go`, `cmd/satellites-server/main.go` | medium (touches existing login flow) |
 | 7 | Integration test for full OAuth chain | `tests/integration/mcp_oauth_e2e_test.go` | adds confidence |
 | 8 | Infra repo update: re-add `SATELLITES_JWT_SECRET` to `.env.pprod` + `fly/secrets/deploy.sh` | (separate repo: `satellites-infra`) | low |
 

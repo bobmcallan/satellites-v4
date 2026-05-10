@@ -130,7 +130,7 @@ no path forwards env vars directly into the container.
 ### Boot-log evidence
 
 `internal/config.Load()` populates `cfg.LoadedTOMLPath()` with the
-path it read; `cmd/satellites/main.go` emits a
+path it read; `cmd/satellites-server/main.go` emits a
 `config: loaded TOML path=…` info line at boot. Tests assert on
 this log via `logs()` to prove the TOML loader actually ran (not
 that the container booted on env+defaults alone).

@@ -1,9 +1,9 @@
 # satellites-agent.example.toml — every TOML key recognised by the
 # satellites-agent binary's config loader. Copy to
-# satellites-agent.toml in the working directory (or supply via
-# --config or SATELLITES_AGENT_CONFIG) and edit the values for your
-# environment. Defaults below are the loader's hard-coded defaults;
-# omitting a key leaves it at the default.
+# bin/satellites-agent.toml (alongside the built binary), or supply
+# via --config or SATELLITES_AGENT_CONFIG, then edit the values for
+# your environment. Defaults below are the loader's hard-coded
+# defaults; omitting a key leaves it at the default.
 
 # Identifies this worker on heartbeat and shutdown ledger rows. Empty
 # defaults to a per-process anonymous id; set a stable value when

@@ -1,0 +1,46 @@
+# satellites-client.example.toml — every TOML key recognised by the
+# satellites-client binary's config loader (internal/cliconfig). Copy
+# to bin/satellites-client.toml (alongside the built binary), or
+# supply via --config or SATELLITES_CLIENT_CONFIG, then edit the
+# values for your environment. Defaults below are the loader's
+# hard-coded defaults; omitting a key leaves it at the default.
+
+# Canonical satellites-server URL — full MCP path. Empty falls back
+# to the binary's compiled-in default (typically the local-dev
+# satellites server).
+server         = ""
+
+# Api-key bearer the CLI sends as `Authorization: Bearer …`. Never
+# logged. Set to a satellites-issued sat_-prefixed token. Empty falls
+# through to ~/.satellites/credentials.json.
+token          = ""
+
+# Reserved for the order:07a-L3 main slice (sty_068a6c46). Default
+# false; the carve-out (sty_5da2ed4d) shipped the field so operators
+# can populate it without a re-edit when the auth subcommand lands.
+oauth_enabled  = false
+
+# Operator's git working tree the in-process runtime drives
+# (sty_3b3e4e66 Layer E first consumer). Default "." resolves to the
+# CLI's working directory.
+repo_path      = "."
+
+# Directory where per-task worktrees live. Mirrors satellites-agent's
+# worktree_root.
+worktree_root  = ".satellites-agents/"
+
+# Branch convention the runtime stamps on per-task worktrees.
+# Substitutions: {task_id}, {base_sha}.
+branch_template = "agent-{task_id}-from-{base_sha}"
+
+# Hard ceiling on in-process runner invocations. Mirrors the agent
+# ceiling.
+execute_timeout = "30m"
+
+# Arbor log level. Accepted: trace, debug, info, warn, error.
+log_level      = "info"
+
+# Directory for rolling log files (filename: satellites-client.log;
+# rotation handled by arbor's phuslu/log backend). Empty disables the
+# file writer — the CLI runs stdout-only.
+log_path       = ""

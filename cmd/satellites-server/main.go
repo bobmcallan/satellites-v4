@@ -23,6 +23,7 @@ import (
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
 	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/changelog"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/codeindex"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/configseed"
@@ -633,6 +634,28 @@ func main() {
 		OAuthValidator: bearerValidator,
 	})
 	srv.Mount("/mcp", mcpAuth(mcp))
+
+	// sty_068a6c46: /api/v1/* HTTP API surface. Same auth pipeline as
+	// /mcp; wires the 20 typed-client verbs into POST routes. The
+	// MCP path stays live in parallel until order:07d retires it.
+	apiClient := client.New(client.Deps{
+		Documents:        docStore,
+		Projects:         projStore,
+		Ledger:           ledgerStore,
+		Stories:          storyStore,
+		Workspaces:       wsStore,
+		Sessions:         sessionStore,
+		Tasks:            taskStore,
+		Repos:            repoStore,
+		Changelog:        changelogStore,
+		StartedAt:        startedAt,
+		DefaultProjectID: defaultProjectID,
+		Logger:           logger,
+	})
+	apiRegistrar := httpserver.NewAPIRegistrar(apiClient)
+	apiMux := http.NewServeMux()
+	apiRegistrar.Register(apiMux)
+	srv.Mount("/api/v1/", mcpAuth(http.StripPrefix("", apiMux)))
 
 	// Dispatch watchdog: scans for expired claims and reclaims them
 	// into the queue. Story_b4513c8c. Runs only when the task store is

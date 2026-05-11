@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -1206,39 +1205,23 @@ func (s *Server) handleDocumentIngestFile(ctx context.Context, req mcpgo.CallToo
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
+// handleDocumentGet implements document_get. Thin forwarder per
+// cli-primary order:07a-layer-2 (sty_df1cb227 Slice B): resolves
+// project + workspace context and delegates to client.DocumentGet.
 func (s *Server) handleDocumentGet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	id := req.GetString("id", "")
-	if id != "" {
-		doc, err := getByIDScoped(ctx, s.docs, id, memberships)
-		if err != nil {
-			return mcpgo.NewToolResultError(err.Error()), nil
-		}
-		if filter := req.GetString("type", ""); filter != "" && doc.Type != filter {
-			return mcpgo.NewToolResultError(fmt.Sprintf("document_get: row %s has type=%q, not %q", id, doc.Type, filter)), nil
-		}
-		body, _ := json.Marshal(doc)
-		s.logger.Info().
-			Str("method", "tools/call").
-			Str("tool", "document_get").
-			Str("id", id).
-			Int64("duration_ms", time.Since(start).Milliseconds()).
-			Msg("mcp tool call")
-		return mcpgo.NewToolResultText(string(body)), nil
-	}
-	name, err := req.RequireString("name")
-	if err != nil {
+	name := req.GetString("name", "")
+	if id == "" && name == "" {
 		return mcpgo.NewToolResultError("either id or name is required"), nil
 	}
-	// Hierarchical name lookup: project → workspace → system. The
-	// project-resolution branch is lenient: a caller with no owned
-	// project (fresh user reading a seed agent) still resolves system-
-	// tier rows by name, so an error from resolveProjectID drops us
-	// to projectID="" rather than aborting the request.
-	projectID := req.GetString("project_id", "")
-	resolvedID, projErr := s.resolveProjectID(ctx, projectID, caller, memberships)
+	// Hierarchical name lookup leniency (sty_e2bfeffa): a caller with
+	// no owned project still resolves system-tier rows by name, so an
+	// error from resolveProjectID drops us to resolvedID="" rather
+	// than aborting the request.
+	resolvedID, projErr := s.resolveProjectID(ctx, req.GetString("project_id", ""), caller, memberships)
 	if projErr != nil {
 		resolvedID = ""
 	}
@@ -1246,21 +1229,28 @@ func (s *Server) handleDocumentGet(ctx context.Context, req mcpgo.CallToolReques
 	if wsID == "" {
 		wsID = s.resolveCallerWorkspaceID(ctx, caller)
 	}
-	docType := req.GetString("type", "")
-	doc, err := s.docs.ResolveByName(ctx, docType, name, wsID, resolvedID, memberships)
+	doc, err := s.cli().DocumentGet(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.DocumentGetInput{
+		ID:                id,
+		Name:              name,
+		Type:              req.GetString("type", ""),
+		WorkspaceID:       wsID,
+		ResolvedProjectID: resolvedID,
+		Memberships:       memberships,
+	})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	body, _ := json.Marshal(doc)
-	s.logger.Info().
+	event := s.logger.Info().
 		Str("method", "tools/call").
 		Str("tool", "document_get").
-		Str("project_id", resolvedID).
-		Str("workspace_id", wsID).
-		Str("name", name).
-		Str("scope", doc.Scope).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+		Int64("duration_ms", time.Since(start).Milliseconds())
+	if id != "" {
+		event.Str("id", id)
+	} else {
+		event.Str("project_id", resolvedID).Str("workspace_id", wsID).Str("name", name).Str("scope", doc.Scope)
+	}
+	event.Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
@@ -1412,19 +1402,17 @@ func (s *Server) handleDocumentUpdate(ctx context.Context, req mcpgo.CallToolReq
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
+// handleDocumentList implements document_list. Thin forwarder per
+// cli-primary order:07a-layer-2 (sty_df1cb227 Slice B). The lenient
+// project-resolution semantics (sty_e2bfeffa) — a caller without an
+// owned project still sees workspace + system tiers — are preserved
+// at this seam; client.DocumentList walks the same tier ladder via
+// the store's ResolveList.
 func (s *Server) handleDocumentList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	// Hierarchical list lookup: project → workspace → system. Mirrors
-	// handleDocumentGet's project-resolution shape (sty_e2bfeffa) so the
-	// typed `_list` wrappers and the generic verb walk the same tier
-	// ladder ResolveByName uses. The project-resolution branch is
-	// lenient: a caller without an owned project still resolves the
-	// workspace + system tiers, so an error from resolveProjectID drops
-	// us to projectID="" rather than aborting the request.
-	projectID := req.GetString("project_id", "")
-	resolvedID, projErr := s.resolveProjectID(ctx, projectID, caller, memberships)
+	resolvedID, projErr := s.resolveProjectID(ctx, req.GetString("project_id", ""), caller, memberships)
 	if projErr != nil {
 		resolvedID = ""
 	}
@@ -1443,7 +1431,11 @@ func (s *Server) handleDocumentList(ctx context.Context, req mcpgo.CallToolReque
 	if opts.Limit > 500 {
 		opts.Limit = 500
 	}
-	rows, err := listScoped(ctx, s.docs, opts, wsID, memberships)
+	rows, err := s.cli().DocumentList(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.DocumentListInput{
+		Options:     opts,
+		WorkspaceID: wsID,
+		Memberships: memberships,
+	})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -1845,6 +1837,10 @@ func (s *Server) handleProjectList(ctx context.Context, req mcpgo.CallToolReques
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
+// handleLedgerAppend implements ledger_append. Thin forwarder per
+// cli-primary order:07a-layer-2 (sty_df1cb227 Slice B): resolves
+// project/workspace + global_admin impersonation policy, parses
+// structured/expires_at, delegates to client.LedgerAppend.
 func (s *Server) handleLedgerAppend(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
@@ -1856,50 +1852,43 @@ func (s *Server) handleLedgerAppend(ctx context.Context, req mcpgo.CallToolReque
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	content := req.GetString("content", "")
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	resolvedID, err := s.resolveProjectID(ctx, projectID, caller, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	wsID := s.resolveProjectWorkspaceID(ctx, resolvedID)
-	entryType, classifiedTags := classifyLedgerEvent(eventType)
-	tags := append([]string{}, classifiedTags...)
-	tags = append(tags, req.GetStringSlice("tags", nil)...)
-
-	entry := ledger.LedgerEntry{
-		WorkspaceID: wsID,
-		ProjectID:   resolvedID,
-		StoryID:     ledger.StringPtr(req.GetString("story_id", "")),
-		Type:        entryType,
-		Tags:        tags,
-		Content:     content,
-		Durability:  req.GetString("durability", ""),
-		SourceType:  req.GetString("source_type", ""),
-		Sensitive:   req.GetBool("sensitive", false),
-		CreatedBy:   caller.UserID,
+	in := client.LedgerAppendInput{
+		ResolvedProjectID: resolvedID,
+		WorkspaceID:       wsID,
+		StoryID:           req.GetString("story_id", ""),
+		EventType:         eventType,
+		Content:           req.GetString("content", ""),
+		Tags:              req.GetStringSlice("tags", nil),
+		Durability:        req.GetString("durability", ""),
+		SourceType:        req.GetString("source_type", ""),
+		Sensitive:         req.GetBool("sensitive", false),
+		Now:               time.Now().UTC(),
 	}
 	// story_3548cde2: stamp impersonation when a global_admin writes
-	// outside their own workspace memberships. Empty when the actor is
-	// in the workspace they're acting on.
+	// outside their own workspace memberships.
 	if caller.GlobalAdmin && wsID != "" && !ledgerWorkspaceInMemberships(wsID, memberships) {
-		entry.ImpersonatingAsWorkspace = wsID
+		in.ImpersonatingAsWorkspace = wsID
 	}
 	if structured := req.GetString("structured", ""); structured != "" {
 		if !json.Valid([]byte(structured)) {
 			return mcpgo.NewToolResultError("structured must be valid JSON"), nil
 		}
-		entry.Structured = []byte(structured)
+		in.Structured = []byte(structured)
 	}
 	if expires := req.GetString("expires_at", ""); expires != "" {
 		t, err := time.Parse(time.RFC3339, expires)
 		if err != nil {
 			return mcpgo.NewToolResultError("expires_at must be RFC3339"), nil
 		}
-		entry.ExpiresAt = &t
+		in.ExpiresAt = &t
 	}
-
-	e, err := s.ledger.Append(ctx, entry, time.Now().UTC())
+	e, err := s.cli().LedgerAppend(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, in)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -2220,6 +2209,10 @@ func (s *Server) handleStoryList(ctx context.Context, req mcpgo.CallToolRequest)
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
+// handleStoryUpdateStatus implements story_update_status. Thin
+// forwarder per cli-primary order:07a-layer-2 (sty_df1cb227 Slice B).
+// The wire layer pre-resolves project access; client.StoryUpdateStatus
+// owns template-hook evaluation + the UpdateStatus call.
 func (s *Server) handleStoryUpdateStatus(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
@@ -2232,6 +2225,10 @@ func (s *Server) handleStoryUpdateStatus(ctx context.Context, req mcpgo.CallTool
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	memberships := s.resolveCallerMemberships(ctx, caller)
+	// Pre-resolve project access. Existing-row lookup mirrors the
+	// typed method's so the wire layer can reject cross-tenant access
+	// with the same "story not found" envelope the typed method uses
+	// for membership-scoped misses.
 	existing, err := s.stories.GetByID(ctx, id, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError("story not found"), nil
@@ -2239,23 +2236,12 @@ func (s *Server) handleStoryUpdateStatus(ctx context.Context, req mcpgo.CallTool
 	if _, err := s.resolveProjectID(ctx, existing.ProjectID, caller, memberships); err != nil {
 		return mcpgo.NewToolResultError("story not found"), nil
 	}
-	// Sty_d2a03cea: consult the category's story_template (if any) and
-	// evaluate its lifecycle hooks for the target status. Failed
-	// structured checks block the transition with a natural-language
-	// explanation so callers know exactly what to fix. Missing template
-	// = no hooks = pass-through (forward-compat for categories without
-	// a template yet).
-	if t, ok := s.loadStoryTemplate(ctx, existing.Category); ok {
-		ev := story.EvaluationContext{
-			LedgerEntriesForStory: func(ctx context.Context, storyID string) ([]ledger.LedgerEntry, error) {
-				return s.ledger.List(ctx, existing.ProjectID, ledger.ListOptions{StoryID: storyID, Limit: 50}, memberships)
-			},
-		}
-		if failures := t.EvaluateTransition(ctx, status, existing, ev); len(failures) > 0 {
-			return mcpgo.NewToolResultError("transition blocked by " + existing.Category + " story template:\n  - " + strings.Join(failures, "\n  - ")), nil
-		}
-	}
-	updated, err := s.stories.UpdateStatus(ctx, id, status, caller.UserID, time.Now().UTC(), memberships)
+	updated, err := s.cli().StoryUpdateStatus(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.StoryUpdateStatusInput{
+		ID:          id,
+		Status:      status,
+		Memberships: memberships,
+		Now:         s.nowUTC(),
+	})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -2274,6 +2260,8 @@ func (s *Server) handleStoryUpdateStatus(ctx context.Context, req mcpgo.CallTool
 // story. Validates the field name against the resolved category
 // template — fields not declared by the template are rejected with a
 // list of what the template does declare. Sty_d2a03cea.
+// handleStoryFieldSet implements story_field_set. Thin forwarder per
+// cli-primary order:07a-layer-2 (sty_df1cb227 Slice B).
 func (s *Server) handleStoryFieldSet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
@@ -2285,7 +2273,6 @@ func (s *Server) handleStoryFieldSet(ctx context.Context, req mcpgo.CallToolRequ
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	value := req.GetString("value", "")
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	existing, err := s.stories.GetByID(ctx, id, memberships)
 	if err != nil {
@@ -2294,21 +2281,13 @@ func (s *Server) handleStoryFieldSet(ctx context.Context, req mcpgo.CallToolRequ
 	if _, err := s.resolveProjectID(ctx, existing.ProjectID, caller, memberships); err != nil {
 		return mcpgo.NewToolResultError("story not found"), nil
 	}
-	if t, ok := s.loadStoryTemplate(ctx, existing.Category); ok {
-		known := false
-		names := make([]string, 0, len(t.Fields))
-		for _, f := range t.Fields {
-			names = append(names, f.Name)
-			if f.Name == field {
-				known = true
-				break
-			}
-		}
-		if !known {
-			return mcpgo.NewToolResultError(fmt.Sprintf("field %q is not declared by the %q story template (declared: %s)", field, existing.Category, strings.Join(names, ", "))), nil
-		}
-	}
-	updated, err := s.stories.SetField(ctx, id, field, value, caller.UserID, time.Now().UTC(), memberships)
+	updated, err := s.cli().StoryFieldSet(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.StoryFieldSetInput{
+		ID:          id,
+		Field:       field,
+		Value:       req.GetString("value", ""),
+		Memberships: memberships,
+		Now:         s.nowUTC(),
+	})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -2699,6 +2678,8 @@ func (s *Server) handleWorkspaceMemberRemove(ctx context.Context, req mcpgo.Call
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
+// handleLedgerList implements ledger_list. Thin forwarder per
+// cli-primary order:07a-layer-2 (sty_df1cb227 Slice B).
 func (s *Server) handleLedgerList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
@@ -2712,7 +2693,11 @@ func (s *Server) handleLedgerList(ctx context.Context, req mcpgo.CallToolRequest
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	opts := buildLedgerListOptions(req)
-	entries, err := s.ledger.List(ctx, resolvedID, opts, memberships)
+	entries, err := s.cli().LedgerList(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.LedgerListInput{
+		ResolvedProjectID: resolvedID,
+		Options:           opts,
+		Memberships:       memberships,
+	})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}

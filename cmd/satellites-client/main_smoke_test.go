@@ -116,7 +116,7 @@ func TestNounGroupsRegistered(t *testing.T) {
 	// AC4: every noun group + every verb appears under root.
 	expected := map[string]int{
 		"story":     9,
-		"task":      7,
+		"task":      8,
 		"ledger":    6,
 		"project":   7,
 		"workspace": 7,

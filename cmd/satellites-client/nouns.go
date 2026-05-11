@@ -73,6 +73,7 @@ func registerTaskNoun(root *cobra.Command) {
 		newTaskGetCmd(),  // order:04
 		verbStub("list", "task list", "List tasks."),
 		newTaskClaimCmd(),  // order:05
+		newTaskRunCmd(),    // sty_3e27a3f5 — orchestrator-invoked dispatch.
 		newTaskUpdateCmd(), // order:05
 		newTaskWalkCmd(),   // order:04
 		newTaskPlanCmd(),   // order:05

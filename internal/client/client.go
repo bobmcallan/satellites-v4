@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"time"
 
 	"github.com/bobmcallan/satellites/internal/changelog"
 	"github.com/bobmcallan/satellites/internal/document"
@@ -20,6 +21,7 @@ import (
 // scoping when calling the underlying stores.
 type Caller struct {
 	UserID      string
+	Email       string
 	Memberships []string
 }
 
@@ -37,6 +39,7 @@ type Deps struct {
 	Tasks      task.Store
 	Repos      repo.Store
 	Changelog  changelog.Store
+	StartedAt  time.Time
 }
 
 // Client carries the typed business surface that callers (MCP, CLI,

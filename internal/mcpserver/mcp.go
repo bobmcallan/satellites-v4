@@ -59,11 +59,6 @@ type Server struct {
 	replicateRunner  func(ctx context.Context, opts portalreplicate.RunOptions, actions []portalreplicate.Action) ([]portalreplicate.Result, portalreplicate.Summary, error)
 	nowFunc          func() time.Time
 	audit            *auditLogger
-	// client is the typed business surface extracted under cli-primary
-	// order:02 (sty_66c02002). Handlers shrink to thin adapters that
-	// delegate here. Populated unconditionally at New(); each typed
-	// method tolerates nil store deps and returns a structured error.
-	client *client.Client
 }
 
 // HandshakeFallbackInstructions is the literal MCP server-instructions
@@ -75,25 +70,23 @@ type Server struct {
 const HandshakeFallbackInstructions = "Satellites v4 — walking skeleton."
 
 // cli returns the typed business surface used by handlers extracted
-// under cli-primary order:02. Lazy-init lets unit tests that build
-// `Server` literals (without calling New) still reach typed methods —
-// a nil `s.client` materialises with the same store deps the literal
-// already carries. story_66c02002.
+// under cli-primary order:02. Rebuilds Deps on every call so test
+// fixtures that mutate Server store fields *after* New() (the
+// orchestratorFixture pattern that sets f.server.tasks late) reach
+// typed methods with a fresh snapshot. story_66c02002 + sty_df1cb227.
 func (s *Server) cli() *client.Client {
-	if s.client == nil {
-		s.client = client.New(client.Deps{
-			Documents:  s.docs,
-			Projects:   s.projects,
-			Ledger:     s.ledger,
-			Stories:    s.stories,
-			Workspaces: s.workspaces,
-			Sessions:   s.sessions,
-			Tasks:      s.tasks,
-			Repos:      s.repos,
-			Changelog:  s.changelog,
-		})
-	}
-	return s.client
+	return client.New(client.Deps{
+		Documents:  s.docs,
+		Projects:   s.projects,
+		Ledger:     s.ledger,
+		Stories:    s.stories,
+		Workspaces: s.workspaces,
+		Sessions:   s.sessions,
+		Tasks:      s.tasks,
+		Repos:      s.repos,
+		Changelog:  s.changelog,
+		StartedAt:  s.startedAt,
+	})
 }
 
 // resolveHandshakeInstructions returns the MCP server-instructions
@@ -180,21 +173,11 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	if s.indexer == nil {
 		s.indexer = codeindex.NewStub()
 	}
-	// sty_66c02002: typed business surface. Handlers extracted under
-	// cli-primary order:02 delegate here. Stores may be nil; the typed
-	// methods short-circuit with structured errors on nil deps so the
-	// wire shape stays identical pre/post-extraction.
-	s.client = client.New(client.Deps{
-		Documents:  s.docs,
-		Projects:   s.projects,
-		Ledger:     s.ledger,
-		Stories:    s.stories,
-		Workspaces: s.workspaces,
-		Sessions:   s.sessions,
-		Tasks:      s.tasks,
-		Repos:      s.repos,
-		Changelog:  s.changelog,
-	})
+	// sty_66c02002 + sty_df1cb227: typed business surface. cli() builds
+	// the per-call client.Deps snapshot — no eager init here, so test
+	// fixtures that wire stores after New() (the orchestratorFixture
+	// pattern that sets f.server.tasks late) see them at typed-method
+	// dispatch.
 
 	// sty_1493c077: per-call audit logger. Wraps every tool handler via
 	// mcp-go's middleware seam; writes one ledger row per call tagged
@@ -1000,28 +983,34 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.streamable.ServeHTTP(w, r)
 }
 
-// handleInfo is the satellites_info tool implementation.
+// handleInfo is the satellites_info tool implementation. Thin
+// forwarder per cli-primary order:07a-layer-2 (sty_df1cb227): parses
+// no args, calls the typed surface, marshals the result.
 func (s *Server) handleInfo(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	var userEmail string
-	if u, ok := auth.UserFrom(ctx); ok {
-		userEmail = u.Email
+	caller, _ := auth.UserFrom(ctx)
+	out, err := s.cli().SatellitesInfo(ctx, client.Caller{
+		UserID:      caller.UserID,
+		Email:       caller.Email,
+		Memberships: s.resolveCallerMemberships(ctx, caller),
+	}, client.SatellitesInfoInput{})
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	payload := map[string]any{
-		"version":    config.Version,
-		"build":      config.Build,
-		"commit":     config.GitCommit,
-		"user_email": userEmail,
-		"started_at": s.startedAt.UTC().Format(time.RFC3339),
-	}
-	body, err := json.Marshal(payload)
+	body, err := json.Marshal(map[string]any{
+		"version":    out.Version,
+		"build":      out.Build,
+		"commit":     out.Commit,
+		"user_email": out.UserEmail,
+		"started_at": out.StartedAt.Format(time.RFC3339),
+	})
 	if err != nil {
 		return nil, err
 	}
 	s.logger.Info().
 		Str("method", "tools/call").
 		Str("tool", "satellites_info").
-		Str("user_email", userEmail).
+		Str("user_email", out.UserEmail).
 		Int64("duration_ms", time.Since(start).Milliseconds()).
 		Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil

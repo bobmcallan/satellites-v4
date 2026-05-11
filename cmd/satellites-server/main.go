@@ -47,7 +47,7 @@ import (
 )
 
 func main() {
-	startedAt := time.Now()
+	startedAt := time.Now().UTC()
 
 	cfg, cfgWarnings := config.Load()
 

@@ -4,16 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/bobmcallan/satellites/internal/auth"
 	"strings"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+
+	"github.com/bobmcallan/satellites/internal/auth"
+	"github.com/bobmcallan/satellites/internal/client"
 )
 
 // handleStoryExportWalk implements story_export_walk: render a story's
 // task chain as paste-ready markdown for PR descriptions, delivery
-// reports, and stakeholder hand-offs. Reuses buildTaskWalk so the
+// reports, and stakeholder hand-offs. Reuses client.TaskWalk so the
 // markdown matches the JSON walk verbatim. sty_a248f4df.
 func (s *Server) handleStoryExportWalk(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	if s.stories == nil || s.tasks == nil {
@@ -35,7 +37,7 @@ func (s *Server) handleStoryExportWalk(ctx context.Context, req mcpgo.CallToolRe
 		body, _ := json.Marshal(map[string]any{"error": "story_not_found"})
 		return mcpgo.NewToolResultError(string(body)), nil
 	}
-	walk, err := s.buildTaskWalk(ctx, storyID, memberships)
+	walk, err := s.cli().TaskWalk(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.TaskWalkInput{StoryID: storyID, Memberships: memberships})
 	if err != nil {
 		body, _ := json.Marshal(map[string]any{"error": err.Error()})
 		return mcpgo.NewToolResultError(string(body)), nil
@@ -54,7 +56,7 @@ func (s *Server) handleStoryExportWalk(ctx context.Context, req mcpgo.CallToolRe
 // loops collapse under one H2 ("## contract:develop ×3 (loop)") with
 // per-task H3 entries inside. Deterministic for snapshot testing —
 // the source tasks are already in CreatedAt order from buildTaskWalk.
-func renderWalkMarkdown(walk taskWalkResponse, description, ac, priority string, tags []string) string {
+func renderWalkMarkdown(walk client.TaskWalkOutput, description, ac, priority string, tags []string) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "# %s — %s\n", walk.Story.ID, walk.Story.Title)
 	sb.WriteString("\n")
@@ -82,7 +84,7 @@ func renderWalkMarkdown(walk taskWalkResponse, description, ac, priority string,
 	// in workflow sequence.
 	type group struct {
 		action  string
-		entries []taskWalkTask
+		entries []client.TaskWalkTask
 	}
 	groups := []group{}
 	groupIndex := map[string]int{}
@@ -94,7 +96,7 @@ func renderWalkMarkdown(walk taskWalkResponse, description, ac, priority string,
 		idx, ok := groupIndex[key]
 		if !ok {
 			groupIndex[key] = len(groups)
-			groups = append(groups, group{action: key, entries: []taskWalkTask{t}})
+			groups = append(groups, group{action: key, entries: []client.TaskWalkTask{t}})
 			continue
 		}
 		groups[idx].entries = append(groups[idx].entries, t)

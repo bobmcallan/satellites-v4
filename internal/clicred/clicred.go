@@ -3,7 +3,9 @@
 //
 //	1. --token <t> flag
 //	2. SATELLITES_TOKEN env var
-//	3. ~/.satellites/credentials.json (per-server keyed)
+//	3. bin/satellites-client.toml (loaded by internal/config.LoadClient;
+//	   passed in via ResolveWithTOML)
+//	4. ~/.satellites/credentials.json (per-server keyed)
 //
 // Per docs/cli-primary-design.md §3 ("Credential resolution").
 //
@@ -44,17 +46,29 @@ func DefaultCredentialsPath() (string, error) {
 // ErrNoToken is returned by Resolve when no token is found in any
 // of the three sources. The caller (Cobra root PreRun) maps it to
 // cliexit.Auth.
-var ErrNoToken = errors.New("no bearer token found (set --token, SATELLITES_TOKEN, or populate ~/.satellites/credentials.json)")
+var ErrNoToken = errors.New("no bearer token found (set --token, SATELLITES_TOKEN, populate bin/satellites-client.toml, or populate ~/.satellites/credentials.json)")
 
 // Resolve returns the bearer for the given server URL. flagToken
 // wins; then env; then the credentials file. Returns ErrNoToken
-// when none match.
+// when none match. Equivalent to ResolveWithTOML(flagToken, "", server).
 func Resolve(flagToken, server string) (string, error) {
+	return ResolveWithTOML(flagToken, "", server)
+}
+
+// ResolveWithTOML extends Resolve with a TOML-supplied token that
+// slots between env and credentials.json. The caller (typically
+// cmd/satellites-client/main.go's PreRun) loads bin/satellites-client.toml
+// via internal/config.LoadClient and threads the token in here so the
+// precedence chain stays linear.
+func ResolveWithTOML(flagToken, tomlToken, server string) (string, error) {
 	if flagToken != "" {
 		return flagToken, nil
 	}
 	if env := os.Getenv(EnvToken); env != "" {
 		return env, nil
+	}
+	if tomlToken != "" {
+		return tomlToken, nil
 	}
 	path, err := DefaultCredentialsPath()
 	if err != nil {

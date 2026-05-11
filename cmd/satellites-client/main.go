@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bobmcallan/satellites/internal/cliconfig"
 	"github.com/bobmcallan/satellites/internal/cliexit"
 	"github.com/bobmcallan/satellites/internal/clicred"
 	"github.com/bobmcallan/satellites/internal/cliio"
@@ -49,6 +50,7 @@ type PersistentFlags struct {
 	Select   string
 	Server   string
 	Token    string
+	Config   string
 }
 
 // pf is the package-level holder Cobra binds the persistent-flag
@@ -60,6 +62,12 @@ var pf PersistentFlags
 // credential chain. Subcommands consume it (orders 04+05) when
 // constructing the HTTP client.
 var resolvedToken string
+
+// resolvedClientConfig caches the TOML overlay loaded during
+// PersistentPreRunE. resolveCredentials threads cfg.Token through
+// clicred.ResolveWithTOML, and ensureRemote uses cfg.Server as the
+// server fallback between --server and DefaultServer.
+var resolvedClientConfig *cliconfig.Config
 
 // resolvedMode is the auto-JSON-aware output mode for this
 // invocation. Subcommands consume it when rendering output.
@@ -80,6 +88,16 @@ func newRootCmd() *cobra.Command {
 			// Auto-JSON resolution: --json flag OR stdout-not-tty
 			// flips Mode to ModeJSON. Subcommands read resolvedMode.
 			resolvedMode = cliio.Resolve(pf.JSON, os.Stdout)
+
+			// Client TOML config: load once, cache for resolveCredentials
+			// + ensureRemote. Explicit --config / SATELLITES_CLIENT_CONFIG
+			// paths are fatal when unreadable/unparseable; implicit
+			// (bin/, XDG) degrade to defaults with no surfaced warning.
+			cfg, _, err := cliconfig.Load(pf.Config)
+			if err != nil {
+				return cliexit.Wrap(cliexit.Usage, err)
+			}
+			resolvedClientConfig = cfg
 			return nil
 		},
 	}
@@ -95,7 +113,8 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().BoolVar(&pf.NoColor, "no-color", false, "Strip ANSI escape codes from output.")
 	root.PersistentFlags().StringVar(&pf.Select, "select", "", "Project the output down to one field name.")
 	root.PersistentFlags().StringVar(&pf.Server, "server", "", "Override the canonical satellites-server URL.")
-	root.PersistentFlags().StringVar(&pf.Token, "token", "", "Override the bearer (otherwise SATELLITES_TOKEN / credentials.json).")
+	root.PersistentFlags().StringVar(&pf.Token, "token", "", "Override the bearer (otherwise SATELLITES_TOKEN / bin/satellites-client.toml / credentials.json).")
+	root.PersistentFlags().StringVar(&pf.Config, "config", "", "Path to satellites-client TOML config (else SATELLITES_CLIENT_CONFIG / bin/satellites-client.toml / XDG).")
 
 	// Per-noun subcommand registration. Each function in the
 	// satelitesClientNouns slice attaches its noun group to root.
@@ -161,21 +180,36 @@ func emitErr(err error) {
 
 // resolveCredentials is the helper subcommands call (orders 04+05)
 // before making an HTTP call. Returns the bearer or an error keyed
-// to cliexit.Auth on failure.
+// to cliexit.Auth on failure. Precedence: --token flag > env >
+// bin/satellites-client.toml > ~/.satellites/credentials.json.
 func resolveCredentials() (string, error) {
 	if resolvedToken != "" {
 		return resolvedToken, nil
 	}
-	server := pf.Server
-	if server == "" {
-		server = DefaultServer
+	server := effectiveServer()
+	tomlToken := ""
+	if resolvedClientConfig != nil {
+		tomlToken = resolvedClientConfig.Token
 	}
-	tok, err := clicred.Resolve(pf.Token, server)
+	tok, err := clicred.ResolveWithTOML(pf.Token, tomlToken, server)
 	if err != nil {
 		return "", cliexit.Wrap(cliexit.Auth, err)
 	}
 	resolvedToken = tok
 	return tok, nil
+}
+
+// effectiveServer applies the server-URL precedence chain: --server
+// flag > bin/satellites-client.toml > DefaultServer. Server has no
+// dedicated env var; the TOML layer is the durable override surface.
+func effectiveServer() string {
+	if pf.Server != "" {
+		return pf.Server
+	}
+	if resolvedClientConfig != nil && resolvedClientConfig.Server != "" {
+		return resolvedClientConfig.Server
+	}
+	return DefaultServer
 }
 
 // ensureRemote constructs the cliremote.Client on first use. Verbs
@@ -189,10 +223,6 @@ func ensureRemote() (*cliremote.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	server := pf.Server
-	if server == "" {
-		server = DefaultServer
-	}
-	remote = cliremote.New(server, tok, nil)
+	remote = cliremote.New(effectiveServer(), tok, nil)
 	return remote, nil
 }

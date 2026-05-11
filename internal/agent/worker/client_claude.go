@@ -49,6 +49,15 @@ type claudeClient struct {
 	// gitRunner runs a git command in dir. Production uses exec.Command;
 	// tests inject a recorder.
 	gitRunner func(ctx context.Context, dir string, args ...string) ([]byte, error)
+
+	// stdoutTee / stderrTee mirror the dispatched claude subprocess's
+	// stdout+stderr to additional writers when set (alongside the
+	// per-task worktree log file). The daemon path leaves these nil —
+	// log-file-only is the existing behaviour. The orchestrator-invoked
+	// CLI path (sty_3e27a3f5: `satellites-client task run`) wires
+	// os.Stdout / os.Stderr so the operator sees live progress.
+	stdoutTee io.Writer
+	stderrTee io.Writer
 }
 
 // NewClaudeClient constructs a worker.Client whose Execute spawns a
@@ -61,6 +70,32 @@ func NewClaudeClient(cfg config.AgentConfig, logger arbor.ILogger) Client {
 		findHome:          os.UserHomeDir,
 		gitRunner:         runGit,
 	}
+}
+
+// RunDispatched executes one task synchronously via a fresh claude
+// subprocess in a per-task worktree, streaming the subprocess's
+// stdout+stderr to the supplied writers in addition to the standard
+// worktree log file. It is the orchestrator-invoked entry point used
+// by `satellites-client task run <task_id>` (sty_3e27a3f5).
+//
+// The daemon's NewClaudeClient + Loop / Claim / Execute / Close cycle
+// is unchanged — daemon callers never construct via RunDispatched and
+// the streaming tees default nil.
+//
+// The caller owns the task lifecycle: RunDispatched does NOT Claim
+// (the task_id is supplied directly) and does NOT Close (the
+// dispatched claude session writes its own task_update via the
+// substrate; the returned Outcome + exit-code-derived error let the
+// caller surface the result).
+func RunDispatched(ctx context.Context, cfg config.AgentConfig, logger arbor.ILogger, env TaskEnvelope, stdout, stderr io.Writer) (Outcome, error) {
+	c := &claudeClient{
+		placeholderClient: newPlaceholderClient(cfg, logger),
+		findHome:          os.UserHomeDir,
+		gitRunner:         runGit,
+		stdoutTee:         stdout,
+		stderrTee:         stderr,
+	}
+	return c.Execute(ctx, env)
 }
 
 // taskInfo captures the subset of task_get response the orchestrator
@@ -584,8 +619,20 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 	// Replace any pre-existing HOME=... entry so the cleansed value
 	// wins on every platform's exec lookup.
 	cmd.Env = enforceHomeEnv(cmd.Env, tmpHome)
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
+	// sty_3e27a3f5: when the orchestrator-invoked RunDispatched path
+	// sets stdoutTee/stderrTee, the subprocess output is mirrored live
+	// to the operator's terminal. The worktree log file is always
+	// written so forensic capture parity with the daemon path holds.
+	var stdoutSink io.Writer = logFile
+	var stderrSink io.Writer = logFile
+	if c.stdoutTee != nil {
+		stdoutSink = io.MultiWriter(logFile, c.stdoutTee)
+	}
+	if c.stderrTee != nil {
+		stderrSink = io.MultiWriter(logFile, c.stderrTee)
+	}
+	cmd.Stdout = stdoutSink
+	cmd.Stderr = stderrSink
 
 	runErr := cmd.Run()
 	exitCode := 0

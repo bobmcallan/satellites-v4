@@ -75,6 +75,12 @@ type taskInfo struct {
 	AgentID     string `json:"agent_id"`
 	Action      string `json:"action"`
 	Description string `json:"description"`
+	// Trigger is the orchestrator-supplied JSON blob the hot-path
+	// runners consult when present — push / merge honour `branch` +
+	// `sha`, story_close honours `resolution`. Empty when the task
+	// was minted without an explicit trigger payload (the chain-
+	// inference path handles that case). sty_4994caa3.
+	Trigger json.RawMessage `json:"trigger,omitempty"`
 }
 
 // agentInfo is the subset of agent_get the orchestrator reads.
@@ -496,26 +502,41 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 	ci, _ := c.fetchContractInfo(ctx, ti.Action, ti.ProjectID)
 	si, _ := c.fetchStoryInfo(ctx, ti.StoryID)
 
-	// sty_3b3e4e66 Layer A — log the contract's dispatch_class so
-	// operator observability is in place before the Layer B selector
-	// goes live. The log line is the only consumer of dispatchClass()
-	// in this commit; the Execute path remains the heavy claude
-	// subprocess for every contract regardless of dispatch_class.
-	if c.logger != nil {
-		c.logger.Debug().
-			Str("task_id", task.ID).
-			Str("contract", ci.Name).
-			Str("dispatch_class", ci.dispatchClass()).
-			Msg("worker dispatch resolved")
-	}
-
-	// Step 3: worktree.
 	if ti.WorkspaceID == "" {
 		ti.WorkspaceID = task.WorkspaceID
 	}
 	if ti.ProjectID == "" {
 		ti.ProjectID = task.ProjectID
 	}
+
+	// sty_4994caa3 Layer B — branch on the contract's dispatch_class.
+	// "hot" contracts (push, merge_to_main, story_close) execute
+	// in-process via runHotPath, skipping the seven-step claude
+	// subprocess that the heavy path runs. errHotUnimplemented falls
+	// back to the heavy path so a misclassified contract degrades
+	// gracefully rather than failing the dispatch.
+	dispatchClass := ci.dispatchClass()
+	if c.logger != nil {
+		c.logger.Debug().
+			Str("task_id", task.ID).
+			Str("contract", ci.Name).
+			Str("dispatch_class", dispatchClass).
+			Msg("worker dispatch resolved")
+	}
+	if dispatchClass == "hot" {
+		outcome, err := c.runHotPath(ctx, task, ti, ai, ci, si)
+		if err == nil || !errors.Is(err, errHotUnimplemented) {
+			return outcome, err
+		}
+		if c.logger != nil {
+			c.logger.Warn().
+				Str("task_id", task.ID).
+				Str("contract", ci.Name).
+				Msg("hot-path runner missing — falling back to heavy claude subprocess")
+		}
+	}
+
+	// Step 3: worktree.
 	worktreePath, _, err := c.ensureWorktree(ctx, task)
 	if err != nil {
 		return OutcomeFailure, err

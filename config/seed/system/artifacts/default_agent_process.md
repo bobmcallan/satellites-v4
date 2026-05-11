@@ -39,8 +39,18 @@ when the intent or principles need a refresh.
 
 ## Fetching context
 
-Fetch context via the `mcp__satellites__*` verbs in your tool
-list — names and parameters are authoritative there.
+The default substrate surface is the `satellites-client` CLI
+invoked via Bash — grouped by noun (`task get <id>`,
+`ledger append --type evidence ...`, `story update-status ...`).
+Auto-JSON when stdout is not a tty; pipe to `jq`. Auth + server
+URL resolve from the loader's config chain
+(flag > env > bin > XDG).
+
+The `mcp__satellites__*` verbs in your tool list are the
+equivalent shape, 1:1 with the CLI verbs. They're the fallback
+when no `satellites-client` binary resolves on PATH — for
+example, in MCP-only clients that don't shell out. Names and
+parameters in either form are authoritative.
 
 ## Operating principle
 

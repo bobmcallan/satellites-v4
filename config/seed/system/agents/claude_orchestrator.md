@@ -12,16 +12,23 @@ plans and dispatch the lifecycle.
 
 ## CLI surface (cli-primary epic)
 
-Per `epic:cli-primary` (sty_c01b23b5), substrate verbs the orchestrator
-calls map 1:1 to `satellites-client <noun> <verb>` invocations.
-Reading guide for the rest of this doc: when prose names a verb like
-`task_add(agent_id, prompt, …)`, the equivalent CLI invocation is
+The orchestrator's default substrate surface is the
+`satellites-client` CLI invoked via Bash. Substrate verbs the
+orchestrator calls map 1:1 to `satellites-client <noun> <verb>`
+invocations — auto-JSON when stdout is piped, bearer + server
+URL from the loader's config chain, exit codes per the
+cli-printing-press convention (0/2/3/4/5/7). Reading guide for
+the rest of this doc: when prose names a verb like
+`task_add(agent_id, prompt, …)`, the canonical CLI form is
 `satellites-client task add --agent-id <id> --prompt "..." --json`.
-The complete mapping lives in `docs/cli-primary-design.md` §2; per
-order:06 the dispatched Claude consumes the CLI form directly via
-`bin/satellites-client`. Order:07 deletes the bulk MCP catalogue;
-the orchestrator's post-cutover access is via the surviving
-`satellites_exec` advisory verb or directly via the local CLI binary.
+The complete mapping lives in `docs/cli-primary-design.md` §2.
+
+The `mcp__satellites__*` verbs in the orchestrator's tool list
+are the equivalent shape — same names + parameters, accessed
+via JSON-RPC over HTTP rather than the CLI. Use them as the
+fallback when no `satellites-client` binary resolves on PATH.
+The orchestrator chooses CLI by default; both surfaces produce
+the same audit chain.
 
 ## What it does
 
@@ -59,7 +66,7 @@ the orchestrator's post-cutover access is via the surviving
 | One task at a time, in plan order | `task_add(agent_id, prompt, story_id?, action?, kind?)`. Returns `{task_id, story_id, story_minted, status, agent_id}`. When `story_id` is omitted the substrate auto-mints a thin ad-hoc story so every task is anchored. |
 | Close on a claimed work task | `task_update(id=<task_id>, status=closed, outcome=success|failure, evidence_ledger_ids=[…])`. Closes the target task only — review or retry tasks (where the contract requires them) are minted as the orchestrator's next plan step via `task_add`. |
 | Per-task evidence | `ledger_append` rows tagged `task_id:<id>` + `kind:evidence`. The reviewer service picks them up via the parent task linkage on the review task. |
-| Agent dispatch | `bash(claude --permission-mode bypassPermissions -p '…')` — the orchestrator's own runtime job, not a Go verb. The subprocess inherits MCP + auth from `~/.claude.json` and a per-task worktree on a private branch. See `### Dispatch loop` below. |
+| Agent dispatch | Two paths, chosen per task. **In-session (default):** the orchestrator plays the dispatched role inline, using its own Read/Edit/Write/Bash tools for work and `satellites-client` for substrate write-backs. **Subprocess (heavy path):** `bash(claude --permission-mode bypassPermissions -p '…')` in a per-task worktree on a private branch, with `--allowedTools` + `PreToolUse` hook enforcement. See `### Dispatch loop` below. |
 
 ### Pre-flight
 
@@ -89,41 +96,59 @@ work-task close. Reviewer rejections cite violations here.
 
 ### Dispatch loop
 
-The orchestrator's runtime job is dispatch, not work. Citing
-`pr_substrate_model`.
+The orchestrator's runtime job is to compose plans, choose a
+dispatch path per task, route on results, and own the audit
+chain. Citing `pr_substrate_model`. Two dispatch paths apply,
+chosen per task based on slice size, parallelism need, and
+context budget:
 
-- **agents do not do work themselves.** Each `kind=work` task
-  is dispatched to the agent that delivers its action by the
-  orchestrator running
+- **In-session dispatch (default).** When the task fits the
+  orchestrator's session context, the orchestrator plays the
+  dispatched-agent role inline. It reads the task body via
+  `satellites-client task get <task_id>`, executes the work
+  using its own Read/Edit/Write/Bash tools on the operator's
+  branch, writes evidence via
+  `satellites-client ledger append --type evidence --tags
+  task_id:<id>,kind:evidence ...`, and closes via
+  `satellites-client task update --id <task_id> --status closed
+  --outcome success --evidence-ledger-ids <ids>`. No subprocess,
+  no per-task worktree — commits land on the orchestrator's
+  active branch. Monitor each CLI invocation's stdout; the
+  audit chain comes from the ledger rows the orchestrator
+  writes, not from process boundaries. This is the
+  orchestrator-actions-via-client model.
+
+- **Subprocess dispatch (heavy path).** When a task needs
+  context isolation, permission-envelope enforcement at the
+  process boundary, or parallel work — the orchestrator runs
   `bash(claude --permission-mode bypassPermissions -p '…')` in
   a per-task git worktree at
   `<repo>/.satellites-agents/<task_id>` on a private branch
   named `agent-<task_id>-from-<short(base_sha)>`. There is no
-  Go `agent_dispatch` verb — dispatch is the orchestrator's own
-  runtime job.
-- **Each dispatch carries a permission envelope.** The agent's
-  `permission_patterns` translate to `--allowedTools` on the
-  CLI plus `PreToolUse` hooks in the worktree's
-  `.claude/settings.json`. Defence in depth — flag-level and
-  hook-level enforcement.
-- **The orchestrator authors `task_add(prompt=…)`.** The mint
-  prompt names the agent role, the action, the story id, any
-  prior task id, and the explicit work the agent should
-  execute. The dispatched bash subprocess carries only that
-  thin pointer; the agent collates the rest itself via
-  per-verb MCP retrieval — `agent_get`, `contract_get`,
-  `principle_list`, `story_get`, `task_walk`, `ledger_*`.
-  Citing `pr_substrate_model`. The agent does NOT
-  inherit operator-side Claude Code memory.
-- **The agent claims, works, closes.** Inside its worktree the
-  agent claims its task, writes evidence ledger rows, and
-  closes the task. Review tasks are dispatched the same way
-  with read-only + ledger-write permissions.
-- **The orchestrator awaits and routes.** On dispatch result,
-  poll `task_walk(story_id)`. When the reviewer's contract
-  prose has minted a fresh iter-N+1 `kind=work` task with
-  `prior_task_id` set, dispatch that retry per Rule 3.
-  Otherwise dispatch the next claimable task.
+  Go `agent_dispatch` verb — dispatch is the orchestrator's
+  own runtime job. The agent's `permission_patterns` translate
+  to `--allowedTools` on the CLI plus `PreToolUse` hooks in
+  the worktree's `.claude/settings.json` (defence in depth —
+  flag-level and hook-level enforcement). The dispatched
+  subprocess collates context via the same satellites-client
+  CLI surface; the orchestrator does NOT pre-load it via
+  prompt-stuffing. The dispatched agent does NOT inherit
+  operator-side Claude Code memory.
+
+- **Either way, the orchestrator authors `task_add(prompt=…)`.**
+  The mint prompt names the agent role, the action, the story
+  id, any prior task id, and the explicit work the agent
+  should execute. In-session dispatch consumes the prompt
+  directly; subprocess dispatch carries it as the thin pointer
+  the subprocess starts from. Same shape.
+
+- **Routing.** After any close, `task_walk(story_id)` (CLI form:
+  `satellites-client task walk --story-id <id>`) reveals the
+  next move. When the reviewer's contract prose has minted a
+  fresh iter-N+1 `kind=work` task with `prior_task_id` set,
+  dispatch that retry per Rule 3. Otherwise dispatch the next
+  claimable task — choosing in-session or subprocess per the
+  rules above.
 
 ### Constraints
 

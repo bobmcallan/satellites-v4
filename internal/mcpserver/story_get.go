@@ -20,6 +20,7 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/bobmcallan/satellites/internal/agentprocess"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/project"
 	"github.com/bobmcallan/satellites/internal/story"
@@ -36,7 +37,7 @@ type storyView struct {
 	AgentProcess   string               `json:"agent_process,omitempty"`
 	Template       *story.Template      `json:"template,omitempty"`
 	IntentBody     string               `json:"intent_body,omitempty"`
-	Principles     []PrincipleEntry     `json:"principles,omitempty"`
+	Principles     []client.PrincipleEntry `json:"principles,omitempty"`
 }
 
 // handleStoryGet implements `story_get`. Workspace-scoped via
@@ -65,7 +66,7 @@ func (s *Server) handleStoryGet(ctx context.Context, req mcpgo.CallToolRequest) 
 	if s.projects != nil {
 		if p, err := s.projects.GetByID(ctx, st.ProjectID, memberships); err == nil {
 			view.Project = &p
-			bundle := s.buildOrientation(ctx, p)
+			bundle := s.cli().BuildOrientation(ctx, p)
 			view.IntentBody = bundle.IntentBody
 			view.Principles = bundle.Principles
 		}

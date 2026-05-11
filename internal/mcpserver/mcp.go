@@ -1621,7 +1621,7 @@ func (s *Server) handleProjectGet(ctx context.Context, req mcpgo.CallToolRequest
 		return mcpgo.NewToolResultError("project not found"), nil
 	}
 	view := s.buildProjectView(ctx, p)
-	bundle := s.buildOrientation(ctx, p)
+	bundle := s.cli().BuildOrientation(ctx, p)
 	body, _ := json.Marshal(map[string]any{
 		"project":     view,
 		"intent_body": bundle.IntentBody,
@@ -1644,101 +1644,67 @@ func (s *Server) handleProjectGet(ctx context.Context, req mcpgo.CallToolRequest
 //
 //	{"project_id":"proj_…","status":"resolved","mcp_url":"…","repo_url_canonical":"…"}
 //	{"status":"no_project_for_remote","repo_url_canonical":"…"}
+// handleProjectSet implements `project_set`. Thin forwarder per
+// cli-primary order:07a-layer-2 (sty_df1cb227 Slice C): resolves
+// workspace + session-id from request context, delegates resolution +
+// orientation to client.ProjectSet, layers wire-specific fields
+// (mcp_url, mcp_config) onto the response.
 func (s *Server) handleProjectSet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
 	if caller.UserID == "" {
 		return mcpgo.NewToolResultError("no caller identity"), nil
 	}
-	repoURL, err := req.RequireString("repo_url")
+	repoURL := req.GetString("repo_url", "")
+	out, err := s.cli().ProjectSet(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: s.resolveCallerMemberships(ctx, caller)}, client.ProjectSetInput{
+		RepoURL:     repoURL,
+		WorkspaceID: s.resolveCallerWorkspaceID(ctx, caller),
+		SessionID:   resolveSessionID(ctx, req.GetString("session_id", "")),
+		Now:         s.nowUTC(),
+	})
 	if err != nil {
-		return mcpgo.NewToolResultError("repo_url_required"), nil
+		switch {
+		case errors.Is(err, client.ErrRepoURLRequired):
+			return mcpgo.NewToolResultError("repo_url_required"), nil
+		case errors.Is(err, client.ErrRepoURLInvalid):
+			return mcpgo.NewToolResultError("repo_url_invalid"), nil
+		default:
+			return mcpgo.NewToolResultError(err.Error()), nil
+		}
 	}
-	canonical, err := project.CanonicaliseGitRemote(repoURL)
-	if err != nil {
-		return mcpgo.NewToolResultError("repo_url_invalid"), nil
-	}
-	if canonical == "" {
-		return mcpgo.NewToolResultError("repo_url_required"), nil
-	}
-	wsID := s.resolveCallerWorkspaceID(ctx, caller)
-	// sty_14dfd05b: resolve via the repos table — the canonical home for
-	// the project↔remote binding. The legacy projects.git_remote column
-	// is gone; repo_add canonicalises on write so the (workspace,
-	// git_remote) index returns hits regardless of input shape.
-	p, ok := s.resolveProjectByRemote(ctx, wsID, canonical)
-	if !ok {
+	if out.Status == client.ProjectSetStatusNoProject {
 		body, _ := json.Marshal(map[string]any{
 			"status":             "no_project_for_remote",
-			"repo_url_canonical": canonical,
+			"repo_url_canonical": out.RepoURLCanonical,
 		})
 		s.logger.Info().
 			Str("method", "tools/call").
 			Str("tool", "project_set").
 			Str("status", "no_project_for_remote").
-			Str("repo_url_canonical", canonical).
+			Str("repo_url_canonical", out.RepoURLCanonical).
 			Int64("duration_ms", time.Since(start).Milliseconds()).
 			Msg("mcp tool call")
 		return mcpgo.NewToolResultText(string(body)), nil
 	}
-	// sty_31d51494 layer 2: auto-bind on the MCP protocol session id.
-	// resolveSessionID prefers the explicit body arg (test/stdio path)
-	// and falls back to the Mcp-Session-Id header that mcp-go's
-	// Streamable HTTP transport attaches to the request context.
-	// Register the session row if missing — first call creates it,
-	// subsequent calls refresh LastSeenAt — then stamp active_project_id.
-	// All silent on failure; the bind is best-effort, the orientation
-	// bundle still returns either way.
-	now := time.Now().UTC()
-	if sessID := resolveSessionID(ctx, req.GetString("session_id", "")); sessID != "" && s.sessions != nil {
-		_, _ = s.sessions.Register(ctx, caller.UserID, sessID, session.SourceSessionStart, now)
-		_, _ = s.sessions.SetActiveProject(ctx, caller.UserID, sessID, p.ID, now)
-	}
-	view := s.buildProjectView(ctx, p)
-	bundle := s.buildOrientation(ctx, p)
+	view := s.buildProjectView(ctx, out.ResolvedProject)
 	body, _ := json.Marshal(map[string]any{
-		"project_id":         p.ID,
+		"project_id":         out.ResolvedProject.ID,
 		"status":             "resolved",
 		"mcp_url":            view.MCPURL,
 		"mcp_config":         view.MCPConfig,
-		"repo_url_canonical": canonical,
-		"intent_body":        bundle.IntentBody,
-		"principles":         bundle.Principles,
+		"repo_url_canonical": out.RepoURLCanonical,
+		"intent_body":        out.Orientation.IntentBody,
+		"principles":         out.Orientation.Principles,
 	})
 	s.logger.Info().
 		Str("method", "tools/call").
 		Str("tool", "project_set").
 		Str("status", "resolved").
-		Str("project_id", p.ID).
-		Str("repo_url_canonical", canonical).
+		Str("project_id", out.ResolvedProject.ID).
+		Str("repo_url_canonical", out.RepoURLCanonical).
 		Int64("duration_ms", time.Since(start).Milliseconds()).
 		Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
-}
-
-// resolveProjectByRemote walks repos.GetByRemote(workspace, canonical)
-// → repo.ProjectID → projects.GetByID(...). Returns the project + true
-// when a repo row in the workspace tracks the canonical remote and the
-// owning project is still readable (not archived, not cross-workspace).
-// sty_14dfd05b — replaces the legacy projects.GetByGitRemote lookup.
-func (s *Server) resolveProjectByRemote(ctx context.Context, workspaceID, canonical string) (project.Project, bool) {
-	if s.repos == nil || s.projects == nil || canonical == "" {
-		return project.Project{}, false
-	}
-	r, err := s.repos.GetByRemote(ctx, workspaceID, canonical)
-	if err != nil {
-		return project.Project{}, false
-	}
-	p, err := s.projects.GetByID(ctx, r.ProjectID, nil)
-	if err != nil {
-		return project.Project{}, false
-	}
-	if p.WorkspaceID != workspaceID {
-		// Belt-and-braces: the repos lookup is already workspace-scoped,
-		// but defend against a stale repo row whose project moved.
-		return project.Project{}, false
-	}
-	return p, true
 }
 
 func (s *Server) handleProjectUpdate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

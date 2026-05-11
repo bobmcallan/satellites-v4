@@ -1,22 +1,22 @@
-// Project orientation bundle (sty_31d51494 layer 2). The bundle is
-// what an agent reads on its first turn after a user prompt fires —
-// "where am I, what is this project, what guardrails apply" — in one
-// roundtrip. project_set returns it after binding the session to a
-// project; project_get(id) returns it for refresh on subsequent turns
-// without re-resolving the repo URL.
+// Project orientation bundle (sty_31d51494 layer 2 — relocated to the
+// typed surface in sty_df1cb227 Slice C). The bundle is what an agent
+// reads on its first turn after a user prompt fires — "where am I,
+// what is this project, what guardrails apply" — in one roundtrip.
+// project_set returns it after binding the session to a project;
+// project_get returns it for refresh on subsequent turns without
+// re-resolving the repo URL.
 //
 // Sources:
-//   - intent_body: a scope=project artifact named "project_intent"
+//   - IntentBody: a scope=project artifact named "project_intent"
 //     under config/seed/<project_id>/artifacts/. Read with nil
-//     memberships per the system-scope read pattern (the artifact is
-//     project-scoped but every agent in the project should see the
-//     same prose; workspace gating doesn't apply at the read).
-//   - principles: every active type=principle document, both
-//     scope=system (read with nil memberships) and scope=project
-//     scoped to the bound project_id (also nil memberships — same
-//     reason). Bodies inline so the agent has the prose without
-//     fanning out to per-principle reads.
-package mcpserver
+//     memberships per the system-scope read pattern.
+//   - Principles: every active type=principle document, both
+//     scope=system (read with nil memberships) and scope=workspace +
+//     scope=project scoped to the bound project_id. Bodies inline so
+//     the agent has the prose without fanning out to per-principle
+//     reads.
+
+package client
 
 import (
 	"context"
@@ -39,36 +39,38 @@ type PrincipleEntry struct {
 	Body  string `json:"body"`
 }
 
-// orientationFields is the subset of the verb response that carries
+// OrientationFields is the subset of the verb response that carries
 // the orientation bundle. project_set merges this into its existing
 // response shape; project_get returns it alongside the project view.
-type orientationFields struct {
+// Exported (was orientationFields) so the typed surface is consumable
+// across the wire-layer + the CLI.
+type OrientationFields struct {
 	IntentBody string           `json:"intent_body,omitempty"`
 	Principles []PrincipleEntry `json:"principles"`
 }
 
-// buildOrientation reads the project intent artifact + every active
+// BuildOrientation reads the project intent artifact + every active
 // principle (system + workspace + project scope) and returns them in
 // the bundle shape. Errors fall through to empty fields so a missing
 // intent or principle store doesn't break the bootstrap call.
 //
-// Sty_7f5585e9 added the workspace-tier pass — a workspace authors a
-// principle once and every project in the workspace inherits it.
-// Reads are additive across tiers; collisions on Name produce two
-// entries and the agent reconciles.
-func (s *Server) buildOrientation(ctx context.Context, p project.Project) orientationFields {
-	out := orientationFields{Principles: []PrincipleEntry{}}
-	if s.docs == nil {
+// Sty_7f5585e9 introduced the workspace-tier pass — a workspace
+// authors a principle once and every project in the workspace
+// inherits it. Reads are additive across tiers; collisions on Name
+// produce two entries and the agent reconciles.
+func (c *Client) BuildOrientation(ctx context.Context, p project.Project) OrientationFields {
+	out := OrientationFields{Principles: []PrincipleEntry{}}
+	if c.deps.Documents == nil {
 		return out
 	}
 
-	if intent, err := s.docs.GetByName(ctx, p.ID, ProjectIntentArtifactName, nil); err == nil &&
+	if intent, err := c.deps.Documents.GetByName(ctx, p.ID, ProjectIntentArtifactName, nil); err == nil &&
 		intent.Type == document.TypeArtifact &&
 		intent.Status == document.StatusActive {
 		out.IntentBody = intent.Body
 	}
 
-	if rows, err := s.docs.List(ctx, document.ListOptions{
+	if rows, err := c.deps.Documents.List(ctx, document.ListOptions{
 		Type:  document.TypePrinciple,
 		Scope: document.ScopeSystem,
 	}, nil); err == nil {
@@ -83,7 +85,7 @@ func (s *Server) buildOrientation(ctx context.Context, p project.Project) orient
 	}
 
 	if p.WorkspaceID != "" {
-		if rows, err := s.docs.List(ctx, document.ListOptions{
+		if rows, err := c.deps.Documents.List(ctx, document.ListOptions{
 			Type:  document.TypePrinciple,
 			Scope: document.ScopeWorkspace,
 		}, nil); err == nil {
@@ -98,7 +100,7 @@ func (s *Server) buildOrientation(ctx context.Context, p project.Project) orient
 		}
 	}
 
-	if rows, err := s.docs.List(ctx, document.ListOptions{
+	if rows, err := c.deps.Documents.List(ctx, document.ListOptions{
 		Type:      document.TypePrinciple,
 		Scope:     document.ScopeProject,
 		ProjectID: p.ID,

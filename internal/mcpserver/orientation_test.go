@@ -13,6 +13,7 @@ import (
 	"time"
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
@@ -84,7 +85,7 @@ func newOrientationFixture(t *testing.T) (*Server, project.Project, string) {
 		ProjectID:   &pid,
 		Type:        document.TypeArtifact,
 		Scope:       document.ScopeProject,
-		Name:        ProjectIntentArtifactName,
+		Name:        client.ProjectIntentArtifactName,
 		Body:        sampleProjectIntentBody,
 		Tags:        []string{"kind:project-intent"},
 		Status:      document.StatusActive,
@@ -117,7 +118,7 @@ func newOrientationFixture(t *testing.T) (*Server, project.Project, string) {
 func TestBuildOrientation_ReturnsIntentAndPrinciples(t *testing.T) {
 	t.Parallel()
 	s, p, _ := newOrientationFixture(t)
-	bundle := s.buildOrientation(context.Background(), p)
+	bundle := s.cli().BuildOrientation(context.Background(), p)
 	if bundle.IntentBody != sampleProjectIntentBody {
 		t.Errorf("IntentBody = %q, want %q", bundle.IntentBody, sampleProjectIntentBody)
 	}
@@ -174,7 +175,7 @@ func TestBuildOrientation_IncludesWorkspaceTier(t *testing.T) {
 		t.Fatalf("seed other ws principle: %v", err)
 	}
 
-	bundle := s.buildOrientation(ctx, p)
+	bundle := s.cli().BuildOrientation(ctx, p)
 	scopes := map[string]int{}
 	names := map[string]bool{}
 	for _, pr := range bundle.Principles {

@@ -66,7 +66,7 @@ the same audit chain.
 | One task at a time, in plan order | `task_add(agent_id, prompt, story_id?, action?, kind?)`. Returns `{task_id, story_id, story_minted, status, agent_id}`. When `story_id` is omitted the substrate auto-mints a thin ad-hoc story so every task is anchored. |
 | Close on a claimed work task | `task_update(id=<task_id>, status=closed, outcome=success|failure, evidence_ledger_ids=[…])`. Closes the target task only — review or retry tasks (where the contract requires them) are minted as the orchestrator's next plan step via `task_add`. |
 | Per-task evidence | `ledger_append` rows tagged `task_id:<id>` + `kind:evidence`. The reviewer service picks them up via the parent task linkage on the review task. |
-| Agent dispatch | Two paths, chosen per task. **In-session (default):** the orchestrator plays the dispatched role inline, using its own Read/Edit/Write/Bash tools for work and `satellites-client` for substrate write-backs. **Subprocess (heavy path):** `bash(claude --permission-mode bypassPermissions -p '…')` in a per-task worktree on a private branch, with `--allowedTools` + `PreToolUse` hook enforcement. See `### Dispatch loop` below. |
+| Agent dispatch | Two paths, chosen per task. **In-session (default):** the orchestrator plays the dispatched role inline, using its own Read/Edit/Write/Bash tools for work and `satellites-client` for substrate write-backs. **Subprocess (heavy path):** `bash satellites-client task run <task_id>` — the CLI spawns a fresh `claude --permission-mode bypassPermissions -p '…'` in a per-task worktree on a private branch with `--allowedTools` + `PreToolUse` hook enforcement, and streams its output live. The `satellites-agent` daemon is the autonomous-worker fallback for unattended runs. See `### Dispatch loop` below. |
 
 ### Pre-flight
 
@@ -121,19 +121,29 @@ context budget:
 - **Subprocess dispatch (heavy path).** When a task needs
   context isolation, permission-envelope enforcement at the
   process boundary, or parallel work — the orchestrator runs
-  `bash(claude --permission-mode bypassPermissions -p '…')` in
-  a per-task git worktree at
+  `satellites-client task run <task_id>` as a subprocess it
+  owns. The CLI fetches the task envelope, spawns a fresh
+  `claude --permission-mode bypassPermissions -p '…'` in a
+  per-task git worktree at
   `<repo>/.satellites-agents/<task_id>` on a private branch
-  named `agent-<task_id>-from-<short(base_sha)>`. There is no
-  Go `agent_dispatch` verb — dispatch is the orchestrator's
-  own runtime job. The agent's `permission_patterns` translate
-  to `--allowedTools` on the CLI plus `PreToolUse` hooks in
-  the worktree's `.claude/settings.json` (defence in depth —
-  flag-level and hook-level enforcement). The dispatched
-  subprocess collates context via the same satellites-client
-  CLI surface; the orchestrator does NOT pre-load it via
-  prompt-stuffing. The dispatched agent does NOT inherit
-  operator-side Claude Code memory.
+  named `agent-<task_id>-from-<short(base_sha)>`, streams
+  stdout / stderr live to the orchestrator's terminal, and
+  returns when the dispatched session exits. Dispatch is the
+  orchestrator's own runtime job — the CLI is the dispatcher,
+  not an autonomous queue worker. The agent's
+  `permission_patterns` translate to `--allowedTools` plus
+  `PreToolUse` hooks in the worktree's `.claude/settings.json`
+  (defence in depth — flag-level and hook-level enforcement).
+  The dispatched subprocess collates context via the same
+  satellites-client CLI surface; the orchestrator does NOT
+  pre-load it via prompt-stuffing. The dispatched agent does
+  NOT inherit operator-side Claude Code memory.
+
+  The `satellites-agent` daemon remains available as an
+  autonomous-worker fallback when no orchestrator session is
+  running. When the orchestrator is present, prefer
+  `satellites-client task run` — visibility (live stream),
+  no claim-race, no polling latency.
 
 - **Either way, the orchestrator authors `task_add(prompt=…)`.**
   The mint prompt names the agent role, the action, the story
@@ -173,9 +183,13 @@ The flow when a user says `implement story_xxx`:
    - `agent_not_found` — agent doc id missing or archived.
    - `agent_cannot_deliver` / `agent_cannot_review` — capability
      mismatch when the action is `contract:<name>` shaped.
-4. Dispatch the work task via `bash claude -p 'implement <task_id>'`.
-   The subprocess fetches its own context (agent doc, project
-   intent, principles, story, contract) via MCP using the task id.
+4. Dispatch the work task via
+   `bash satellites-client task run <task_id>`. The CLI spawns the
+   claude subprocess in a per-task worktree with a cleansed HOME,
+   streams its output live to the orchestrator's terminal, and
+   returns the outcome. The dispatched subprocess fetches its own
+   context (agent doc, project intent, principles, story,
+   contract) via the satellites-client CLI surface.
 5. On dispatch result, read `task_walk` again. If the work task
    closed via `task_update(status=closed)`, closure mutated only
    that row. Mint the next plan step (a reviewer dispatch where

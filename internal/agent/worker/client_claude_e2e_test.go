@@ -47,12 +47,12 @@ func TestClaudeClient_Execute_EndToEnd_StubBinary(t *testing.T) {
 	mcpCalls, mcpURL, mcpClose := stubMCP(t, "task_test_e2e")
 	defer mcpClose()
 
-	// 4. Cleansed source HOME (no projects/) so cleanseHome has
-	//    something to copy.
+	// 4. Operator HOME — a controlled value the test can assert the
+	//    dispatched subprocess does NOT see. Satellites code reads
+	//    nothing from this directory; the env-inheritance path forwards
+	//    HOME via os.Environ() and enforceHomeEnv overrides it with the
+	//    task-scoped tmpdir. The test asserts that override happened.
 	srcHome := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(srcHome, ".claude"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(srcHome, ".claude", ".credentials.json"), []byte(`{"oauth":"x"}`), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(srcHome, ".claude", "settings.json"), []byte(`{}`), 0o600))
 	require.NoError(t, os.Setenv("HOME", srcHome))
 	t.Cleanup(func() { _ = os.Unsetenv("HOME") })
 
@@ -90,9 +90,11 @@ func TestClaudeClient_Execute_EndToEnd_StubBinary(t *testing.T) {
 	assert.Contains(t, argvJoined, "--mcp-config")
 	assert.Contains(t, argvJoined, "-p")
 
-	// HOME landed at the cleansed tmpdir, not the operator's HOME.
+	// HOME landed at the task-scoped tmpdir, not the operator's HOME —
+	// satellites never reads or copies ~/.claude/ state into the
+	// subprocess.
 	assert.NotEmpty(t, manifest.HomeEnv)
-	assert.NotEqual(t, srcHome, manifest.HomeEnv, "stub claude saw operator HOME — cleansing failed")
+	assert.NotEqual(t, srcHome, manifest.HomeEnv, "stub claude saw operator HOME — task-scoped HOME isolation failed")
 
 	// Worktree exists at <root>/<task_id> and is the cmd.Dir.
 	expectedWorktree := filepath.Join(worktreeRoot, "task_test_e2e")
@@ -173,10 +175,6 @@ for arg in "$@"; do
   i=$((i+1))
 done
 echo "$i" > "` + dir + `/argc"
-
-# Touch a fake session JSONL so findSessionJSONL picks something up.
-mkdir -p "$HOME/.claude/projects/fake"
-echo '{"role":"user","content":"hello"}' > "$HOME/.claude/projects/fake/session.jsonl"
 
 exit 0
 `

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,8 +16,8 @@ import (
 
 // Tests live in the worker package (no _test suffix on the package
 // declaration) because they exercise unexported helpers
-// (composePrompt, ensureWorktree, cleanseHome, etc.) that the AC
-// requires unit coverage on.
+// (composePrompt, ensureWorktree, etc.) that the AC requires unit
+// coverage on.
 
 func TestComposePrompt_ThinPointerShape(t *testing.T) {
 	cases := []struct {
@@ -208,74 +207,6 @@ func TestEnsureWorktree_RepoPathEmpty_Errors(t *testing.T) {
 	assert.Contains(t, err.Error(), "repo_path empty")
 }
 
-// TestCleanseHome_NoProjectsDir is the AC's HOME-cleansing assertion:
-// the cleansed HOME copies .credentials.json + settings.json but never
-// the projects/ directory.
-func TestCleanseHome_NoProjectsDir(t *testing.T) {
-	srcHome := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(srcHome, ".claude", "projects", "fake-project"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(srcHome, ".claude", "projects", "fake-project", "MEMORY.md"), []byte("operator memory should not leak"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(srcHome, ".claude", ".credentials.json"), []byte(`{"oauth": "abc"}`), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(srcHome, ".claude", "settings.json"), []byte(`{"theme":"dark"}`), 0o600))
-
-	c := &claudeClient{
-		placeholderClient: &placeholderClient{cfg: config.AgentConfig{}},
-		findHome:          func() (string, error) { return srcHome, nil },
-	}
-
-	tmpHome, err := c.cleanseHome()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(tmpHome) })
-
-	// Auth artefacts must be present.
-	for _, name := range []string{".credentials.json", "settings.json"} {
-		st, err := os.Stat(filepath.Join(tmpHome, ".claude", name))
-		require.NoError(t, err, "missing %s", name)
-		assert.False(t, st.IsDir())
-	}
-	// projects/ must NOT be present — it would carry operator memory.
-	_, err = os.Stat(filepath.Join(tmpHome, ".claude", "projects"))
-	assert.True(t, os.IsNotExist(err), "cleansed HOME contains projects/ directory: %v", err)
-
-	// MEMORY.md content sanity — recursive grep must produce no match
-	// for the operator-memory marker.
-	var found bool
-	_ = filepath.Walk(tmpHome, func(p string, info os.FileInfo, e error) error {
-		if e != nil || info == nil || info.IsDir() {
-			return nil
-		}
-		body, _ := os.ReadFile(p)
-		if strings.Contains(string(body), "operator memory should not leak") {
-			found = true
-		}
-		return nil
-	})
-	assert.False(t, found, "cleansed HOME leaked operator memory text")
-}
-
-// TestCleanseHome_MissingSettingsTolerated covers the case where the
-// operator has no settings.json — the cleanse must still succeed and
-// the credentials file must still copy.
-func TestCleanseHome_MissingSettingsTolerated(t *testing.T) {
-	srcHome := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(srcHome, ".claude"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(srcHome, ".claude", ".credentials.json"), []byte(`{}`), 0o600))
-
-	c := &claudeClient{
-		placeholderClient: &placeholderClient{cfg: config.AgentConfig{}},
-		findHome:          func() (string, error) { return srcHome, nil },
-	}
-
-	tmpHome, err := c.cleanseHome()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(tmpHome) })
-
-	_, err = os.Stat(filepath.Join(tmpHome, ".claude", ".credentials.json"))
-	require.NoError(t, err)
-	_, err = os.Stat(filepath.Join(tmpHome, ".claude", "settings.json"))
-	assert.True(t, os.IsNotExist(err), "settings.json should remain absent")
-}
-
 // TestBuildMCPConfigJSON checks the shape passed to claude
 // --mcp-config: a single satellites server, http transport, with the
 // agent's auth token threaded as a Bearer header.
@@ -313,15 +244,13 @@ func TestBuildMCPConfigJSON_NoToken_OmitsAuthHeader(t *testing.T) {
 	assert.NotContains(t, raw, "Bearer")
 }
 
-// TestEnforceHomeEnv guarantees HOME=tmpHome wins even when the
-// inherited environment already declared HOME — the AC's HOME-
-// cleansing requirement must be observable to claude regardless of
-// the parent's env shape.
+// TestEnforceHomeEnv guarantees the task-scoped HOME=tmpHome wins even
+// when the inherited environment already declared HOME — without this,
+// the subprocess could observe the operator's HOME and discover
+// ~/.claude/ on disk despite satellites code never reading it.
 func TestEnforceHomeEnv(t *testing.T) {
 	in := []string{"PATH=/usr/bin", "HOME=/operator", "USER=op"}
-	out := enforceHomeEnv(in, "/tmp/cleansed")
-	// Final entry must be the cleansed HOME and there must be exactly
-	// one HOME= entry.
+	out := enforceHomeEnv(in, "/tmp/task-home")
 	homeCount := 0
 	for _, e := range out {
 		if strings.HasPrefix(e, "HOME=") {
@@ -329,34 +258,7 @@ func TestEnforceHomeEnv(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, homeCount, "must be exactly one HOME= entry; got %v", out)
-	assert.Equal(t, "HOME=/tmp/cleansed", out[len(out)-1])
-}
-
-// TestFindSessionJSONL_Empty handles the case where no session JSONL
-// file has been written yet — the helper returns "" rather than
-// erroring.
-func TestFindSessionJSONL_Empty(t *testing.T) {
-	tmp := t.TempDir()
-	got := findSessionJSONL(tmp)
-	assert.Equal(t, "", got)
-}
-
-func TestFindSessionJSONL_PicksMostRecent(t *testing.T) {
-	tmp := t.TempDir()
-	dir := filepath.Join(tmp, ".claude", "projects", "fake")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	older := filepath.Join(dir, "old.jsonl")
-	newer := filepath.Join(dir, "new.jsonl")
-	require.NoError(t, os.WriteFile(older, []byte("{}"), 0o600))
-	require.NoError(t, os.WriteFile(newer, []byte("{}"), 0o600))
-	// Force ordering by modtime.
-	old := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	new_ := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, os.Chtimes(older, old, old))
-	require.NoError(t, os.Chtimes(newer, new_, new_))
-
-	got := findSessionJSONL(tmp)
-	assert.Equal(t, newer, got)
+	assert.Equal(t, "HOME=/tmp/task-home", out[len(out)-1])
 }
 
 // TestContractInfo_DispatchClass (sty_3b3e4e66 Layer A) — the

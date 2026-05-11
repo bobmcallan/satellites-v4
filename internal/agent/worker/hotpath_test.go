@@ -106,7 +106,6 @@ func (s *hotpathStub) client(cfg config.AgentConfig) *claudeClient {
 	cc := &claudeClient{
 		placeholderClient: pc,
 		gitRunner:         s.gitRunner,
-		findHome:          func() (string, error) { return "/dev/null/home", nil },
 	}
 	return cc
 }

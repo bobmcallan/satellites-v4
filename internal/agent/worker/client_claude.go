@@ -2,7 +2,7 @@
 // real `claude` subprocess per claimed task — the production shape
 // for sty_a6250f92 (order:03). It composes *placeholderClient for
 // Claim / Close / Heartbeat / Shutdown delegation, and overrides
-// Execute with the seven-step worktree + subprocess flow.
+// Execute with the worktree + subprocess flow.
 //
 // Step shape (per AC):
 //
@@ -11,8 +11,10 @@
 //  2. Compose a thin-pointer prompt from task / agent / contract /
 //     story metadata. The dispatched agent fetches the rich content
 //     via per-verb retrieval (pr_substrate_provides_context).
-//  3. Cleanse HOME via mktemp -d + selective copy of .credentials.json
-//     + settings.json. No projects/ → no operator memory inheritance.
+//  3. Create a fresh empty tmpdir HOME for the subprocess. Satellites
+//     never reads or copies operator state from ~/.claude/; any
+//     LLM-side auth (e.g. ANTHROPIC_API_KEY) reaches the subprocess
+//     via the inherited os.Environ() — never sourced by satellites.
 //  4. Launch claude with bypassPermissions + strict-mcp-config + an
 //     inline mcp-config naming only the satellites server. Stream
 //     stdout/stderr to <worktree>/.satellites-agent.log.
@@ -41,11 +43,6 @@ import (
 type claudeClient struct {
 	*placeholderClient
 
-	// findHome returns the directory the cleansed HOME copies
-	// .credentials.json + settings.json from. Production reads
-	// os.UserHomeDir(); tests inject a fixture dir.
-	findHome func() (string, error)
-
 	// gitRunner runs a git command in dir. Production uses exec.Command;
 	// tests inject a recorder.
 	gitRunner func(ctx context.Context, dir string, args ...string) ([]byte, error)
@@ -62,12 +59,11 @@ type claudeClient struct {
 
 // NewClaudeClient constructs a worker.Client whose Execute spawns a
 // real `claude --print` subprocess in a per-task git worktree with a
-// cleansed HOME. Claim / Close / Heartbeat / Shutdown delegate to the
-// placeholder client (same MCP transport).
+// fresh empty tmpdir HOME. Claim / Close / Heartbeat / Shutdown
+// delegate to the placeholder client (same MCP transport).
 func NewClaudeClient(cfg config.AgentConfig, logger arbor.ILogger) Client {
 	return &claudeClient{
 		placeholderClient: newPlaceholderClient(cfg, logger),
-		findHome:          os.UserHomeDir,
 		gitRunner:         runGit,
 	}
 }
@@ -90,7 +86,6 @@ func NewClaudeClient(cfg config.AgentConfig, logger arbor.ILogger) Client {
 func RunDispatched(ctx context.Context, cfg config.AgentConfig, logger arbor.ILogger, env TaskEnvelope, stdout, stderr io.Writer) (Outcome, error) {
 	c := &claudeClient{
 		placeholderClient: newPlaceholderClient(cfg, logger),
-		findHome:          os.UserHomeDir,
 		gitRunner:         runGit,
 		stdoutTee:         stdout,
 		stderrTee:         stderr,
@@ -207,10 +202,6 @@ Close your task with:
 
 Working directory: {{work_dir}}
 HOME:              {{home_path}}
-
-The HOME has been cleansed: only auth artefacts (credentials, settings) are
-present, never the operator's projects/ memory directory. This is the
-substrate guarantee codified by pr_substrate_provides_context.
 
 Begin.
 `
@@ -411,59 +402,6 @@ func worktreeExists(path string) (string, bool) {
 	return "", true
 }
 
-// cleanseHome materialises a fresh tmpdir HOME with only the auth
-// artefacts the dispatched agent needs (.credentials.json + settings
-// .json) and returns its path. The dir is created under os.TempDir()
-// and the caller is responsible for removing it on Execute return.
-//
-// The forbidden surface is ~/.claude/projects/ — copying that would
-// inherit the operator's Claude Code memory and violate
-// pr_substrate_provides_context.
-func (c *claudeClient) cleanseHome() (string, error) {
-	srcHome, err := c.findHome()
-	if err != nil {
-		return "", fmt.Errorf("cleanse home: resolve src: %w", err)
-	}
-	tmpHome, err := os.MkdirTemp("", "satellites-agent-home-")
-	if err != nil {
-		return "", fmt.Errorf("cleanse home: mktemp: %w", err)
-	}
-	dotClaude := filepath.Join(tmpHome, ".claude")
-	if err := os.MkdirAll(dotClaude, 0o700); err != nil {
-		_ = os.RemoveAll(tmpHome)
-		return "", fmt.Errorf("cleanse home: mkdir .claude: %w", err)
-	}
-	for _, name := range []string{".credentials.json", "settings.json"} {
-		src := filepath.Join(srcHome, ".claude", name)
-		dst := filepath.Join(dotClaude, name)
-		if err := copyFileIfExists(src, dst); err != nil {
-			_ = os.RemoveAll(tmpHome)
-			return "", fmt.Errorf("cleanse home: copy %s: %w", name, err)
-		}
-	}
-	return tmpHome, nil
-}
-
-// copyFileIfExists copies src to dst when src is a regular file. A
-// missing src is not an error — settings.json is operator-optional.
-func copyFileIfExists(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
-}
-
 // buildMCPConfigJSON returns the JSON blob passed to `claude
 // --mcp-config`. The dispatched agent sees only the satellites MCP
 // server — strict-mcp-config + this single-server config means no
@@ -487,31 +425,6 @@ func buildMCPConfigJSON(cfg config.AgentConfig) (string, error) {
 		return "", err
 	}
 	return string(out), nil
-}
-
-// findSessionJSONL walks tmpHome/.claude/projects/ and returns the path
-// of the most-recently-modified .jsonl file, or "" when none exists.
-// Used purely for evidence-row context — a missing session file is
-// not an error.
-func findSessionJSONL(tmpHome string) string {
-	root := filepath.Join(tmpHome, ".claude", "projects")
-	var newest string
-	var newestMod int64
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info == nil || info.IsDir() {
-			return nil
-		}
-		if !strings.HasSuffix(path, ".jsonl") {
-			return nil
-		}
-		mod := info.ModTime().UnixNano()
-		if mod > newestMod {
-			newest = path
-			newestMod = mod
-		}
-		return nil
-	})
-	return newest
 }
 
 // Execute spawns claude per the seven-step shape. Errors are surfaced
@@ -577,10 +490,14 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 		return OutcomeFailure, err
 	}
 
-	// Step 4: HOME.
-	tmpHome, err := c.cleanseHome()
+	// Step 4: HOME. A fresh empty tmpdir scoped to this task. Satellites
+	// does not read or copy state from the operator's ~/.claude/. Any
+	// LLM-side auth (e.g. ANTHROPIC_API_KEY) the dispatched subprocess
+	// needs reaches it via the inherited os.Environ() below — never
+	// sourced or rotated by satellites code.
+	tmpHome, err := os.MkdirTemp("", "satellites-task-")
 	if err != nil {
-		return OutcomeFailure, err
+		return OutcomeFailure, fmt.Errorf("execute: tmpdir: %w", err)
 	}
 	defer os.RemoveAll(tmpHome)
 
@@ -641,8 +558,7 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 	}
 
 	// Step 7: evidence row + outcome.
-	sessionPath := findSessionJSONL(tmpHome)
-	evidenceErr := c.appendExecuteEvidence(context.Background(), task, ti, tmpHome, prompt, exitCode, logPath, sessionPath)
+	evidenceErr := c.appendExecuteEvidence(context.Background(), task, ti, tmpHome, prompt, exitCode, logPath)
 	if evidenceErr != nil && c.logger != nil {
 		c.logger.Warn().Str("task_id", task.ID).Str("error", evidenceErr.Error()).Msg("agent-execute-evidence row failed")
 	}
@@ -656,10 +572,11 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 	return OutcomeSuccess, nil
 }
 
-// enforceHomeEnv guarantees HOME=tmpHome is the last (winning) entry
-// when the inherited environment already contains a HOME assignment.
-// Without this, exec.Cmd's env resolution can pick up the operator's
-// HOME on platforms whose libc reads the first match.
+// enforceHomeEnv guarantees the task-scoped HOME=tmpHome is the last
+// (winning) entry when the inherited environment already contains a
+// HOME assignment. Without this, exec.Cmd's env resolution can pick up
+// the operator's HOME on platforms whose libc reads the first match —
+// which would expose the operator's ~/.claude/ to the subprocess.
 func enforceHomeEnv(env []string, tmpHome string) []string {
 	out := env[:0]
 	for _, e := range env {
@@ -677,11 +594,11 @@ func enforceHomeEnv(env []string, tmpHome string) []string {
 // HOME path, prompt sent (literal — small), exit code, log path,
 // session JSONL path. The dispatched agent itself writes the
 // substantive evidence rows; this row is the orchestrator's frame.
-func (c *claudeClient) appendExecuteEvidence(ctx context.Context, env TaskEnvelope, ti taskInfo, tmpHome, prompt string, exitCode int, logPath, sessionPath string) error {
+func (c *claudeClient) appendExecuteEvidence(ctx context.Context, env TaskEnvelope, ti taskInfo, tmpHome, prompt string, exitCode int, logPath string) error {
 	content := fmt.Sprintf(
-		"# agent-execute-evidence\n\ntask=%s\nstory=%s\nagent_id=%s\naction=%s\nhome=%s\nworktree=%s\nlog=%s\nsession_jsonl=%s\nexit_code=%d\n\n## prompt\n\n%s\n",
+		"# agent-execute-evidence\n\ntask=%s\nstory=%s\nagent_id=%s\naction=%s\nhome=%s\nworktree=%s\nlog=%s\nexit_code=%d\n\n## prompt\n\n%s\n",
 		env.ID, ti.StoryID, ti.AgentID, ti.Action, tmpHome,
-		filepath.Dir(logPath), logPath, sessionPath, exitCode, prompt,
+		filepath.Dir(logPath), logPath, exitCode, prompt,
 	)
 	args := map[string]any{
 		"project_id": env.ProjectID,

@@ -1,6 +1,7 @@
 ---
 name: push
 category: push
+dispatch_class: hot
 validation_mode: llm
 required_role: role_orchestrator
 tags: [v4, lifecycle, workspace]

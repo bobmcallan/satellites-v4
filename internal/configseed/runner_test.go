@@ -241,6 +241,66 @@ func TestRun_ContractStructuredOmitsPermittedActions(t *testing.T) {
 	}
 }
 
+// TestRun_ContractStructuredCarriesDispatchClass (sty_3b3e4e66 Layer A) —
+// the contract document's Structured payload preserves the
+// `dispatch_class` frontmatter field. The worker dispatcher
+// (internal/agent/worker/client_claude.go) reads this field to choose
+// between the heavy claude subprocess (default) and an in-process
+// runner (when "hot"). An unmarked contract MUST omit the key from
+// the payload (pruneEmpty behaviour) so the worker's missing→heavy
+// default fires; this test guards both shapes.
+func TestRun_ContractStructuredCarriesDispatchClass(t *testing.T) {
+	t.Parallel()
+	const hotContractMD = `---
+name: test_hot_contract
+category: push
+dispatch_class: hot
+validation_mode: llm
+---
+# Test Hot Contract
+`
+	const heavyContractMD = `---
+name: test_heavy_contract
+category: develop
+validation_mode: llm
+---
+# Test Heavy Contract (no dispatch_class — falls back to heavy default)
+`
+	dir := t.TempDir()
+	writeFile(t, dir, "system/contracts/test_hot_contract.md", hotContractMD)
+	writeFile(t, dir, "system/contracts/test_heavy_contract.md", heavyContractMD)
+
+	docs := document.NewMemoryStore()
+	now := time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC)
+	if _, err := Run(context.Background(), docs, dir, "wksp_sys", "system", now); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	hotDoc, err := docs.GetByName(context.Background(), "", "test_hot_contract", nil)
+	if err != nil {
+		t.Fatalf("GetByName test_hot_contract: %v", err)
+	}
+	var hotPayload map[string]any
+	if err := json.Unmarshal(hotDoc.Structured, &hotPayload); err != nil {
+		t.Fatalf("decode hot Structured: %v", err)
+	}
+	if hotPayload["dispatch_class"] != "hot" {
+		t.Errorf("hot contract dispatch_class = %v, want %q", hotPayload["dispatch_class"], "hot")
+	}
+
+	heavyDoc, err := docs.GetByName(context.Background(), "", "test_heavy_contract", nil)
+	if err != nil {
+		t.Fatalf("GetByName test_heavy_contract: %v", err)
+	}
+	var heavyPayload map[string]any
+	if err := json.Unmarshal(heavyDoc.Structured, &heavyPayload); err != nil {
+		t.Fatalf("decode heavy Structured: %v", err)
+	}
+	if _, has := heavyPayload["dispatch_class"]; has {
+		t.Errorf("heavy contract Structured carries dispatch_class %v — empty frontmatter must be pruned so the worker's missing→heavy default fires", heavyPayload["dispatch_class"])
+	}
+}
+
 // TestRun_Idempotent covers AC2: a second Run pass with unchanged
 // files produces zero creates/updates (body-hash convergence in
 // document.Upsert).

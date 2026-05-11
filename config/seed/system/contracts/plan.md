@@ -1,6 +1,7 @@
 ---
 name: plan
 category: plan
+dispatch_class: heavy
 evidence_required: |
   Two ledger artifacts recorded on the plan task (tagged
   task_id:<plan_task>):

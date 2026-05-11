@@ -1,6 +1,7 @@
 ---
 name: develop
 category: develop
+dispatch_class: heavy
 validation_mode: llm
 required_role: role_orchestrator
 tags: [v4, lifecycle, workspace]

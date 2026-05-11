@@ -1,6 +1,7 @@
 ---
 name: story_close
 category: story-close
+dispatch_class: hot
 evidence_required: |
   Ledger row tagged task_id:<story_close_task>, kind:evidence
   capturing the resolution (delivered / plan_only / not_required /

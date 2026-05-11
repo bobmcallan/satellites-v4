@@ -84,8 +84,31 @@ type agentInfo struct {
 }
 
 // contractInfo is the subset of contract_get the orchestrator reads.
+// Structured is the decoded JSON of the document's frontmatter payload
+// (category, evidence_required, validation_mode, dispatch_class …);
+// the wire format base64-encodes []byte fields, so json.Unmarshal of
+// the contract_get response transparently decodes the base64 into the
+// raw JSON bytes here. sty_3b3e4e66.
 type contractInfo struct {
-	Name string `json:"name"`
+	Name       string `json:"name"`
+	Structured []byte `json:"structured"`
+}
+
+// dispatchClass returns the contract's dispatch_class frontmatter field.
+// Returns "" when the contract has no structured payload or the field
+// is absent; callers MUST treat "" as the "heavy" default so unmarked
+// contracts continue to dispatch the existing claude subprocess.
+func (c contractInfo) dispatchClass() string {
+	if len(c.Structured) == 0 {
+		return ""
+	}
+	var payload struct {
+		DispatchClass string `json:"dispatch_class"`
+	}
+	if err := json.Unmarshal(c.Structured, &payload); err != nil {
+		return ""
+	}
+	return payload.DispatchClass
 }
 
 // storyInfo is the subset of story_get the orchestrator reads.
@@ -452,6 +475,14 @@ func findSessionJSONL(tmpHome string) string {
 
 // Execute spawns claude per the seven-step shape. Errors are surfaced
 // as (OutcomeFailure, err); ctx cancellation maps to OutcomeTimeout.
+//
+// sty_3b3e4e66 (Layer A): the resolved contract's dispatch_class is
+// fetched and logged on every dispatch. The in-process hot-path
+// runner that consumes this field — bypassing the claude subprocess
+// for "hot" contracts (push, merge_to_main, story_close) — lands in
+// the Layer B+C follow-up. This commit ships only the data plumbing
+// so contracts can declare their dispatch class without changing the
+// runtime selector. Layer B will branch on ci.dispatchClass() here.
 func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome, error) {
 	// Step 1 + 2: fetch the four context bundles.
 	ti, err := c.fetchTaskInfo(ctx, task.ID)
@@ -464,6 +495,19 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 	}
 	ci, _ := c.fetchContractInfo(ctx, ti.Action, ti.ProjectID)
 	si, _ := c.fetchStoryInfo(ctx, ti.StoryID)
+
+	// sty_3b3e4e66 Layer A — log the contract's dispatch_class so
+	// operator observability is in place before the Layer B selector
+	// goes live. The log line is the only consumer of dispatchClass()
+	// in this commit; the Execute path remains the heavy claude
+	// subprocess for every contract regardless of dispatch_class.
+	if c.logger != nil {
+		c.logger.Debug().
+			Str("task_id", task.ID).
+			Str("contract", ci.Name).
+			Str("dispatch_class", ci.dispatchClass()).
+			Msg("worker dispatch resolved")
+	}
 
 	// Step 3: worktree.
 	if ti.WorkspaceID == "" {

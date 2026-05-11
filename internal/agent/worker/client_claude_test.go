@@ -358,3 +358,53 @@ func TestFindSessionJSONL_PicksMostRecent(t *testing.T) {
 	got := findSessionJSONL(tmp)
 	assert.Equal(t, newer, got)
 }
+
+// TestContractInfo_DispatchClass (sty_3b3e4e66 Layer A) — the
+// contractInfo.dispatchClass() helper decodes the dispatch_class
+// frontmatter field from the contract document's Structured payload.
+// The worker dispatcher reads this to choose between the heavy claude
+// subprocess and the in-process hot-path runner (Layer B).
+//
+// Returns "" when Structured is empty (the configseed loader prunes
+// missing dispatch_class), absent, or malformed — the worker MUST
+// treat "" as the heavy default so unmarked contracts continue to
+// dispatch the existing claude subprocess.
+func TestContractInfo_DispatchClass(t *testing.T) {
+	cases := []struct {
+		name       string
+		structured []byte
+		want       string
+	}{
+		{
+			name:       "hot",
+			structured: []byte(`{"category":"push","dispatch_class":"hot"}`),
+			want:       "hot",
+		},
+		{
+			name:       "heavy_explicit",
+			structured: []byte(`{"category":"develop","dispatch_class":"heavy"}`),
+			want:       "heavy",
+		},
+		{
+			name:       "absent_falls_back_to_empty",
+			structured: []byte(`{"category":"develop","validation_mode":"llm"}`),
+			want:       "",
+		},
+		{
+			name:       "nil_structured",
+			structured: nil,
+			want:       "",
+		},
+		{
+			name:       "malformed_payload",
+			structured: []byte(`{not valid json`),
+			want:       "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ci := contractInfo{Name: "test", Structured: tc.structured}
+			assert.Equal(t, tc.want, ci.dispatchClass())
+		})
+	}
+}

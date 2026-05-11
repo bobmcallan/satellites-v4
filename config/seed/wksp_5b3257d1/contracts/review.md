@@ -50,7 +50,7 @@ Mint a successor work task carrying the operator-voiced gap:
 `task_add(action=contract:<reviewed_action>, prior_task_id=<rejected_task>,
 prompt=<feedback citing the gap>)`. The successor's prompt carries
 the verdict's gap text verbatim, so the next attempt addresses the
-specific cited gap (per `pr_reviewer_voice_authoritative`).
+specific cited gap (per `pr_pipeline_authority`).
 
 ## Closure
 

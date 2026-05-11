@@ -57,7 +57,7 @@ command output, ledger row id, commit SHA). Declarative claims
 
 ### 3. Evidence completeness
 
-Cite **pr_evidence**. The evidence markdown must be reproducible:
+Cite **pr_evidence_audit**. The evidence markdown must be reproducible:
 every claim should be re-runnable by a third party from the ledger
 row alone. Missing command output, missing file references, or
 evidence that points to ephemeral state ("I ran the test locally
@@ -70,7 +70,7 @@ citations in evidence markdown), dereference each id via
 `ledger_get` and read the row's content as part of the evidence
 packet. Do NOT reject for missing inline duplication when the
 cited rows contain the content the rubric requires — content
-reachability + traceability is the bar `pr_evidence` sets, not
+reachability + traceability is the bar `pr_evidence_audit` sets, not
 duplication. A close that inlines 600 lines of prior plan-md to
 satisfy a reviewer who won't dereference is friction without value.
 
@@ -105,7 +105,7 @@ primitives are exempt from this gate.
 ### 5. Principle citation on rejection
 
 Every rejected verdict must cite the specific principle id the
-rejection rests on (e.g. `pr_evidence`, `pr_no_unrequested_compat`,
+rejection rests on (e.g. `pr_evidence_audit`, `pr_no_unrequested_compat`,
 `pr_root_cause`). The agent reading the verdict knows which class
 of fix to make.
 
@@ -116,7 +116,7 @@ of fix to make.
 - `rejected` — rationale cites the failing principle + the AC or
   evidence gap. The reviewer's verdict ledger row is the
   close-criteria checklist; the orchestrator (per
-  `pr_reviewer_voice_authoritative`) reads the verdict and mints
+  `pr_pipeline_authority`) reads the verdict and mints
   the iter-N+1 work task via `task_add(prior_task_id=…)`, then
   dispatches that fresh attempt. There is no needs_more loop on
   the task path — needs_more is coerced to rejected with the

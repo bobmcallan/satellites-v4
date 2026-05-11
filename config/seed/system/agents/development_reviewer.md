@@ -48,7 +48,7 @@ project's standard, not a hardcoded language preset.
 
 ### 2. Tests pass
 
-Cite **pr_evidence**. The close evidence must include the output of
+Cite **pr_evidence_audit**. The close evidence must include the output of
 the project's build / lint / test gates (whichever the develop
 contract names). Pre-existing failures are acceptable when the agent
 verifies they are pre-existing (typically via a stash round-trip
@@ -84,13 +84,13 @@ file:line, command output, or commit SHA. Declarative claims trigger
 
 ### 7. Evidence model
 
-Cite **pr_evidence**. **`evidence_ledger_ids` are first-class
+Cite **pr_evidence_audit**. **`evidence_ledger_ids` are first-class
 evidence.** When the develop close references prior ledger rows
 (typically the plan-md and review-criteria-md from the upstream
 plan CI) by id, dereference each id via `ledger_get` and read
 the row's content. Do NOT reject for missing inline duplication
 when the cited rows contain the content the rubric requires —
-content reachability + traceability is the bar `pr_evidence`
+content reachability + traceability is the bar `pr_evidence_audit`
 sets, not duplication.
 
 The exception: when a cited row's content does NOT actually
@@ -126,7 +126,7 @@ Same as `story_reviewer`:
 - `accepted` — rationale cites ACs + principles honoured.
 - `rejected` — rationale cites failing principle + the gap. The
   reviewer's verdict ledger row is the close-criteria checklist;
-  the orchestrator (per `pr_reviewer_voice_authoritative`) reads
+  the orchestrator (per `pr_pipeline_authority`) reads
   the verdict and mints the iter-N+1 work task via
   `task_add(prior_task_id=…)`. needs_more is coerced to rejected
   on the task path; the questions are appended to the rationale

@@ -85,12 +85,12 @@ work-task close. Reviewer rejections cite violations here.
   iter-N+1 work task, and dispatch that retry. The orchestrator
   does NOT bypass the chain by transitioning the story to `done`
   while open work tasks remain. Citing
-  `pr_reviewer_voice_authoritative`.
+  `pr_pipeline_authority`.
 
 ### Dispatch loop
 
 The orchestrator's runtime job is dispatch, not work. Citing
-`pr_substrate_provides_context`.
+`pr_substrate_model`.
 
 - **agents do not do work themselves.** Each `kind=work` task
   is dispatched to the agent that delivers its action by the
@@ -113,7 +113,7 @@ The orchestrator's runtime job is dispatch, not work. Citing
   thin pointer; the agent collates the rest itself via
   per-verb MCP retrieval — `agent_get`, `contract_get`,
   `principle_list`, `story_get`, `task_walk`, `ledger_*`.
-  Citing `pr_substrate_provides_context`. The agent does NOT
+  Citing `pr_substrate_model`. The agent does NOT
   inherit operator-side Claude Code memory.
 - **The agent claims, works, closes.** Inside its worktree the
   agent claims its task, writes evidence ledger rows, and
@@ -129,7 +129,7 @@ The orchestrator's runtime job is dispatch, not work. Citing
 
 A reviewer rejection is the operator's voice; treat it as
 feedback to address, not friction to bypass. Citing
-`pr_reviewer_voice_authoritative`.
+`pr_pipeline_authority`.
 
 ### Plan submission
 

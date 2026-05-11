@@ -80,15 +80,16 @@ func TestLoadAgent_FlagOverridesEnv(t *testing.T) {
 	assert.Equal(t, flagFile, cfg.LoadedTOMLPath())
 }
 
-func TestLoadAgent_EnvOverridesCwd(t *testing.T) {
+func TestLoadAgent_EnvOverridesBin(t *testing.T) {
 	tmp := t.TempDir()
 	withCWD(t, tmp)
 	withHome(t, tmp)
 
 	envFile := filepath.Join(tmp, "env.toml")
-	cwdFile := filepath.Join(tmp, agentDefaultConfigFile)
+	binFile := filepath.Join(tmp, agentDefaultConfigFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(binFile), 0o700))
 	require.NoError(t, os.WriteFile(envFile, []byte(`mcp_url = "http://env/mcp"`), 0o600))
-	require.NoError(t, os.WriteFile(cwdFile, []byte(`mcp_url = "http://cwd/mcp"`), 0o600))
+	require.NoError(t, os.WriteFile(binFile, []byte(`mcp_url = "http://bin/mcp"`), 0o600))
 	withEnv(t, agentConfigPathEnv, envFile)
 
 	cfg, _, err := LoadAgent("")
@@ -97,22 +98,23 @@ func TestLoadAgent_EnvOverridesCwd(t *testing.T) {
 	assert.Equal(t, envFile, cfg.LoadedTOMLPath())
 }
 
-func TestLoadAgent_CwdOverridesXDG(t *testing.T) {
+func TestLoadAgent_BinOverridesXDG(t *testing.T) {
 	tmp := t.TempDir()
 	withCWD(t, tmp)
 	withHome(t, tmp)
 	withEnv(t, agentConfigPathEnv, "")
 
-	cwdFile := filepath.Join(tmp, agentDefaultConfigFile)
+	binFile := filepath.Join(tmp, agentDefaultConfigFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(binFile), 0o700))
 	xdgDir := filepath.Join(tmp, ".config", "satellites-agent")
 	require.NoError(t, os.MkdirAll(xdgDir, 0o700))
 	xdgFile := filepath.Join(xdgDir, "config.toml")
-	require.NoError(t, os.WriteFile(cwdFile, []byte(`mcp_url = "http://cwd/mcp"`), 0o600))
+	require.NoError(t, os.WriteFile(binFile, []byte(`mcp_url = "http://bin/mcp"`), 0o600))
 	require.NoError(t, os.WriteFile(xdgFile, []byte(`mcp_url = "http://xdg/mcp"`), 0o600))
 
 	cfg, _, err := LoadAgent("")
 	require.NoError(t, err)
-	assert.Equal(t, "http://cwd/mcp", cfg.MCPURL)
+	assert.Equal(t, "http://bin/mcp", cfg.MCPURL)
 }
 
 func TestLoadAgent_XDGFallback(t *testing.T) {
@@ -228,10 +230,11 @@ func TestLoadAgent_InvalidDurationDegrades(t *testing.T) {
 	withEnv(t, agentConfigPathEnv, "")
 
 	// "fortnight" is unparseable — go-toml/v2 reports a top-level parse
-	// error which a non-fatal cwd/xdg path degrades to a warning. Use
-	// the cwd source so the loader degrades; explicit flag is fatal.
+	// error which a non-fatal bin/xdg path degrades to a warning. Use
+	// the bin source so the loader degrades; explicit flag is fatal.
 	body := `idle_backoff = "fortnight"` + "\n"
 	path := filepath.Join(tmp, agentDefaultConfigFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 
 	cfg, warnings, err := LoadAgent("")
@@ -252,6 +255,7 @@ func TestLoadAgent_InvalidLogLevelDegrades(t *testing.T) {
 
 	body := `log_level = "shouty"` + "\n"
 	path := filepath.Join(tmp, agentDefaultConfigFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 
 	cfg, warnings, err := LoadAgent("")
@@ -300,6 +304,7 @@ ws_reconnect_max_backoff = "45s"
 log_path                 = "/tmp/sty_92bfd9e6/agent-logs"
 `
 	path := filepath.Join(tmp, agentDefaultConfigFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 
 	cfg, warnings, err := LoadAgent("")
@@ -325,7 +330,7 @@ log_path                 = "/tmp/sty_92bfd9e6/agent-logs"
 	assert.Equal(t, 750*time.Millisecond, cfg.WSReconnectMinBackoff)
 	assert.Equal(t, 45*time.Second, cfg.WSReconnectMaxBackoff)
 	assert.Equal(t, "/tmp/sty_92bfd9e6/agent-logs", cfg.LogPath)
-	// cwd resolution returns the bare default filename relative to cwd.
+	// bin resolution returns the bare default filename relative to cwd.
 	_ = path
 	assert.Equal(t, agentDefaultConfigFile, cfg.LoadedTOMLPath())
 

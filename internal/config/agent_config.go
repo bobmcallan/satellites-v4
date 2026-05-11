@@ -10,7 +10,7 @@
 //
 //  1. --config <path> CLI flag (caller passes the path explicitly).
 //  2. SATELLITES_AGENT_CONFIG env var.
-//  3. ./satellites-agent.toml (current working directory).
+//  3. bin/satellites-agent.toml (alongside the built binary).
 //  4. ~/.config/satellites-agent/config.toml (XDG-style fallback).
 //
 // When no source resolves, defaults are returned alongside one
@@ -83,9 +83,11 @@ type AgentConfig struct {
 // explicit TOML file when not using --config.
 const agentConfigPathEnv = "SATELLITES_AGENT_CONFIG"
 
-// agentDefaultConfigFile is the cwd file the loader checks when no
-// flag or env var resolves.
-const agentDefaultConfigFile = "satellites-agent.toml"
+// agentDefaultConfigFile is the repo-relative file the loader checks
+// when no flag or env var resolves. Sits alongside the built binary
+// at bin/satellites-agent (mirrors cliconfig's bin-tier convention
+// shipped in sty_5da2ed4d).
+const agentDefaultConfigFile = "bin/satellites-agent.toml"
 
 // LoadedTOMLPath returns the path that LoadAgent actually read, or
 // "" when defaults supplied the whole config.
@@ -192,7 +194,7 @@ func LoadAgent(explicitPath string) (*AgentConfig, []string, error) {
 		return nil, nil, err
 	}
 	if path == "" {
-		warnings = append(warnings, "agent config: no file resolved (flag/env/cwd/xdg) — using defaults")
+		warnings = append(warnings, "agent config: no file resolved (flag/env/bin/xdg) — using defaults")
 		return cfg, warnings, nil
 	}
 
@@ -223,7 +225,7 @@ func LoadAgent(explicitPath string) (*AgentConfig, []string, error) {
 const (
 	agentSourceFlag = "flag"
 	agentSourceEnv  = "env"
-	agentSourceCWD  = "cwd"
+	agentSourceBin  = "bin"
 	agentSourceXDG  = "xdg"
 )
 
@@ -247,7 +249,7 @@ func resolveAgentConfigPath(explicit string) (string, string, error) {
 		return p, agentSourceEnv, nil
 	}
 	if _, err := os.Stat(agentDefaultConfigFile); err == nil {
-		return agentDefaultConfigFile, agentSourceCWD, nil
+		return agentDefaultConfigFile, agentSourceBin, nil
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		xdg := filepath.Join(home, ".config", "satellites-agent", "config.toml")

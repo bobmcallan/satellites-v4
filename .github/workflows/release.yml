@@ -26,8 +26,9 @@ jobs:
 
       - name: Build
         run: |
-          go build ./cmd/satellites/
+          go build ./cmd/satellites-server/
           go build ./cmd/satellites-agent/
+          go build ./cmd/satellites-client/
 
       - name: Vet
         run: go vet ./...

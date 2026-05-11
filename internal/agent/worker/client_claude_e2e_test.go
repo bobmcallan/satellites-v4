@@ -47,11 +47,10 @@ func TestClaudeClient_Execute_EndToEnd_StubBinary(t *testing.T) {
 	mcpCalls, mcpURL, mcpClose := stubMCP(t, "task_test_e2e")
 	defer mcpClose()
 
-	// 4. Operator HOME — a controlled value the test can assert the
-	//    dispatched subprocess does NOT see. Satellites code reads
-	//    nothing from this directory; the env-inheritance path forwards
-	//    HOME via os.Environ() and enforceHomeEnv overrides it with the
-	//    task-scoped tmpdir. The test asserts that override happened.
+	// 4. Operator HOME — a controlled value the test asserts the
+	//    dispatched subprocess inherits. Satellites does not synthesise
+	//    or override the subprocess's HOME; whatever the operator has
+	//    set is what claude sees. The test asserts the inheritance.
 	srcHome := t.TempDir()
 	require.NoError(t, os.Setenv("HOME", srcHome))
 	t.Cleanup(func() { _ = os.Unsetenv("HOME") })
@@ -90,11 +89,10 @@ func TestClaudeClient_Execute_EndToEnd_StubBinary(t *testing.T) {
 	assert.Contains(t, argvJoined, "--mcp-config")
 	assert.Contains(t, argvJoined, "-p")
 
-	// HOME landed at the task-scoped tmpdir, not the operator's HOME —
-	// satellites never reads or copies ~/.claude/ state into the
-	// subprocess.
-	assert.NotEmpty(t, manifest.HomeEnv)
-	assert.NotEqual(t, srcHome, manifest.HomeEnv, "stub claude saw operator HOME — task-scoped HOME isolation failed")
+	// HOME inherited from the operator's environment, untouched.
+	// Satellites does not configure the dispatched subprocess; whatever
+	// HOME the operator has set is what claude sees.
+	assert.Equal(t, srcHome, manifest.HomeEnv, "stub claude did not see operator HOME — satellites must not override the subprocess's HOME")
 
 	// Worktree exists at <root>/<task_id> and is the cmd.Dir.
 	expectedWorktree := filepath.Join(worktreeRoot, "task_test_e2e")

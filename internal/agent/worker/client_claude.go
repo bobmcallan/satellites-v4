@@ -11,10 +11,11 @@
 //  2. Compose a thin-pointer prompt from task / agent / contract /
 //     story metadata. The dispatched agent fetches the rich content
 //     via per-verb retrieval (pr_substrate_provides_context).
-//  3. Create a fresh empty tmpdir HOME for the subprocess. Satellites
-//     never reads or copies operator state from ~/.claude/; any
-//     LLM-side auth (e.g. ANTHROPIC_API_KEY) reaches the subprocess
-//     via the inherited os.Environ() — never sourced by satellites.
+//  3. Inherit the operator's environment unmodified. The dispatched
+//     subprocess sees the operator's HOME and whatever auth the
+//     operator configured for claude outside satellites-client.
+//     Satellites does not read, copy, override, or synthesise any
+//     part of the dispatched subprocess's environment.
 //  4. Launch claude with bypassPermissions + strict-mcp-config + an
 //     inline mcp-config naming only the satellites server. Stream
 //     stdout/stderr to <worktree>/.satellites-agent.log.
@@ -58,9 +59,10 @@ type claudeClient struct {
 }
 
 // NewClaudeClient constructs a worker.Client whose Execute spawns a
-// real `claude --print` subprocess in a per-task git worktree with a
-// fresh empty tmpdir HOME. Claim / Close / Heartbeat / Shutdown
-// delegate to the placeholder client (same MCP transport).
+// real `claude --print` subprocess in a per-task git worktree. The
+// subprocess inherits the operator's environment unmodified — claude
+// is configured outside satellites-client. Claim / Close / Heartbeat /
+// Shutdown delegate to the placeholder client (same MCP transport).
 func NewClaudeClient(cfg config.AgentConfig, logger arbor.ILogger) Client {
 	return &claudeClient{
 		placeholderClient: newPlaceholderClient(cfg, logger),
@@ -160,7 +162,6 @@ type promptInputs struct {
 	Agent    agentInfo
 	Contract contractInfo
 	Story    storyInfo
-	HomePath string
 	WorkDir  string
 }
 
@@ -201,7 +202,6 @@ Close your task with:
   (or --outcome failure on a failed run)
 
 Working directory: {{work_dir}}
-HOME:              {{home_path}}
 
 Begin.
 `
@@ -219,7 +219,6 @@ func composePrompt(in promptInputs) string {
 		"{{workspace_id}}", in.Task.WorkspaceID,
 		"{{contract_name}}", in.Contract.Name,
 		"{{work_dir}}", in.WorkDir,
-		"{{home_path}}", in.HomePath,
 	)
 	return r.Replace(promptTemplate)
 }
@@ -490,21 +489,13 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 		return OutcomeFailure, err
 	}
 
-	// Step 4: HOME. A fresh empty tmpdir scoped to this task. Satellites
-	// does not read or copy state from the operator's ~/.claude/. Any
-	// LLM-side auth (e.g. ANTHROPIC_API_KEY) the dispatched subprocess
-	// needs reaches it via the inherited os.Environ() below — never
-	// sourced or rotated by satellites code.
-	tmpHome, err := os.MkdirTemp("", "satellites-task-")
-	if err != nil {
-		return OutcomeFailure, fmt.Errorf("execute: tmpdir: %w", err)
-	}
-	defer os.RemoveAll(tmpHome)
-
-	// Step 5: prompt.
+	// Step 5: prompt. (Step 4 is empty by design — satellites inherits
+	// the operator's environment unmodified; there is no satellites-
+	// managed HOME for the subprocess. Claude is configured outside
+	// satellites-client.)
 	prompt := composePrompt(promptInputs{
 		Task: ti, Agent: ai, Contract: ci, Story: si,
-		HomePath: tmpHome, WorkDir: worktreePath,
+		WorkDir: worktreePath,
 	})
 
 	// Step 6: launch claude. Stream stdout+stderr to .satellites-
@@ -532,10 +523,9 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = worktreePath
-	cmd.Env = append(os.Environ(), "HOME="+tmpHome)
-	// Replace any pre-existing HOME=... entry so the cleansed value
-	// wins on every platform's exec lookup.
-	cmd.Env = enforceHomeEnv(cmd.Env, tmpHome)
+	// cmd.Env left at default — exec.CommandContext inherits the operator's
+	// os.Environ() automatically. Satellites does not configure the
+	// dispatched subprocess's environment.
 	// sty_3e27a3f5: when the orchestrator-invoked RunDispatched path
 	// sets stdoutTee/stderrTee, the subprocess output is mirrored live
 	// to the operator's terminal. The worktree log file is always
@@ -558,7 +548,7 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 	}
 
 	// Step 7: evidence row + outcome.
-	evidenceErr := c.appendExecuteEvidence(context.Background(), task, ti, tmpHome, prompt, exitCode, logPath)
+	evidenceErr := c.appendExecuteEvidence(context.Background(), task, ti, prompt, exitCode, logPath)
 	if evidenceErr != nil && c.logger != nil {
 		c.logger.Warn().Str("task_id", task.ID).Str("error", evidenceErr.Error()).Msg("agent-execute-evidence row failed")
 	}
@@ -572,32 +562,15 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 	return OutcomeSuccess, nil
 }
 
-// enforceHomeEnv guarantees the task-scoped HOME=tmpHome is the last
-// (winning) entry when the inherited environment already contains a
-// HOME assignment. Without this, exec.Cmd's env resolution can pick up
-// the operator's HOME on platforms whose libc reads the first match —
-// which would expose the operator's ~/.claude/ to the subprocess.
-func enforceHomeEnv(env []string, tmpHome string) []string {
-	out := env[:0]
-	for _, e := range env {
-		if strings.HasPrefix(e, "HOME=") {
-			continue
-		}
-		out = append(out, e)
-	}
-	out = append(out, "HOME="+tmpHome)
-	return out
-}
-
 // appendExecuteEvidence writes the kind:agent-execute-evidence ledger
 // row that records the orchestrator-side metadata for the dispatch:
-// HOME path, prompt sent (literal — small), exit code, log path,
-// session JSONL path. The dispatched agent itself writes the
-// substantive evidence rows; this row is the orchestrator's frame.
-func (c *claudeClient) appendExecuteEvidence(ctx context.Context, env TaskEnvelope, ti taskInfo, tmpHome, prompt string, exitCode int, logPath string) error {
+// prompt sent (literal — small), exit code, log path. The dispatched
+// agent itself writes the substantive evidence rows; this row is the
+// orchestrator's frame.
+func (c *claudeClient) appendExecuteEvidence(ctx context.Context, env TaskEnvelope, ti taskInfo, prompt string, exitCode int, logPath string) error {
 	content := fmt.Sprintf(
-		"# agent-execute-evidence\n\ntask=%s\nstory=%s\nagent_id=%s\naction=%s\nhome=%s\nworktree=%s\nlog=%s\nexit_code=%d\n\n## prompt\n\n%s\n",
-		env.ID, ti.StoryID, ti.AgentID, ti.Action, tmpHome,
+		"# agent-execute-evidence\n\ntask=%s\nstory=%s\nagent_id=%s\naction=%s\nworktree=%s\nlog=%s\nexit_code=%d\n\n## prompt\n\n%s\n",
+		env.ID, ti.StoryID, ti.AgentID, ti.Action,
 		filepath.Dir(logPath), logPath, exitCode, prompt,
 	)
 	args := map[string]any{

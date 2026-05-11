@@ -35,8 +35,7 @@ func TestComposePrompt_ThinPointerShape(t *testing.T) {
 				Agent:    agentInfo{Name: "developer_agent"},
 				Contract: contractInfo{Name: "develop"},
 				Story:    storyInfo{ID: "sty_aaa"},
-				HomePath: "/tmp/home_xxx",
-				WorkDir:  "/repo/.satellites-agents/task_001",
+				WorkDir: "/repo/.satellites-agents/task_001",
 			},
 			want: []string{
 				`satellites-client task get task_001`,
@@ -46,7 +45,6 @@ func TestComposePrompt_ThinPointerShape(t *testing.T) {
 				`satellites-client task walk --story-id sty_aaa`,
 				`satellites-client principle list --active-only --project-id proj_x`,
 				`satellites-client task update --id task_001 --status closed --outcome success`,
-				"/tmp/home_xxx",
 				"/repo/.satellites-agents/task_001",
 				"Action:    contract:develop",
 				"Role:      developer_agent",
@@ -62,8 +60,7 @@ func TestComposePrompt_ThinPointerShape(t *testing.T) {
 				Agent:    agentInfo{Name: "planner_agent"},
 				Contract: contractInfo{Name: "plan"},
 				Story:    storyInfo{ID: "sty_p"},
-				HomePath: "/tmp/home_p",
-				WorkDir:  "/repo/.satellites-agents/task_p",
+				WorkDir: "/repo/.satellites-agents/task_p",
 			},
 			want: []string{
 				`satellites-client task get task_p`,
@@ -83,8 +80,7 @@ func TestComposePrompt_ThinPointerShape(t *testing.T) {
 				Agent:    agentInfo{Name: "adhoc_agent"},
 				Contract: contractInfo{Name: "ad-hoc-task"},
 				Story:    storyInfo{ID: "sty_f"},
-				HomePath: "/tmp/home_f",
-				WorkDir:  "/repo/.satellites-agents/task_f",
+				WorkDir: "/repo/.satellites-agents/task_f",
 			},
 			want: []string{
 				"Action:    ad-hoc-task",
@@ -242,23 +238,6 @@ func TestBuildMCPConfigJSON_NoToken_OmitsAuthHeader(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, raw, "Authorization")
 	assert.NotContains(t, raw, "Bearer")
-}
-
-// TestEnforceHomeEnv guarantees the task-scoped HOME=tmpHome wins even
-// when the inherited environment already declared HOME — without this,
-// the subprocess could observe the operator's HOME and discover
-// ~/.claude/ on disk despite satellites code never reading it.
-func TestEnforceHomeEnv(t *testing.T) {
-	in := []string{"PATH=/usr/bin", "HOME=/operator", "USER=op"}
-	out := enforceHomeEnv(in, "/tmp/task-home")
-	homeCount := 0
-	for _, e := range out {
-		if strings.HasPrefix(e, "HOME=") {
-			homeCount++
-		}
-	}
-	assert.Equal(t, 1, homeCount, "must be exactly one HOME= entry; got %v", out)
-	assert.Equal(t, "HOME=/tmp/task-home", out[len(out)-1])
 }
 
 // TestContractInfo_DispatchClass (sty_3b3e4e66 Layer A) — the

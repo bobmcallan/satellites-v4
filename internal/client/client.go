@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/ternarybob/arbor"
+
 	"github.com/bobmcallan/satellites/internal/changelog"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
@@ -18,11 +20,14 @@ import (
 // Caller carries the resolved tenancy context for a typed client call.
 // The wire-layer handler builds it from request headers + the auth
 // store; the typed methods use the memberships slice for workspace
-// scoping when calling the underlying stores.
+// scoping when calling the underlying stores. GlobalAdmin is the
+// resolved global-admin flag from the auth pipeline; the typed
+// resolution helpers consult it to widen lookups across tenancy.
 type Caller struct {
 	UserID      string
 	Email       string
 	Memberships []string
+	GlobalAdmin bool
 }
 
 // Deps is the dependency bundle a Client needs. The wire layer (the
@@ -30,16 +35,18 @@ type Caller struct {
 // the CLI scaffold of order:03+ constructs an HTTP-backed remote
 // client that satisfies a subset of the same surface.
 type Deps struct {
-	Documents  document.Store
-	Projects   project.Store
-	Ledger     ledger.Store
-	Stories    story.Store
-	Workspaces workspace.Store
-	Sessions   session.Store
-	Tasks      task.Store
-	Repos      repo.Store
-	Changelog  changelog.Store
-	StartedAt  time.Time
+	Documents        document.Store
+	Projects         project.Store
+	Ledger           ledger.Store
+	Stories          story.Store
+	Workspaces       workspace.Store
+	Sessions         session.Store
+	Tasks            task.Store
+	Repos            repo.Store
+	Changelog        changelog.Store
+	StartedAt        time.Time
+	DefaultProjectID string
+	Logger           arbor.ILogger
 }
 
 // Client carries the typed business surface that callers (MCP, CLI,

@@ -75,17 +75,34 @@ const HandshakeFallbackInstructions = "Satellites v4 — walking skeleton."
 // typed methods with a fresh snapshot. story_66c02002 + sty_df1cb227.
 func (s *Server) cli() *client.Client {
 	return client.New(client.Deps{
-		Documents:  s.docs,
-		Projects:   s.projects,
-		Ledger:     s.ledger,
-		Stories:    s.stories,
-		Workspaces: s.workspaces,
-		Sessions:   s.sessions,
-		Tasks:      s.tasks,
-		Repos:      s.repos,
-		Changelog:  s.changelog,
-		StartedAt:  s.startedAt,
+		Documents:        s.docs,
+		Projects:         s.projects,
+		Ledger:           s.ledger,
+		Stories:          s.stories,
+		Workspaces:       s.workspaces,
+		Sessions:         s.sessions,
+		Tasks:            s.tasks,
+		Repos:            s.repos,
+		Changelog:        s.changelog,
+		StartedAt:        s.startedAt,
+		DefaultProjectID: s.defaultProjectID,
+		Logger:           s.logger,
 	})
+}
+
+// toClientCaller converts the wire-layer CallerIdentity (resolved by
+// AuthMiddleware) into the typed client.Caller the migrated resolution
+// helpers consume. The Memberships slice is populated by the caller
+// after calling ResolveCallerMemberships; toClientCaller leaves it nil.
+//
+// sty_068a6c46: bridge for the resolveProjectID / resolveCallerMemberships
+// migration into the client package.
+func toClientCaller(c auth.CallerIdentity) client.Caller {
+	return client.Caller{
+		UserID:      c.UserID,
+		Email:       c.Email,
+		GlobalAdmin: c.GlobalAdmin,
+	}
 }
 
 // resolveHandshakeInstructions returns the MCP server-instructions
@@ -1026,143 +1043,54 @@ func (s *Server) nowUTC() time.Time {
 	return time.Now().UTC()
 }
 
-// resolveProjectID picks the document-operation project scope for the
-// caller. Rules: (1) if the request URL carries ?project_id= scoping,
-// any explicit `requested` must match it (cross-project tool calls are
-// rejected); when `requested` is empty, the URL-scoped value is used.
-// (2) if req supplies project_id, the caller must own that project or
-// it must be the system default; cross-project access returns an error.
-// (3) otherwise, fall back to the caller's first owned project.
-// (4) otherwise, fall back to the system default.
+// resolveProjectID is a thin wire-side adapter around
+// client.Client.ResolveProjectID. It supplies the URL-scoped
+// project_id from the inbound request context (via the
+// mcpserver-private scopedProjectKey), which is the only piece of
+// state the typed method does not own. The body of the resolution
+// rules lives in internal/client/resolve.go (sty_068a6c46 migration).
 func (s *Server) resolveProjectID(ctx context.Context, requested string, caller auth.CallerIdentity, memberships []string) (string, error) {
-	effective, ok := enforceScopedProject(ctx, requested)
-	if !ok {
-		return "", errors.New("project_id parameter does not match the URL-scoped project_id")
-	}
-	requested = effective
-	if requested != "" {
-		if requested == s.defaultProjectID {
-			return requested, nil
-		}
-		// story_3548cde2: global_admin callers may resolve any project
-		// regardless of workspace membership or ownership. The
-		// impersonating_as_workspace audit field captures the
-		// cross-tenancy write at ledger-stamp time.
-		lookupMemberships := memberships
-		if caller.GlobalAdmin {
-			lookupMemberships = nil
-		}
-		p, err := s.projectsSafe().GetByID(ctx, requested, lookupMemberships)
-		if err != nil {
-			return "", errors.New("project not found or access denied")
-		}
-		if p.OwnerUserID != caller.UserID && !caller.GlobalAdmin {
-			return "", errors.New("project not found or access denied")
-		}
-		return requested, nil
-	}
-	if s.projects != nil && caller.UserID != "" {
-		list, err := s.projects.ListByOwner(ctx, caller.UserID, memberships)
-		if err == nil && len(list) > 0 {
-			return list[0].ID, nil
-		}
-	}
-	if s.defaultProjectID != "" {
-		return s.defaultProjectID, nil
-	}
-	return "", errors.New("no project context available")
+	return s.cli().ResolveProjectID(ctx, requested, ScopedProjectIDFrom(ctx), toClientCaller(caller), memberships)
 }
 
-// projectsSafe returns the project store, or a zero-value implementation
-// when the server was constructed without one. The MCP tool registrations
-// already gate project_* on non-nil projects; this is a safety net for
-// document_* callers that somehow arrive with a requested project_id when
-// projects are disabled.
-func (s *Server) projectsSafe() project.Store {
-	if s.projects != nil {
-		return s.projects
-	}
-	return project.NewMemoryStore()
-}
-
-// ensureCallerWorkspaces returns the caller's member-workspace ids, minting
-// a default workspace on first sight via workspace.EnsureDefault (matches
-// the OnUserCreated hook for human logins, and covers synthetic callers
-// like API keys that didn't flow through the auth bootstrap path). Returns
-// nil when the workspace store is disabled (pre-tenant mode). Empty slice
-// only when the caller is unauthenticated.
+// ensureCallerWorkspaces is a thin adapter around
+// client.Client.EnsureCallerWorkspaces. Kept on Server to preserve
+// the wire-layer call-site signatures; the body of the helper now
+// lives in internal/client/resolve.go (sty_068a6c46 migration).
 func (s *Server) ensureCallerWorkspaces(ctx context.Context, caller auth.CallerIdentity) []string {
-	if s.workspaces == nil {
-		return nil
-	}
-	if caller.UserID == "" {
-		return []string{}
-	}
-	list, err := s.workspaces.ListByMember(ctx, caller.UserID)
-	if err != nil {
-		return []string{}
-	}
-	if len(list) == 0 {
-		if _, err := workspace.EnsureDefault(ctx, s.workspaces, s.logger, caller.UserID, time.Now().UTC()); err == nil {
-			list, _ = s.workspaces.ListByMember(ctx, caller.UserID)
-		}
-	}
-	out := make([]string, 0, len(list))
-	for _, w := range list {
-		out = append(out, w.ID)
-	}
-	return out
+	return s.cli().EnsureCallerWorkspaces(ctx, toClientCaller(caller))
 }
 
-// resolveCallerWorkspaceID returns the caller's default workspace id, or
-// empty when the caller is unauthenticated or the workspace store is off.
-// Write paths use this to stamp workspace_id on new rows.
+// resolveCallerWorkspaceID is a thin adapter around
+// client.Client.ResolveCallerWorkspaceID. Kept on Server to preserve
+// the wire-layer call-site signatures; the body now lives in
+// internal/client/resolve.go (sty_068a6c46 migration).
 func (s *Server) resolveCallerWorkspaceID(ctx context.Context, caller auth.CallerIdentity) string {
-	ids := s.ensureCallerWorkspaces(ctx, caller)
-	if len(ids) == 0 {
-		return ""
-	}
-	return ids[0]
+	return s.cli().ResolveCallerWorkspaceID(ctx, toClientCaller(caller))
 }
 
-// resolveCallerMemberships returns the caller's memberships slice as the
-// store reads expect: nil when the workspace store is disabled (pre-tenant
-// behaviour), empty slice when the caller has no membership yet (deny-all),
-// non-empty workspace ids otherwise. See docs/architecture.md §8.
+// resolveCallerMemberships is a thin adapter around
+// client.Client.ResolveCallerMemberships. Kept on Server to preserve
+// the wire-layer call-site signatures; the body now lives in
+// internal/client/resolve.go (sty_068a6c46 migration).
 func (s *Server) resolveCallerMemberships(ctx context.Context, caller auth.CallerIdentity) []string {
-	return s.ensureCallerWorkspaces(ctx, caller)
+	return s.cli().ResolveCallerMemberships(ctx, toClientCaller(caller))
 }
 
-// ledgerWorkspaceInMemberships reports whether wsID is in the caller's
-// memberships slice. Used by handleLedgerAppend to decide whether a
-// write crosses the tenancy boundary and warrants stamping
-// impersonating_as_workspace. story_3548cde2.
+// ledgerWorkspaceInMemberships is a thin adapter around
+// client.WorkspaceInMemberships. Kept at package scope to preserve the
+// wire-layer call-site signatures; the body now lives in
+// internal/client/resolve.go (sty_068a6c46 migration).
 func ledgerWorkspaceInMemberships(wsID string, memberships []string) bool {
-	if wsID == "" || len(memberships) == 0 {
-		return false
-	}
-	for _, m := range memberships {
-		if m == wsID {
-			return true
-		}
-	}
-	return false
+	return client.WorkspaceInMemberships(wsID, memberships)
 }
 
-// resolveProjectWorkspaceID returns the workspace_id of the given project,
-// or empty when the project has none yet (legacy path before backfill).
-// This helper reads with a nil memberships filter because it's used on the
-// write path to cascade workspace_id onto children; the caller-facing read
-// scoping is applied by the handler that called resolveProjectID first.
+// resolveProjectWorkspaceID is a thin adapter around
+// client.Client.ResolveProjectWorkspaceID. Kept on Server to preserve
+// the wire-layer call-site signatures; the body now lives in
+// internal/client/resolve.go (sty_068a6c46 migration).
 func (s *Server) resolveProjectWorkspaceID(ctx context.Context, projectID string) string {
-	if s.projects == nil || projectID == "" {
-		return ""
-	}
-	p, err := s.projects.GetByID(ctx, projectID, nil)
-	if err != nil {
-		return ""
-	}
-	return p.WorkspaceID
+	return s.cli().ResolveProjectWorkspaceID(ctx, projectID)
 }
 
 func (s *Server) handleDocumentIngestFile(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

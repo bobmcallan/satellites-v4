@@ -84,12 +84,6 @@ var forbiddenSubstrateImports = []string{
 // Snapshot taken 2026-05-12 against c321e6a (post-sty_f3f7bf9b
 // slice 12). 11 files; one-line characterisation per entry below.
 var legacyAllowlist = map[string]map[string]struct{}{
-	// catalogue.go — tool catalogue / help surface; reads document
-	// types directly. TODO(sty_4db0e025): route through
-	// client.CatalogueList.
-	"catalogue.go": {
-		"github.com/bobmcallan/satellites/internal/document": {},
-	},
 	// mcp.go — server struct + boot-time wiring; holds typed store
 	// pointers for the legacy handlers below. TODO(sty_4db0e025):
 	// the struct narrows to *client.Client only once every legacy

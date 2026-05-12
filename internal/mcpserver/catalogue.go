@@ -9,6 +9,12 @@
 // markdown seed file for it — so a re-seed never overwrites or
 // duplicates the snapshot. A re-boot re-derives the body and Upsert
 // short-circuits when the body hash matches.
+//
+// Layering (sty_4db0e025 slice A7): BuildCatalogue is a pure
+// MCP-SDK-only projection; MaterialiseCatalogue delegates the
+// document-store write to client.Client.CatalogueUpsert so this file
+// imports no substrate domain packages directly. The typed client
+// surface owns the system-workspace lookup + UpsertInput shape.
 package mcpserver
 
 import (
@@ -20,7 +26,7 @@ import (
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	"github.com/bobmcallan/satellites/internal/document"
+	"github.com/bobmcallan/satellites/internal/client"
 )
 
 const (
@@ -122,14 +128,14 @@ func paramsFromSchema(properties map[string]any, required []string) []CatalogueP
 }
 
 // MaterialiseCatalogue captures the registered MCP tool set into the
-// document store as a system-scope artifact. Idempotent — Upsert
-// short-circuits when the body hash matches the existing row.
+// document store as a system-scope artifact. Idempotent — the typed
+// client surface short-circuits the Upsert when the body hash matches
+// the existing row.
 //
-// Resolves the system workspace via the workspaces store using the
-// same convention as RunSystemSeed (first workspace returned for the
-// "system" member). Falls back to empty workspace_id when the store
-// is not yet ready, which the doc store accepts for system-scope
-// rows.
+// The wire-layer responsibility here is: project the in-memory MCP
+// tool registry into a Catalogue (BuildCatalogue), marshal the body,
+// and hand the bytes to client.Client.CatalogueUpsert. The typed
+// surface owns the workspace lookup + document-store call.
 func (s *Server) MaterialiseCatalogue(ctx context.Context) error {
 	if s == nil || s.docs == nil || s.mcp == nil {
 		return nil
@@ -140,24 +146,12 @@ func (s *Server) MaterialiseCatalogue(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("marshal catalogue: %w", err)
 	}
-
-	workspaceID := ""
-	if s.workspaces != nil {
-		if list, lerr := s.workspaces.ListByMember(ctx, "system"); lerr == nil && len(list) > 0 {
-			workspaceID = list[0].ID
-		}
-	}
-
-	_, err = s.docs.Upsert(ctx, document.UpsertInput{
-		WorkspaceID: workspaceID,
-		Type:        document.TypeArtifact,
-		Name:        CatalogueArtifactName,
-		Body:        body,
-		Scope:       document.ScopeSystem,
-		Tags:        []string{CatalogueKindTag},
-		Actor:       "system",
-	}, now)
-	if err != nil {
+	if err := s.cli().CatalogueUpsert(ctx, client.CatalogueUpsertInput{
+		Name: CatalogueArtifactName,
+		Body: body,
+		Tag:  CatalogueKindTag,
+		Now:  now,
+	}); err != nil {
 		return fmt.Errorf("upsert mcp-catalogue artifact: %w", err)
 	}
 	if s.logger != nil {

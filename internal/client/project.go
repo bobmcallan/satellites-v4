@@ -18,6 +18,31 @@ var ErrRepoURLRequired = errors.New("repo_url_required")
 // supplied URL. Wire-layer envelope: "repo_url_invalid".
 var ErrRepoURLInvalid = errors.New("repo_url_invalid")
 
+// ErrProjectStoreNotConfigured is returned when the typed project
+// surface is called against a Client whose Deps.Projects is nil. The
+// wire-layer caller maps this to a per-verb "unavailable" envelope.
+var ErrProjectStoreNotConfigured = errors.New("project store not configured")
+
+// ErrProjectNameRequired is returned by ProjectCreate when the input
+// supplies no name. Wire-layer envelope mirrors the historical
+// project_create error message produced by the MCP handler.
+var ErrProjectNameRequired = errors.New("name required")
+
+// ErrProjectIDRequired is returned by ProjectUpdate / ProjectDelete
+// when the input supplies no id. Mirrors the historical "id required"
+// surfacing from the MCP RequireString path.
+var ErrProjectIDRequired = errors.New("id required")
+
+// ErrProjectNotFound is returned when GetByID fails or the row's
+// owner_user_id does not match the calling user. Mirrors the
+// "project not found" envelope the MCP handler produced.
+var ErrProjectNotFound = errors.New("project not found")
+
+// ErrNoCallerIdentity is returned when a typed project mutator runs
+// without a resolved caller user id. Mirrors the historical
+// "no caller identity" envelope the project_create MCP handler raised.
+var ErrNoCallerIdentity = errors.New("no caller identity")
+
 // ProjectSetInput names the bind: repo_url is required; the workspace
 // is resolved by the wire layer from the caller's session context.
 // SessionID is optional — when non-empty + the session store is
@@ -125,4 +150,117 @@ func (c *Client) resolveProjectByRemote(ctx context.Context, workspaceID, canoni
 		return project.Project{}, false
 	}
 	return p, true
+}
+
+// ProjectCreateInput captures the project_create request shape. The
+// wire-layer caller pre-resolves the workspace id from the caller's
+// session context and threads it in as WorkspaceID; Now overrides the
+// timestamp for deterministic tests (zero falls back to time.Now().UTC()).
+type ProjectCreateInput struct {
+	Name        string
+	WorkspaceID string
+	Now         time.Time
+}
+
+// ProjectCreate mints a new project row owned by caller.UserID in the
+// supplied workspace. Returns the freshly-persisted project.Project;
+// wire-layer assembly of the projectView (mcp_url / mcp_config) stays
+// in the adapter because it depends on the request's base-URL stash —
+// a transport-only concern.
+func (c *Client) ProjectCreate(ctx context.Context, caller Caller, in ProjectCreateInput) (project.Project, error) {
+	if c.deps.Projects == nil {
+		return project.Project{}, ErrProjectStoreNotConfigured
+	}
+	if caller.UserID == "" {
+		return project.Project{}, ErrNoCallerIdentity
+	}
+	if in.Name == "" {
+		return project.Project{}, ErrProjectNameRequired
+	}
+	now := in.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	return c.deps.Projects.Create(ctx, caller.UserID, in.WorkspaceID, in.Name, now)
+}
+
+// ProjectUpdateInput captures the project_update partial-mutation
+// shape. Name is applied only when non-empty and different from the
+// existing row. MCPURL uses pointer semantics — nil means "not
+// supplied"; a non-nil empty string clears the override. Memberships
+// is pre-resolved by the wire layer for workspace scoping on
+// GetByID.
+type ProjectUpdateInput struct {
+	ID          string
+	Name        string
+	MCPURL      *string
+	Memberships []string
+	Now         time.Time
+}
+
+// ProjectUpdate applies a partial mutation to a project owned by
+// caller.UserID. Returns the post-update project.Project; ownership
+// is enforced post-fetch so the typed surface mirrors the MCP
+// handler's "project not found" envelope on cross-tenant access.
+func (c *Client) ProjectUpdate(ctx context.Context, caller Caller, in ProjectUpdateInput) (project.Project, error) {
+	if c.deps.Projects == nil {
+		return project.Project{}, ErrProjectStoreNotConfigured
+	}
+	if in.ID == "" {
+		return project.Project{}, ErrProjectIDRequired
+	}
+	existing, err := c.deps.Projects.GetByID(ctx, in.ID, in.Memberships)
+	if err != nil || existing.OwnerUserID != caller.UserID {
+		return project.Project{}, ErrProjectNotFound
+	}
+	now := in.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	updated := existing
+	if in.Name != "" && in.Name != existing.Name {
+		next, rerr := c.deps.Projects.UpdateName(ctx, in.ID, in.Name, now)
+		if rerr != nil {
+			return project.Project{}, rerr
+		}
+		updated = next
+	}
+	if in.MCPURL != nil && *in.MCPURL != updated.MCPURL {
+		next, merr := c.deps.Projects.SetMCPURL(ctx, in.ID, *in.MCPURL, now)
+		if merr != nil {
+			return project.Project{}, merr
+		}
+		updated = next
+	}
+	return updated, nil
+}
+
+// ProjectDeleteInput captures the project_delete request shape.
+// Memberships is pre-resolved by the wire layer. Soft-delete only —
+// the substrate flips status to archived rather than removing rows.
+type ProjectDeleteInput struct {
+	ID          string
+	Memberships []string
+	Now         time.Time
+}
+
+// ProjectDelete soft-deletes a project owned by caller.UserID by
+// flipping its status to archived. Returns the post-archive
+// project.Project so the wire layer can echo the canonical row.
+func (c *Client) ProjectDelete(ctx context.Context, caller Caller, in ProjectDeleteInput) (project.Project, error) {
+	if c.deps.Projects == nil {
+		return project.Project{}, ErrProjectStoreNotConfigured
+	}
+	if in.ID == "" {
+		return project.Project{}, ErrProjectIDRequired
+	}
+	existing, err := c.deps.Projects.GetByID(ctx, in.ID, in.Memberships)
+	if err != nil || existing.OwnerUserID != caller.UserID {
+		return project.Project{}, ErrProjectNotFound
+	}
+	now := in.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	return c.deps.Projects.SetStatus(ctx, in.ID, project.StatusArchived, now)
 }

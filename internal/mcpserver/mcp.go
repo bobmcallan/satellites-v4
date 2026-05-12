@@ -1508,26 +1508,20 @@ func (s *Server) buildProjectView(ctx context.Context, p project.Project) projec
 func (s *Server) handleProjectCreate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
-	if caller.UserID == "" {
-		return mcpgo.NewToolResultError("no caller identity"), nil
-	}
 	name, err := req.RequireString("name")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	wsID := s.resolveCallerWorkspaceID(ctx, caller)
-	p, err := s.projects.Create(ctx, caller.UserID, wsID, name, time.Now().UTC())
+	p, err := s.cli().ProjectCreate(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email}, client.ProjectCreateInput{
+		Name: name, WorkspaceID: s.resolveCallerWorkspaceID(ctx, caller), Now: s.nowUTC(),
+	})
 	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
+		return mcpgo.NewToolResultError(projectErrMessage(err)), nil
 	}
 	body, _ := json.Marshal(s.buildProjectView(ctx, p))
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "project_create").
-		Str("project_id", p.ID).
-		Str("owner_user_id", p.OwnerUserID).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "project_create").
+		Str("project_id", p.ID).Str("owner_user_id", p.OwnerUserID).
+		Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
@@ -1642,7 +1636,6 @@ func (s *Server) handleProjectSet(ctx context.Context, req mcpgo.CallToolRequest
 func (s *Server) handleProjectUpdate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
-	memberships := s.resolveCallerMemberships(ctx, caller)
 	id, err := req.RequireString("id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -1650,44 +1643,25 @@ func (s *Server) handleProjectUpdate(ctx context.Context, req mcpgo.CallToolRequ
 	if _, ok := enforceScopedProject(ctx, id); !ok {
 		return mcpgo.NewToolResultError("project id does not match the URL-scoped project_id"), nil
 	}
-	existing, err := s.projects.GetByID(ctx, id, memberships)
-	if err != nil || existing.OwnerUserID != caller.UserID {
-		return mcpgo.NewToolResultError("project not found"), nil
-	}
-	now := time.Now().UTC()
-	updated := existing
-	if name := req.GetString("name", ""); name != "" && name != existing.Name {
-		var renameErr error
-		updated, renameErr = s.projects.UpdateName(ctx, id, name, now)
-		if renameErr != nil {
-			return mcpgo.NewToolResultError(renameErr.Error()), nil
-		}
-	}
-	// mcp_url override: present-vs-absent treatment.
+	in := client.ProjectUpdateInput{ID: id, Name: req.GetString("name", ""),
+		Memberships: s.resolveCallerMemberships(ctx, caller), Now: s.nowUTC()}
 	if mcpURL, ok := req.GetArguments()["mcp_url"]; ok {
 		mcpStr, _ := mcpURL.(string)
-		if mcpStr != updated.MCPURL {
-			next, mcpErr := s.projects.SetMCPURL(ctx, id, mcpStr, now)
-			if mcpErr != nil {
-				return mcpgo.NewToolResultError(mcpErr.Error()), nil
-			}
-			updated = next
-		}
+		in.MCPURL = &mcpStr
+	}
+	updated, err := s.cli().ProjectUpdate(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email}, in)
+	if err != nil {
+		return mcpgo.NewToolResultError(projectErrMessage(err)), nil
 	}
 	body, _ := json.Marshal(s.buildProjectView(ctx, updated))
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "project_update").
-		Str("project_id", id).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "project_update").
+		Str("project_id", id).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
 func (s *Server) handleProjectDelete(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
-	memberships := s.resolveCallerMemberships(ctx, caller)
 	id, err := req.RequireString("id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -1695,22 +1669,31 @@ func (s *Server) handleProjectDelete(ctx context.Context, req mcpgo.CallToolRequ
 	if _, ok := enforceScopedProject(ctx, id); !ok {
 		return mcpgo.NewToolResultError("project id does not match the URL-scoped project_id"), nil
 	}
-	existing, err := s.projects.GetByID(ctx, id, memberships)
-	if err != nil || existing.OwnerUserID != caller.UserID {
-		return mcpgo.NewToolResultError("project not found"), nil
-	}
-	updated, err := s.projects.SetStatus(ctx, id, project.StatusArchived, time.Now().UTC())
+	updated, err := s.cli().ProjectDelete(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email}, client.ProjectDeleteInput{
+		ID: id, Memberships: s.resolveCallerMemberships(ctx, caller), Now: s.nowUTC(),
+	})
 	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
+		return mcpgo.NewToolResultError(projectErrMessage(err)), nil
 	}
 	body, _ := json.Marshal(updated)
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "project_delete").
-		Str("project_id", id).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "project_delete").
+		Str("project_id", id).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+// projectErrMessage maps typed sentinels from internal/client into the
+// wire-error envelopes the project_create/update/delete handlers
+// historically produced. Centralises the mapping so each adapter stays
+// inside the ≤25-line floor mandated by sty_f3f7bf9b's review-criteria.
+func projectErrMessage(err error) string {
+	switch {
+	case errors.Is(err, client.ErrNoCallerIdentity):
+		return "no caller identity"
+	case errors.Is(err, client.ErrProjectNotFound):
+		return "project not found"
+	default:
+		return err.Error()
+	}
 }
 
 func (s *Server) handleProjectList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

@@ -2136,130 +2136,52 @@ func (s *Server) handleStoryTemplateList(ctx context.Context, req mcpgo.CallTool
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
+// handleWorkspaceCreate parses the request, calls the typed
+// WorkspaceCreate surface, and marshals the workspace row verbatim.
 func (s *Server) handleWorkspaceCreate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
-	if caller.UserID == "" {
-		return mcpgo.NewToolResultError("no caller identity"), nil
-	}
 	name, err := req.RequireString("name")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	w, err := s.workspaces.Create(ctx, caller.UserID, name, time.Now().UTC())
+	w, err := s.cli().WorkspaceCreate(ctx, toClientCaller(caller), client.WorkspaceCreateInput{Name: name, Now: s.nowUTC()})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	body, _ := json.Marshal(w)
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "workspace_create").
-		Str("workspace_id", w.ID).
-		Str("owner_user_id", w.OwnerUserID).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "workspace_create").Str("workspace_id", w.ID).Str("owner_user_id", w.OwnerUserID).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
+// handleWorkspaceGet delegates to the typed WorkspaceGet surface.
 func (s *Server) handleWorkspaceGet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
-	if caller.UserID == "" {
-		return mcpgo.NewToolResultError("no caller identity"), nil
-	}
 	id, err := req.RequireString("id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	is, err := s.workspaces.IsMember(ctx, id, caller.UserID)
-	if err != nil || !is {
-		return mcpgo.NewToolResultError("workspace not found"), nil
-	}
-	w, err := s.workspaces.GetByID(ctx, id)
+	w, err := s.cli().WorkspaceGet(ctx, toClientCaller(caller), client.WorkspaceGetInput{ID: id})
 	if err != nil {
-		return mcpgo.NewToolResultError("workspace not found"), nil
+		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	body, _ := json.Marshal(w)
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "workspace_get").
-		Str("workspace_id", id).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "workspace_get").Str("workspace_id", id).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
+// handleWorkspaceList delegates to the typed WorkspaceList surface.
 func (s *Server) handleWorkspaceList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
-	if caller.UserID == "" {
-		return mcpgo.NewToolResultError("no caller identity"), nil
-	}
-	list, err := s.workspaces.ListByMember(ctx, caller.UserID)
+	list, err := s.cli().WorkspaceList(ctx, toClientCaller(caller))
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	body, _ := json.Marshal(list)
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "workspace_list").
-		Str("user_id", caller.UserID).
-		Int("count", len(list)).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "workspace_list").Str("user_id", caller.UserID).Int("count", len(list)).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
-}
-
-// requireWorkspaceAdmin asserts the caller is an admin of the given
-// workspace. Returns a user-friendly error on mismatch.
-func (s *Server) requireWorkspaceAdmin(ctx context.Context, caller auth.CallerIdentity, workspaceID string) error {
-	if caller.UserID == "" {
-		return errors.New("no caller identity")
-	}
-	role, err := s.workspaces.GetRole(ctx, workspaceID, caller.UserID)
-	if err != nil {
-		return errors.New("workspace not found")
-	}
-	if role != workspace.RoleAdmin {
-		return errors.New("admin role required")
-	}
-	return nil
-}
-
-// adminCount returns the number of admin members on a workspace. Used for
-// the last-admin guard on downgrades and removals.
-func (s *Server) adminCount(ctx context.Context, workspaceID string) (int, error) {
-	members, err := s.workspaces.ListMembers(ctx, workspaceID)
-	if err != nil {
-		return 0, err
-	}
-	n := 0
-	for _, m := range members {
-		if m.Role == workspace.RoleAdmin {
-			n++
-		}
-	}
-	return n, nil
-}
-
-// appendMembershipAudit writes a ledger row recording a membership
-// mutation. Scoped to the system default project + the target workspace.
-// Safe to no-op when defaults aren't wired (tests).
-func (s *Server) appendMembershipAudit(ctx context.Context, workspaceID, kind, actor string, payload map[string]any) {
-	if s.ledger == nil || s.defaultProjectID == "" {
-		return
-	}
-	payload["workspace_id"] = workspaceID
-	payload["kind"] = kind
-	body, _ := json.Marshal(payload)
-	_, _ = s.ledger.Append(ctx, ledger.LedgerEntry{
-		WorkspaceID: workspaceID,
-		ProjectID:   s.defaultProjectID,
-		Type:        ledger.TypeDecision,
-		Tags:        []string{"kind:workspace." + kind},
-		Content:     string(body),
-		CreatedBy:   actor,
-	}, time.Now().UTC())
 }
 
 // classifyLedgerEvent maps a caller-supplied event-type string into the
@@ -2279,6 +2201,8 @@ func classifyLedgerEvent(eventType string) (string, []string) {
 	}
 }
 
+// handleWorkspaceMemberAdd parses the request, calls the typed
+// WorkspaceMemberAdd surface, and marshals the wire envelope.
 func (s *Server) handleWorkspaceMemberAdd(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
@@ -2294,32 +2218,17 @@ func (s *Server) handleWorkspaceMemberAdd(ctx context.Context, req mcpgo.CallToo
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	if err := s.requireWorkspaceAdmin(ctx, caller, workspaceID); err != nil {
+	out, err := s.cli().WorkspaceMemberAdd(ctx, toClientCaller(caller), client.WorkspaceMemberAddInput{WorkspaceID: workspaceID, UserID: userID, Role: role, Now: s.nowUTC()})
+	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	if err := s.workspaces.AddMember(ctx, workspaceID, userID, role, caller.UserID, time.Now().UTC()); err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	s.appendMembershipAudit(ctx, workspaceID, "member_add", caller.UserID, map[string]any{
-		"target_user_id": userID,
-		"role":           role,
-	})
-	body, _ := json.Marshal(map[string]any{
-		"workspace_id": workspaceID,
-		"user_id":      userID,
-		"role":         role,
-	})
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "workspace_member_add").
-		Str("workspace_id", workspaceID).
-		Str("user_id", userID).
-		Str("role", role).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+	body, _ := json.Marshal(out)
+	s.logger.Info().Str("method", "tools/call").Str("tool", "workspace_member_add").Str("workspace_id", workspaceID).Str("user_id", userID).Str("role", role).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
+// handleWorkspaceMemberList delegates to the typed WorkspaceMemberList
+// surface.
 func (s *Server) handleWorkspaceMemberList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
@@ -2327,28 +2236,17 @@ func (s *Server) handleWorkspaceMemberList(ctx context.Context, req mcpgo.CallTo
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	if caller.UserID == "" {
-		return mcpgo.NewToolResultError("no caller identity"), nil
-	}
-	is, err := s.workspaces.IsMember(ctx, workspaceID, caller.UserID)
-	if err != nil || !is {
-		return mcpgo.NewToolResultError("workspace not found"), nil
-	}
-	members, err := s.workspaces.ListMembers(ctx, workspaceID)
+	members, err := s.cli().WorkspaceMemberList(ctx, toClientCaller(caller), client.WorkspaceMemberListInput{WorkspaceID: workspaceID})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	body, _ := json.Marshal(members)
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "workspace_member_list").
-		Str("workspace_id", workspaceID).
-		Int("count", len(members)).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "workspace_member_list").Str("workspace_id", workspaceID).Int("count", len(members)).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
+// handleWorkspaceMemberUpdateRole parses the request, calls the typed
+// WorkspaceMemberUpdateRole surface, and marshals the wire envelope.
 func (s *Server) handleWorkspaceMemberUpdateRole(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
@@ -2364,46 +2262,17 @@ func (s *Server) handleWorkspaceMemberUpdateRole(ctx context.Context, req mcpgo.
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	if err := s.requireWorkspaceAdmin(ctx, caller, workspaceID); err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	currentRole, err := s.workspaces.GetRole(ctx, workspaceID, userID)
+	out, err := s.cli().WorkspaceMemberUpdateRole(ctx, toClientCaller(caller), client.WorkspaceMemberUpdateRoleInput{WorkspaceID: workspaceID, UserID: userID, Role: newRole, Now: s.nowUTC()})
 	if err != nil {
-		return mcpgo.NewToolResultError("member not found"), nil
-	}
-	if currentRole == workspace.RoleAdmin && newRole != workspace.RoleAdmin {
-		count, err := s.adminCount(ctx, workspaceID)
-		if err != nil {
-			return mcpgo.NewToolResultError(err.Error()), nil
-		}
-		if count <= 1 {
-			return mcpgo.NewToolResultError("cannot downgrade the last admin"), nil
-		}
-	}
-	if err := s.workspaces.UpdateRole(ctx, workspaceID, userID, newRole, time.Now().UTC()); err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	s.appendMembershipAudit(ctx, workspaceID, "member_update_role", caller.UserID, map[string]any{
-		"target_user_id": userID,
-		"previous_role":  currentRole,
-		"new_role":       newRole,
-	})
-	body, _ := json.Marshal(map[string]any{
-		"workspace_id": workspaceID,
-		"user_id":      userID,
-		"role":         newRole,
-	})
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "workspace_member_update_role").
-		Str("workspace_id", workspaceID).
-		Str("user_id", userID).
-		Str("role", newRole).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+	body, _ := json.Marshal(out)
+	s.logger.Info().Str("method", "tools/call").Str("tool", "workspace_member_update_role").Str("workspace_id", workspaceID).Str("user_id", userID).Str("role", newRole).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
+// handleWorkspaceMemberRemove parses the request, calls the typed
+// WorkspaceMemberRemove surface, and marshals the wire envelope.
 func (s *Server) handleWorkspaceMemberRemove(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
@@ -2415,41 +2284,12 @@ func (s *Server) handleWorkspaceMemberRemove(ctx context.Context, req mcpgo.Call
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	if err := s.requireWorkspaceAdmin(ctx, caller, workspaceID); err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	currentRole, err := s.workspaces.GetRole(ctx, workspaceID, userID)
+	out, err := s.cli().WorkspaceMemberRemove(ctx, toClientCaller(caller), client.WorkspaceMemberRemoveInput{WorkspaceID: workspaceID, UserID: userID, Now: s.nowUTC()})
 	if err != nil {
-		return mcpgo.NewToolResultError("member not found"), nil
-	}
-	if currentRole == workspace.RoleAdmin {
-		count, err := s.adminCount(ctx, workspaceID)
-		if err != nil {
-			return mcpgo.NewToolResultError(err.Error()), nil
-		}
-		if count <= 1 {
-			return mcpgo.NewToolResultError("cannot remove the last admin"), nil
-		}
-	}
-	if err := s.workspaces.RemoveMember(ctx, workspaceID, userID); err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	s.appendMembershipAudit(ctx, workspaceID, "member_remove", caller.UserID, map[string]any{
-		"target_user_id": userID,
-		"previous_role":  currentRole,
-	})
-	body, _ := json.Marshal(map[string]any{
-		"workspace_id": workspaceID,
-		"user_id":      userID,
-		"removed":      true,
-	})
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "workspace_member_remove").
-		Str("workspace_id", workspaceID).
-		Str("user_id", userID).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+	body, _ := json.Marshal(out)
+	s.logger.Info().Str("method", "tools/call").Str("tool", "workspace_member_remove").Str("workspace_id", workspaceID).Str("user_id", userID).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 

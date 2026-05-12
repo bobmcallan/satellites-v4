@@ -24,7 +24,6 @@ import (
 	"github.com/bobmcallan/satellites/internal/project"
 	"github.com/bobmcallan/satellites/internal/story"
 	"github.com/bobmcallan/satellites/internal/task"
-	"github.com/bobmcallan/satellites/internal/workspace"
 )
 
 // ----- story -----
@@ -184,68 +183,9 @@ func (c *Client) ProjectList(ctx context.Context, caller Caller, memberships []s
 }
 
 // ----- workspace -----
-
-// WorkspaceGetInput identifies a workspace lookup.
-type WorkspaceGetInput struct {
-	ID string
-}
-
-// WorkspaceGet returns a workspace row when the caller is a member.
-func (c *Client) WorkspaceGet(ctx context.Context, caller Caller, in WorkspaceGetInput) (workspace.Workspace, error) {
-	if c.deps.Workspaces == nil {
-		return workspace.Workspace{}, errors.New("workspace store not configured")
-	}
-	if in.ID == "" {
-		return workspace.Workspace{}, errors.New("id required")
-	}
-	if caller.UserID == "" {
-		return workspace.Workspace{}, errors.New("no caller identity")
-	}
-	is, err := c.deps.Workspaces.IsMember(ctx, in.ID, caller.UserID)
-	if err != nil || !is {
-		return workspace.Workspace{}, errors.New("workspace not found")
-	}
-	w, err := c.deps.Workspaces.GetByID(ctx, in.ID)
-	if err != nil {
-		return workspace.Workspace{}, errors.New("workspace not found")
-	}
-	return w, nil
-}
-
-// WorkspaceList returns the workspaces the caller is a member of.
-func (c *Client) WorkspaceList(ctx context.Context, caller Caller) ([]workspace.Workspace, error) {
-	if c.deps.Workspaces == nil {
-		return nil, errors.New("workspace store not configured")
-	}
-	if caller.UserID == "" {
-		return nil, errors.New("no caller identity")
-	}
-	return c.deps.Workspaces.ListByMember(ctx, caller.UserID)
-}
-
-// WorkspaceMemberListInput identifies a workspace member-list lookup.
-type WorkspaceMemberListInput struct {
-	WorkspaceID string
-}
-
-// WorkspaceMemberList returns the members of a workspace when the caller
-// is a member.
-func (c *Client) WorkspaceMemberList(ctx context.Context, caller Caller, in WorkspaceMemberListInput) ([]workspace.Member, error) {
-	if c.deps.Workspaces == nil {
-		return nil, errors.New("workspace store not configured")
-	}
-	if in.WorkspaceID == "" {
-		return nil, errors.New("workspace_id required")
-	}
-	if caller.UserID == "" {
-		return nil, errors.New("no caller identity")
-	}
-	is, err := c.deps.Workspaces.IsMember(ctx, in.WorkspaceID, caller.UserID)
-	if err != nil || !is {
-		return nil, errors.New("workspace not found")
-	}
-	return c.deps.Workspaces.ListMembers(ctx, in.WorkspaceID)
-}
+// WorkspaceGet, WorkspaceList, and WorkspaceMemberList moved to
+// internal/client/workspace.go alongside the workspace mutators
+// (slice 8 of sty_f3f7bf9b).
 
 // ----- changelog -----
 

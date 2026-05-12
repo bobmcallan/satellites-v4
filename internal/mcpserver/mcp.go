@@ -178,17 +178,11 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	s.mcp.AddTool(execTool, s.handleSatellitesExec)
 
 	if s.deps.Documents != nil {
-		ingestTool := mcpgo.NewTool("document_ingest_file",
-			mcpgo.WithDescription("Ingest a file from the server's docs volume (SATELLITES_DOCS_DIR) into the document store. Path is repo-relative; server reads the file and upserts by (project_id, name). If project_id is omitted, defaults to the caller's first owned project or the system default."),
-			mcpgo.WithString("path",
-				mcpgo.Required(),
-				mcpgo.Description("Repo-relative path inside SATELLITES_DOCS_DIR."),
-			),
-			mcpgo.WithString("project_id",
-				mcpgo.Description("Optional project scope. Defaults to caller's first owned project or the system default."),
-			),
-		)
-		s.mcp.AddTool(ingestTool, s.handleDocumentIngestFile)
+		// document_ingest_file MCP registration removed in sty_4db0e025
+		// slice B3 — operator-only verb, now reachable through /api/v1 +
+		// the satellites-client CLI only. handleDocumentIngestFile remains
+		// (mcp.go) so the typed method on *client.Client continues to back
+		// the HTTP route and CLI verb.
 
 		getTool := mcpgo.NewTool("document_get",
 			mcpgo.WithDescription("Return a stored document by id (preferred) or by (project_id, name). When both are supplied, id wins."),
@@ -508,20 +502,14 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			)
 			s.mcp.AddTool(taskUpdateTool, s.handleTaskUpdate)
 
-			whoamiTool := mcpgo.NewTool("session_whoami",
-				mcpgo.WithDescription("Return the caller's session registry row. session_id resolves from the Mcp-Session-Id header by default (story_31975268); pass session_id as a body arg to override. Returns a structured session_not_registered error when the resolved session is not in the registry."),
-				mcpgo.WithString("session_id", mcpgo.Description("Optional session id override. Streamable HTTP callers should let the Mcp-Session-Id header carry the id.")),
-			)
-			s.mcp.AddTool(whoamiTool, s.handleSessionWhoami)
-
-			registerTool := mcpgo.NewTool("session_register",
-				mcpgo.WithDescription("Upsert a session row. story_31975268: session_id is server-minted when neither the body arg nor the Mcp-Session-Id header carries one — Streamable HTTP clients receive the minted id via the initialize response header and echo it on subsequent calls; stdio/test callers may pass session_id as a body arg. story_cef068fe: when project_id is supplied AND no explicit session_id was carried, the handler resumes the caller's most recent non-stale session for that (user, project), returning the same id (resumed=true). Stale sessions are skipped; a fresh id is minted instead."),
-				mcpgo.WithString("session_id", mcpgo.Description("Optional session id. When omitted, sourced from the Mcp-Session-Id header; if neither carries one (and no resume hits), the server mints a UUIDv4.")),
-				mcpgo.WithString("source", mcpgo.Description("Source string (session_start | enforce_hook | apikey). Defaults to session_start.")),
-				mcpgo.WithString("workspace_id", mcpgo.Description("Optional workspace id to bind to the session row. When present in .mcp.json default_workspace, callers should pass it on registration so subsequent verbs scope to this workspace.")),
-				mcpgo.WithString("project_id", mcpgo.Description("Optional project id. When supplied + no explicit session_id, the handler tries to resume the caller's most recent non-stale session bound to this project. Also stamped as active_project_id on the resulting session row.")),
-			)
-			s.mcp.AddTool(registerTool, s.handleSessionRegister)
+			// session_whoami and session_register MCP registrations removed
+			// in sty_4db0e025 slice B3 — session_register is auto-applied
+			// via the Mcp-Session-Id header path (story_31975268) and
+			// session_whoami overlaps satellites_info. Both reach /api/v1 +
+			// satellites-client CLI; handler bodies remain in
+			// claim_handlers.go so the typed methods on *client.Client
+			// continue to back the HTTP routes (session/whoami,
+			// session/register) and CLI verbs.
 		}
 	}
 
@@ -573,13 +561,11 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		s.mcp.AddTool(removeMemberTool, s.handleWorkspaceMemberRemove)
 	}
 
-	// story_33e1a323: re-seed the system-tier configuration markdown
-	// without restarting the server. Gated to global_admin via
-	// auth.CallerIdentity.GlobalAdmin (story_3548cde2).
-	systemSeedTool := mcpgo.NewTool("system_seed_run",
-		mcpgo.WithDescription("Re-run the system-tier configseed loader (config/seed + config/help). Global admin only. Returns a summary {loaded, created, updated, skipped, errors, ledger_id}. Each invocation writes a kind:system-seed-run ledger row."),
-	)
-	s.mcp.AddTool(systemSeedTool, s.handleSystemSeedRun)
+	// system_seed_run MCP registration removed in sty_4db0e025 slice B3 —
+	// admin-only verb, now reachable through /api/v1 + the
+	// satellites-client CLI only. handleSystemSeedRun
+	// (system_seed_handler.go) remains so the typed method on
+	// *client.Client continues to back the HTTP route and CLI verb.
 
 	// sty_8868eaf4: re-seed one project's tier from
 	// config/seed/<project_id>/<kind>/*.md. Idempotent on body hash;

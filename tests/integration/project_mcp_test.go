@@ -148,18 +148,13 @@ func TestProjectMCPRoundTrip(t *testing.T) {
 		t.Errorf("project_list missing newly created project %q; got %+v", projID, listed)
 	}
 
-	// document_ingest_file with an explicit project_id writes to that scope.
-	ingestResp := rpcCall(t, ctx, mcpURL, "key_proj", map[string]any{
-		"jsonrpc": "2.0", "id": 5, "method": "tools/call",
-		"params": map[string]any{
-			"name":      "document_ingest_file",
-			"arguments": map[string]any{"path": "architecture.md", "project_id": projID},
-		},
+	// document_ingest_file with an explicit project_id writes to that
+	// scope. MCP registration was dropped in sty_4db0e025 slice B3 —
+	// invoke via /api/v1.
+	ingest := callAPIv1(t, ctx, baseURL, "key_proj", "document_ingest_file", map[string]any{
+		"path":       "architecture.md",
+		"project_id": projID,
 	})
-	var ingest map[string]any
-	if err := json.Unmarshal([]byte(extractToolText(t, ingestResp)), &ingest); err != nil {
-		t.Fatalf("decode document_ingest_file: %v", err)
-	}
 	if pid, _ := ingest["project_id"].(string); pid != projID {
 		t.Errorf("ingested doc project_id = %q, want %q", pid, projID)
 	}

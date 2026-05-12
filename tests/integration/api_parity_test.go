@@ -332,14 +332,12 @@ func buildParityCases() []parityCase {
 					"session_id": "parity-session-fixed",
 				}
 			},
-			// Known parity gap: the /mcp handleSessionRegister omits
-			// workspace_id from its JSON output; the /api/v1
-			// handleSessionRegister includes it (returns the typed
-			// SessionRegisterOutput verbatim). Both paths call the
-			// same client.Client.SessionRegister underneath — only
-			// the wire-layer rendering differs. Filed as a follow-up
-			// for substrate-side alignment.
-			exempt: []string{"workspace_id"},
+			// session_register MCP registration was dropped in
+			// sty_4db0e025 slice B3 — the verb is HTTP/CLI-only now,
+			// so transport parity is structurally moot. The
+			// substrate-side rendering gap (workspace_id omission in
+			// MCP output) is irrelevant post-trim.
+			skip: "session_register MCP registration removed in sty_4db0e025 B3; HTTP/CLI-only verb has no MCP parity claim",
 		},
 		{name: "ledger_get", args: idFromFixture("id", func(ff *parityFixtures) string { return ff.ledgerID })},
 		{

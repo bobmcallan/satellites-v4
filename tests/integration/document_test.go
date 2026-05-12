@@ -1,9 +1,11 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,8 +20,9 @@ import (
 
 // TestDocumentIngestAndGetRoundTrip spins up SurrealDB next to the
 // satellites server in a shared network, waits for both to be ready, then
-// drives document_ingest_file + document_get over the MCP HTTP endpoint
-// with an API key. Asserts body round-trip + boot-seed entry present.
+// drives document_ingest_file via /api/v1 (post-sty_4db0e025 slice B3
+// it is HTTP/CLI-only) and document_get over MCP. Asserts body
+// round-trip + boot-seed entry present.
 func TestDocumentIngestAndGetRoundTrip(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping testcontainers test in short mode")
@@ -85,18 +88,24 @@ func TestDocumentIngestAndGetRoundTrip(t *testing.T) {
 		t.Fatalf("initialize: %v", init["error"])
 	}
 
-	// 2. tools/list must include document_ingest_file + document_get.
+	// 2. tools/list must include document_get and satellites_info.
+	// (document_ingest_file MCP registration was dropped in
+	// sty_4db0e025 slice B3 — verify it is NOT advertised over MCP.)
 	list := rpcCall(t, ctx, mcpURL, "key_doc", map[string]any{
 		"jsonrpc": "2.0", "id": 2, "method": "tools/list",
 	})
 	result, _ := list["result"].(map[string]any)
 	tools, _ := result["tools"].([]any)
-	need := map[string]bool{"satellites_info": false, "document_ingest_file": false, "document_get": false}
+	need := map[string]bool{"satellites_info": false, "document_get": false}
+	mustAbsent := map[string]bool{"document_ingest_file": false}
 	for _, raw := range tools {
 		if tool, ok := raw.(map[string]any); ok {
 			if name, _ := tool["name"].(string); name != "" {
 				if _, tracked := need[name]; tracked {
 					need[name] = true
+				}
+				if _, dropped := mustAbsent[name]; dropped {
+					mustAbsent[name] = true
 				}
 			}
 		}
@@ -104,6 +113,11 @@ func TestDocumentIngestAndGetRoundTrip(t *testing.T) {
 	for k, seen := range need {
 		if !seen {
 			t.Errorf("tools/list missing %q", k)
+		}
+	}
+	for k, seen := range mustAbsent {
+		if seen {
+			t.Errorf("tools/list advertises %q which was removed in sty_4db0e025 B3", k)
 		}
 	}
 
@@ -134,34 +148,28 @@ func TestDocumentIngestAndGetRoundTrip(t *testing.T) {
 		t.Errorf("seeded doc body missing architecture heading; got %d bytes", len(seededBody))
 	}
 
-	// 4. document_ingest_file architecture.md again — same hash → no-op.
-	ingestResp := rpcCall(t, ctx, mcpURL, "key_doc", map[string]any{
-		"jsonrpc": "2.0", "id": 4, "method": "tools/call",
-		"params": map[string]any{
-			"name":      "document_ingest_file",
-			"arguments": map[string]any{"path": "architecture.md"},
-		},
+	// 4. document_ingest_file architecture.md again over /api/v1 — same
+	// hash → no-op. (MCP registration dropped in sty_4db0e025 B3.)
+	ingest := callAPIv1(t, ctx, baseURL, "key_doc", "document_ingest_file", map[string]any{
+		"path": "architecture.md",
 	})
-	ingestBody := extractToolText(t, ingestResp)
-	var ingest map[string]any
-	if err := json.Unmarshal([]byte(ingestBody), &ingest); err != nil {
-		t.Fatalf("decode ingest: %v; raw=%s", err, ingestBody)
-	}
 	if ingest["changed"] != false {
 		t.Errorf("re-ingest changed=%v, want false (hash match)", ingest["changed"])
 	}
 
-	// 5. Path traversal must be rejected.
-	traverse := rpcCall(t, ctx, mcpURL, "key_doc", map[string]any{
-		"jsonrpc": "2.0", "id": 5, "method": "tools/call",
-		"params": map[string]any{
-			"name":      "document_ingest_file",
-			"arguments": map[string]any{"path": "../etc/passwd"},
-		},
-	})
-	traverseResult, _ := traverse["result"].(map[string]any)
-	if isErr, _ := traverseResult["isError"].(bool); !isErr {
-		t.Errorf("traversal should return isError=true; got %+v", traverseResult)
+	// 5. Path traversal must be rejected by the /api/v1 handler.
+	traversePath := apiPathForToolName("document_ingest_file")
+	traverseBody, _ := json.Marshal(map[string]any{"path": "../etc/passwd"})
+	traverseReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/v1"+traversePath, bytes.NewReader(traverseBody))
+	traverseReq.Header.Set("Content-Type", "application/json")
+	traverseReq.Header.Set("Authorization", "Bearer key_doc")
+	traverseResp, err := http.DefaultClient.Do(traverseReq)
+	if err != nil {
+		t.Fatalf("traverse request: %v", err)
+	}
+	defer traverseResp.Body.Close()
+	if traverseResp.StatusCode == http.StatusOK {
+		t.Errorf("traversal returned 200; want a non-2xx status code")
 	}
 }
 

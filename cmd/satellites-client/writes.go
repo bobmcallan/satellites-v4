@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -151,8 +150,7 @@ func newTaskUpdateCmd() *cobra.Command {
 				out["outcome"] = v
 			}
 			if v, _ := cmd.Flags().GetStringSlice("evidence-ledger-ids"); len(v) > 0 {
-				j, _ := json.Marshal(v)
-				out["evidence_ledger_ids"] = string(j)
+				out["evidence_ledger_ids"] = v
 			}
 			return out, nil
 		}),

@@ -114,12 +114,6 @@ var legacyAllowlist = map[string]map[string]struct{}{
 	"portal_replicate.go": {
 		"github.com/bobmcallan/satellites/internal/portalreplicate": {},
 	},
-	// scope_read.go — scope-filtered reads over the document store.
-	// TODO(sty_4db0e025): converge onto client.DocumentList with
-	// scope filter.
-	"scope_read.go": {
-		"github.com/bobmcallan/satellites/internal/document": {},
-	},
 	// story_get.go — story orientation bundle; assembles agent
 	// process + ledger + project + story. TODO(sty_4db0e025):
 	// converge onto client.StoryGet (already exists post-07b) +

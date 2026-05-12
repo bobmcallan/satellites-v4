@@ -1,21 +1,22 @@
-// Project-seed-run handler (sty_8868eaf4). Mirror of
-// system_seed_handler.go but scoped to one project_id at a time.
-// Loads <seed_dir>/<project_id>/<kind>/*.md as scope=project documents
-// and writes a kind:project-seed-run ledger row attached to that
-// project. Global-admin gated, same as system_seed_run.
+// project_seed_run handler (sty_f3f7bf9b slice 10 adapter).
+//
+// Slice 10 lifted the project-seed-run business logic into
+// internal/client/seed.go. This file is now the thin wire-layer
+// adapter. The ProjectSeedRunResult struct stays here as the
+// wire-format type (referenced by *_test.go and by the public
+// *Server.RunProjectSeed API consumed at cmd/satellites-server/main.go).
 package mcpserver
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"github.com/bobmcallan/satellites/internal/auth"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/bobmcallan/satellites/internal/auth"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/configseed"
-	"github.com/bobmcallan/satellites/internal/ledger"
 )
 
 // ProjectSeedRunResult mirrors SystemSeedRunResult shape so callers
@@ -34,72 +35,36 @@ type ProjectSeedRunResult struct {
 
 func (s *Server) handleProjectSeedRun(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	caller, _ := auth.UserFrom(ctx)
-	if !caller.GlobalAdmin {
-		body, _ := json.Marshal(map[string]any{"error": "forbidden"})
-		return mcpgo.NewToolResultError(string(body)), nil
-	}
 	projectID, _ := req.RequireString("project_id")
-	if projectID == "" {
-		body, _ := json.Marshal(map[string]any{"error": "project_id required"})
-		return mcpgo.NewToolResultError(string(body)), nil
-	}
-	result, err := s.RunProjectSeed(ctx, projectID, caller.UserID)
+	out, err := s.cli().ProjectSeedRun(ctx, toClientCaller(caller), client.ProjectSeedInput{ProjectID: projectID, Now: s.nowUTC()})
 	if err != nil {
 		body, _ := json.Marshal(map[string]any{"error": err.Error()})
 		return mcpgo.NewToolResultError(string(body)), nil
 	}
-	body, _ := json.Marshal(result)
+	body, _ := json.Marshal(projectSeedWireResult(out))
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
-// RunProjectSeed is the shared internal entry point used by the MCP
-// verb and the boot goroutine in main. Resolves the project's
-// workspace_id, runs configseed.RunProject against the configured
-// seed dir, and writes a kind:project-seed-run ledger row attached to
-// the project. Returns the structured outcome including any per-file
-// errors — a missing project row, a malformed seed file, or an upsert
-// failure all surface here without panicking the caller.
+// RunProjectSeed preserves the public *Server.RunProjectSeed surface
+// for callers that bypass the wire layer (the boot goroutine in
+// cmd/satellites-server). Forwards to *client.Client.RunProjectSeed
+// (un-gated) and re-packs into the wire-shape struct.
 func (s *Server) RunProjectSeed(ctx context.Context, projectID, actor string) (ProjectSeedRunResult, error) {
-	now := s.nowUTC()
-	result := ProjectSeedRunResult{ProjectID: projectID, StartedAt: now}
+	out, err := s.cli().RunProjectSeed(ctx, projectID, actor)
+	return projectSeedWireResult(out), err
+}
 
-	if s.projects == nil {
-		return result, fmt.Errorf("project store not wired")
+// projectSeedWireResult copies the typed-surface output into the
+// wire-shape struct field-for-field.
+func projectSeedWireResult(o client.ProjectSeedOutput) ProjectSeedRunResult {
+	return ProjectSeedRunResult{
+		ProjectID: o.ProjectID,
+		Loaded:    o.Loaded,
+		Created:   o.Created,
+		Updated:   o.Updated,
+		Skipped:   o.Skipped,
+		Errors:    o.Errors,
+		LedgerID:  o.LedgerID,
+		StartedAt: o.StartedAt,
 	}
-	proj, err := s.projects.GetByID(ctx, projectID, nil)
-	if err != nil {
-		return result, fmt.Errorf("project not found: %w", err)
-	}
-
-	summary, err := configseed.RunProject(ctx,
-		s.docs,
-		configseed.ResolveSeedDir(),
-		projectID, proj.WorkspaceID, actor, now)
-	result.Loaded = summary.Loaded
-	result.Created = summary.Created
-	result.Updated = summary.Updated
-	result.Skipped = summary.Skipped
-	result.Errors = summary.Errors
-	if err != nil {
-		return result, err
-	}
-
-	if s.ledger != nil {
-		structured, _ := json.Marshal(result)
-		row := ledger.LedgerEntry{
-			WorkspaceID: proj.WorkspaceID,
-			ProjectID:   projectID,
-			Type:        ledger.TypeDecision,
-			Tags:        []string{"kind:project-seed-run"},
-			Content:     "project seed run",
-			Structured:  structured,
-			Durability:  ledger.DurabilityDurable,
-			SourceType:  ledger.SourceAgent,
-			CreatedBy:   actor,
-		}
-		if written, lerr := s.ledger.Append(ctx, row, now); lerr == nil {
-			result.LedgerID = written.ID
-		}
-	}
-	return result, nil
 }

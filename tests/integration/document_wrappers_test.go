@@ -15,7 +15,7 @@ import (
 
 // TestDocumentWrappers_Registered_AndPrincipleHappyPath asserts the 24
 // wrapper verbs are registered (4 kinds × 6 ops) and exercises a
-// principle_create → principle_list happy path.
+// principle_add → principle_list happy path.
 func TestDocumentWrappers_Registered_AndPrincipleHappyPath(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping testcontainers test in short mode")
@@ -72,7 +72,7 @@ func TestDocumentWrappers_Registered_AndPrincipleHappyPath(t *testing.T) {
 	})
 	want := map[string]bool{}
 	for _, kind := range []string{"principle", "contract", "skill", "reviewer"} {
-		for _, op := range []string{"_create", "_get", "_list", "_update", "_delete", "_search"} {
+		for _, op := range []string{"_add", "_get", "_list", "_update", "_delete", "_search"} {
 			want[kind+op] = false
 		}
 	}
@@ -100,35 +100,35 @@ func TestDocumentWrappers_Registered_AndPrincipleHappyPath(t *testing.T) {
 		t.Logf("all 24 wrapper verbs present")
 	}
 
-	// principle_create — happy path with required scope + tags.
-	created := callTool(t, ctx, mcpURL, "key_wrap", "principle_create", map[string]any{
+	// principle_add — happy path with required scope + tags.
+	created := callTool(t, ctx, mcpURL, "key_wrap", "principle_add", map[string]any{
 		"scope": "system",
 		"name":  "wrapper-principle",
 		"body":  "wrapper test principle",
 		"tags":  []any{"v4", "wrapper"},
 	})
 	if got, _ := created["type"].(string); got != "principle" {
-		t.Errorf("principle_create returned type=%q, want principle", got)
+		t.Errorf("principle_add returned type=%q, want principle", got)
 	}
 
-	// principle_create caller-supplied type rejected.
-	bogus := callToolRaw(t, ctx, mcpURL, "key_wrap", "principle_create", map[string]any{
+	// principle_add caller-supplied type rejected.
+	bogus := callToolRaw(t, ctx, mcpURL, "key_wrap", "principle_add", map[string]any{
 		"type":  "artifact",
 		"scope": "system",
 		"name":  "tampered",
 		"tags":  []any{"v4"},
 	})
 	if !isToolError(bogus) {
-		t.Errorf("principle_create with caller type should isError; got %+v", bogus)
+		t.Errorf("principle_add with caller type should isError; got %+v", bogus)
 	}
 
-	// skill_create without contract_binding rejected.
-	skillBad := callToolRaw(t, ctx, mcpURL, "key_wrap", "skill_create", map[string]any{
+	// skill_add without contract_binding rejected.
+	skillBad := callToolRaw(t, ctx, mcpURL, "key_wrap", "skill_add", map[string]any{
 		"scope": "system",
 		"name":  "skill-bad",
 	})
 	if !isToolError(skillBad) {
-		t.Errorf("skill_create without contract_binding should isError; got %+v", skillBad)
+		t.Errorf("skill_add without contract_binding should isError; got %+v", skillBad)
 	}
 
 	// principle_list returns the seeded principle and pins type=principle

@@ -63,50 +63,50 @@ func TestWrapper_PerTypePayloadValidation(t *testing.T) {
 	s := newDocumentTestServer(t)
 	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_a", Source: "session"})
 
-	t.Run("contract_create requires structured", func(t *testing.T) {
-		res, _ := s.wrapperCreate("contract")(ctx, newCallToolReq("contract_create", map[string]any{
+	t.Run("contract_add requires structured", func(t *testing.T) {
+		res, _ := s.wrapperCreate("contract")(ctx, newCallToolReq("contract_add", map[string]any{
 			"scope": "system", "name": "c",
 		}))
 		if !res.IsError {
-			t.Errorf("contract_create without structured should isError; got %s", firstText(res))
+			t.Errorf("contract_add without structured should isError; got %s", firstText(res))
 		}
 	})
 
-	t.Run("contract_create requires required keys", func(t *testing.T) {
-		res, _ := s.wrapperCreate("contract")(ctx, newCallToolReq("contract_create", map[string]any{
+	t.Run("contract_add requires required keys", func(t *testing.T) {
+		res, _ := s.wrapperCreate("contract")(ctx, newCallToolReq("contract_add", map[string]any{
 			"scope":      "system",
 			"name":       "c",
 			"structured": `{"category":"plan"}`,
 		}))
 		if !res.IsError {
-			t.Errorf("contract_create missing required keys should isError; got %s", firstText(res))
+			t.Errorf("contract_add missing required keys should isError; got %s", firstText(res))
 		}
 	})
 
-	t.Run("skill_create requires contract_binding", func(t *testing.T) {
-		res, _ := s.wrapperCreate("skill")(ctx, newCallToolReq("skill_create", map[string]any{
+	t.Run("skill_add requires contract_binding", func(t *testing.T) {
+		res, _ := s.wrapperCreate("skill")(ctx, newCallToolReq("skill_add", map[string]any{
 			"scope": "system", "name": "s",
 		}))
 		if !res.IsError {
-			t.Errorf("skill_create without contract_binding should isError; got %s", firstText(res))
+			t.Errorf("skill_add without contract_binding should isError; got %s", firstText(res))
 		}
 	})
 
-	t.Run("reviewer_create requires contract_binding", func(t *testing.T) {
-		res, _ := s.wrapperCreate("reviewer")(ctx, newCallToolReq("reviewer_create", map[string]any{
+	t.Run("reviewer_add requires contract_binding", func(t *testing.T) {
+		res, _ := s.wrapperCreate("reviewer")(ctx, newCallToolReq("reviewer_add", map[string]any{
 			"scope": "system", "name": "r",
 		}))
 		if !res.IsError {
-			t.Errorf("reviewer_create without contract_binding should isError; got %s", firstText(res))
+			t.Errorf("reviewer_add without contract_binding should isError; got %s", firstText(res))
 		}
 	})
 
-	t.Run("principle_create requires scope and tags", func(t *testing.T) {
-		res, _ := s.wrapperCreate("principle")(ctx, newCallToolReq("principle_create", map[string]any{
+	t.Run("principle_add requires scope and tags", func(t *testing.T) {
+		res, _ := s.wrapperCreate("principle")(ctx, newCallToolReq("principle_add", map[string]any{
 			"scope": "system", "name": "p",
 		}))
 		if !res.IsError {
-			t.Errorf("principle_create without tags should isError; got %s", firstText(res))
+			t.Errorf("principle_add without tags should isError; got %s", firstText(res))
 		}
 	})
 }

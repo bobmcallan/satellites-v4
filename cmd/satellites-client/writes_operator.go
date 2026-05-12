@@ -521,7 +521,7 @@ func newSessionRegisterCmd() *cobra.Command {
 // ----- document family (create/update/delete) -----
 
 // documentCreateArgs builds shared create-shape. Per-noun wrappers
-// (agent_create / contract_create / etc.) pin type at the server-route
+// (agent_add / contract_add / etc.) pin type at the server-route
 // layer; the CLI just sends the supplied --type-flag value (or none).
 func documentCreateArgs(cmd *cobra.Command, args []string) (any, error) {
 	scope, _ := cmd.Flags().GetString("scope")
@@ -679,8 +679,8 @@ func newDocumentDeleteCmd() *cobra.Command {
 }
 
 // Doc-family wrappers — same arg-builders, route-pinned type on server.
-func newAgentCreateCmd() *cobra.Command {
-	c := &cobra.Command{Use: "create", Short: "Create an agent doc.", RunE: writeHandler("agent_create", documentCreateArgs)}
+func newAgentAddCmd() *cobra.Command {
+	c := &cobra.Command{Use: "add", Short: "Add an agent doc.", RunE: writeHandler("agent_add", documentCreateArgs)}
 	addDocumentCreateFlags(c, false)
 	return c
 }
@@ -694,8 +694,8 @@ func newAgentDeleteCmd() *cobra.Command {
 	addDocumentDeleteFlags(c)
 	return c
 }
-func newContractCreateCmd() *cobra.Command {
-	c := &cobra.Command{Use: "create", Short: "Create a contract doc.", RunE: writeHandler("contract_create", documentCreateArgs)}
+func newContractAddCmd() *cobra.Command {
+	c := &cobra.Command{Use: "add", Short: "Add a contract doc.", RunE: writeHandler("contract_add", documentCreateArgs)}
 	addDocumentCreateFlags(c, false)
 	return c
 }
@@ -709,8 +709,8 @@ func newContractDeleteCmd() *cobra.Command {
 	addDocumentDeleteFlags(c)
 	return c
 }
-func newPrincipleCreateCmd() *cobra.Command {
-	c := &cobra.Command{Use: "create", Short: "Create a principle.", RunE: writeHandler("principle_create", documentCreateArgs)}
+func newPrincipleAddCmd() *cobra.Command {
+	c := &cobra.Command{Use: "add", Short: "Add a principle.", RunE: writeHandler("principle_add", documentCreateArgs)}
 	addDocumentCreateFlags(c, false)
 	return c
 }
@@ -724,8 +724,8 @@ func newPrincipleDeleteCmd() *cobra.Command {
 	addDocumentDeleteFlags(c)
 	return c
 }
-func newReviewerCreateCmd() *cobra.Command {
-	c := &cobra.Command{Use: "create", Short: "Create a reviewer doc.", RunE: writeHandler("reviewer_create", documentCreateArgs)}
+func newReviewerAddCmd() *cobra.Command {
+	c := &cobra.Command{Use: "add", Short: "Add a reviewer doc.", RunE: writeHandler("reviewer_add", documentCreateArgs)}
 	addDocumentCreateFlags(c, false)
 	return c
 }
@@ -739,8 +739,8 @@ func newReviewerDeleteCmd() *cobra.Command {
 	addDocumentDeleteFlags(c)
 	return c
 }
-func newRoleCreateCmd() *cobra.Command {
-	c := &cobra.Command{Use: "create", Short: "Create a role doc.", RunE: writeHandler("role_create", documentCreateArgs)}
+func newRoleAddCmd() *cobra.Command {
+	c := &cobra.Command{Use: "add", Short: "Add a role doc.", RunE: writeHandler("role_add", documentCreateArgs)}
 	addDocumentCreateFlags(c, false)
 	return c
 }
@@ -754,8 +754,8 @@ func newRoleDeleteCmd() *cobra.Command {
 	addDocumentDeleteFlags(c)
 	return c
 }
-func newSkillCreateCmd() *cobra.Command {
-	c := &cobra.Command{Use: "create", Short: "Create a skill doc.", RunE: writeHandler("skill_create", documentCreateArgs)}
+func newSkillAddCmd() *cobra.Command {
+	c := &cobra.Command{Use: "add", Short: "Add a skill doc.", RunE: writeHandler("skill_add", documentCreateArgs)}
 	addDocumentCreateFlags(c, false)
 	return c
 }

@@ -154,7 +154,7 @@ func registerRepoNoun(root *cobra.Command) {
 func registerAgentNoun(root *cobra.Command) {
 	noun := nounStub("agent", "Agents — typed roles.")
 	noun.AddCommand(
-		newAgentCreateCmd(), // sty_f38bd573
+		newAgentAddCmd(), // sty_4db0e025 (was newAgentCreateCmd)
 		newAgentGetCmd(),    // order:04
 		newAgentListCmd(),   // sty_ef248ab2
 		newAgentUpdateCmd(), // sty_f38bd573
@@ -172,7 +172,7 @@ func registerAgentNoun(root *cobra.Command) {
 func registerContractNoun(root *cobra.Command) {
 	noun := nounStub("contract", "Contracts — lifecycle phase rubrics.")
 	noun.AddCommand(
-		newContractCreateCmd(), // sty_f38bd573
+		newContractAddCmd(), // sty_4db0e025 (was newContractCreateCmd)
 		newContractGetCmd(),    // order:04
 		newContractListCmd(),   // sty_ef248ab2
 		newContractUpdateCmd(), // sty_f38bd573
@@ -185,7 +185,7 @@ func registerContractNoun(root *cobra.Command) {
 func registerPrincipleNoun(root *cobra.Command) {
 	noun := nounStub("principle", "Principles — workspace + project policy.")
 	noun.AddCommand(
-		newPrincipleCreateCmd(), // sty_f38bd573
+		newPrincipleAddCmd(), // sty_4db0e025 (was newPrincipleCreateCmd)
 		newPrincipleGetCmd(),    // sty_ef248ab2
 		newPrincipleListCmd(),   // order:04
 		newPrincipleUpdateCmd(), // sty_f38bd573
@@ -212,7 +212,7 @@ func registerDocumentNoun(root *cobra.Command) {
 func registerReviewerNoun(root *cobra.Command) {
 	noun := nounStub("reviewer", "Reviewers — judgment-shape agent identities.")
 	noun.AddCommand(
-		newReviewerCreateCmd(), // sty_f38bd573
+		newReviewerAddCmd(), // sty_4db0e025 (was newReviewerCreateCmd)
 		newReviewerGetCmd(),    // sty_004f3d3a
 		newReviewerListCmd(),   // sty_004f3d3a
 		newReviewerUpdateCmd(), // sty_f38bd573
@@ -225,7 +225,7 @@ func registerReviewerNoun(root *cobra.Command) {
 func registerRoleNoun(root *cobra.Command) {
 	noun := nounStub("role", "Roles — workspace permission grants.")
 	noun.AddCommand(
-		newRoleCreateCmd(), // sty_f38bd573
+		newRoleAddCmd(), // sty_4db0e025 (was newRoleCreateCmd)
 		newRoleGetCmd(),    // sty_004f3d3a
 		newRoleListCmd(),   // sty_004f3d3a
 		newRoleUpdateCmd(), // sty_f38bd573
@@ -238,7 +238,7 @@ func registerRoleNoun(root *cobra.Command) {
 func registerSkillNoun(root *cobra.Command) {
 	noun := nounStub("skill", "Skills — agent capability bundles.")
 	noun.AddCommand(
-		newSkillCreateCmd(), // sty_f38bd573
+		newSkillAddCmd(), // sty_4db0e025 (was newSkillCreateCmd)
 		newSkillGetCmd(),    // sty_004f3d3a
 		newSkillListCmd(),   // sty_004f3d3a
 		newSkillUpdateCmd(), // sty_f38bd573

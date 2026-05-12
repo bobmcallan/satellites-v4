@@ -13,7 +13,7 @@ import (
 // registerDocumentWrappers exposes the §9 type-specific thin wrappers
 // (`principle_*`, `contract_*`, `skill_*`, `reviewer_*`, `agent_*`,
 // `role_*`) on the MCP surface. Each wrapper pins `type` to its kind,
-// applies per-type payload validation on create, and forwards to the
+// applies per-type payload validation on add, and forwards to the
 // matching generic handleDocument* method. There is exactly one
 // storage path per operation (the generic verb's handler) — wrappers
 // never duplicate store calls.
@@ -36,8 +36,8 @@ func (s *Server) registerDocumentWrappers() {
 
 // registerWrapperFamily registers the six wrapper verbs for one kind.
 func (s *Server) registerWrapperFamily(kind string) {
-	create := mcpgo.NewTool(kind+"_create",
-		mcpgo.WithDescription(fmt.Sprintf("Create a %s document. Type is pinned to %q.", kind, kind)),
+	add := mcpgo.NewTool(kind+"_add",
+		mcpgo.WithDescription(fmt.Sprintf("Add a %s document. Type is pinned to %q.", kind, kind)),
 		mcpgo.WithString("scope", mcpgo.Required(), mcpgo.Description("system | project")),
 		mcpgo.WithString("name", mcpgo.Required(), mcpgo.Description("Document name.")),
 		mcpgo.WithString("project_id", mcpgo.Description("Required when scope=project.")),
@@ -48,7 +48,7 @@ func (s *Server) registerWrapperFamily(kind string) {
 			mcpgo.Items(map[string]any{"type": "string"})),
 		mcpgo.WithString("status", mcpgo.Description("active (default) | archived")),
 	)
-	s.mcp.AddTool(create, s.wrapperCreate(kind))
+	s.mcp.AddTool(add, s.wrapperCreate(kind))
 
 	get := mcpgo.NewTool(kind+"_get",
 		mcpgo.WithDescription(fmt.Sprintf("Get a %s document by id (preferred) or name.", kind)),
@@ -108,7 +108,7 @@ func (s *Server) wrapperCreate(kind string) func(context.Context, mcpgo.CallTool
 		args := req.GetArguments()
 		if v, ok := args["type"]; ok {
 			if s, _ := v.(string); s != "" && s != kind {
-				return mcpgo.NewToolResultError(fmt.Sprintf("%s_create rejects caller-supplied type=%q", kind, s)), nil
+				return mcpgo.NewToolResultError(fmt.Sprintf("%s_add rejects caller-supplied type=%q", kind, s)), nil
 			}
 		}
 		if err := validateWrapperPayload(kind, args); err != nil {
@@ -166,35 +166,36 @@ func (s *Server) wrapperSearch(kind string) func(context.Context, mcpgo.CallTool
 // forwarding to handleDocumentCreate. Reads from args without mutating.
 // kind is the wire-level document type string (compared as literals so
 // this file no longer imports internal/document — pr_mcp_cli_shared_path).
+// The MCP verbs that reach this validator are the `<kind>_add` wrappers.
 func validateWrapperPayload(kind string, args map[string]any) error {
 	switch kind {
 	case "contract":
 		raw, _ := args["structured"].(string)
 		if raw == "" {
-			return fmt.Errorf("contract_create requires structured payload with category, required_for_close, validation_mode")
+			return fmt.Errorf("contract_add requires structured payload with category, required_for_close, validation_mode")
 		}
 		var payload map[string]any
 		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-			return fmt.Errorf("contract_create structured must be valid JSON: %w", err)
+			return fmt.Errorf("contract_add structured must be valid JSON: %w", err)
 		}
 		for _, k := range []string{"category", "required_for_close", "validation_mode"} {
 			if _, ok := payload[k]; !ok {
-				return fmt.Errorf("contract_create structured missing required key %q", k)
+				return fmt.Errorf("contract_add structured missing required key %q", k)
 			}
 		}
 	case "skill", "reviewer":
 		s, _ := args["contract_binding"].(string)
 		if s == "" {
-			return fmt.Errorf("%s_create requires contract_binding", kind)
+			return fmt.Errorf("%s_add requires contract_binding", kind)
 		}
 	case "principle":
 		scope, _ := args["scope"].(string)
 		if scope != "system" && scope != "project" {
-			return fmt.Errorf("principle_create requires scope=system|project")
+			return fmt.Errorf("principle_add requires scope=system|project")
 		}
 		tags, _ := args["tags"].([]any)
 		if len(tags) == 0 {
-			return fmt.Errorf("principle_create requires at least one tag")
+			return fmt.Errorf("principle_add requires at least one tag")
 		}
 	}
 	return nil

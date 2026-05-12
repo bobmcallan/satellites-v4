@@ -3,7 +3,6 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
-	"github.com/bobmcallan/satellites/internal/auth"
 	"os"
 	"strconv"
 	"time"
@@ -11,8 +10,8 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
+	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/client"
-	"github.com/bobmcallan/satellites/internal/session"
 )
 
 // headerSessionID returns the session id mcp-go's Streamable HTTP
@@ -39,15 +38,18 @@ func resolveSessionID(ctx context.Context, bodyValue string) string {
 	return headerSessionID(ctx)
 }
 
-// resolveSessionStaleness returns the configured claim-staleness window.
-// Env SATELLITES_SESSION_STALENESS (seconds) overrides the default.
+// resolveSessionStaleness returns the configured claim-staleness window
+// override read from env SATELLITES_SESSION_STALENESS (seconds). A zero
+// return signals "no override" — the client method applies its own
+// substrate-side default. Keeping the substrate constant inside
+// internal/client preserves the pr_mcp_cli_shared_path layering.
 func resolveSessionStaleness() time.Duration {
 	if raw := os.Getenv("SATELLITES_SESSION_STALENESS"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
 			return time.Duration(n) * time.Second
 		}
 	}
-	return session.StalenessDefault
+	return 0
 }
 
 // handleSessionWhoami returns the caller's registered session row, or
@@ -97,7 +99,7 @@ func (s *Server) handleSessionRegister(ctx context.Context, req mcpgo.CallToolRe
 	caller, _ := auth.UserFrom(ctx)
 	out, err := s.cli().SessionRegister(ctx, client.Caller{UserID: caller.UserID}, client.SessionRegisterInput{
 		SessionID:   resolveSessionID(ctx, req.GetString("session_id", "")),
-		Source:      req.GetString("source", session.SourceSessionStart),
+		Source:      req.GetString("source", ""),
 		WorkspaceID: req.GetString("workspace_id", ""),
 		ProjectID:   req.GetString("project_id", ""),
 		Now:         s.nowUTC(),

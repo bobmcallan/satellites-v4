@@ -98,12 +98,6 @@ var legacyAllowlist = map[string]map[string]struct{}{
 	"catalogue.go": {
 		"github.com/bobmcallan/satellites/internal/document": {},
 	},
-	// claim_handlers.go — task_claim handler; touches session for
-	// caller identity. TODO(sty_4db0e025): converge onto
-	// client.TaskClaim which already owns the session lookup.
-	"claim_handlers.go": {
-		"github.com/bobmcallan/satellites/internal/session": {},
-	},
 	// kv_handlers.go — KV verbs (kv_set/get/list/delete); reaches
 	// workspace + ledger directly. TODO(sty_4db0e025): converge onto
 	// client.KV* methods.

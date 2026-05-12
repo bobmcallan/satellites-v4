@@ -87,7 +87,10 @@ var legacyAllowlist = map[string]map[string]struct{}{
 	// mcp.go — server struct + boot-time wiring; holds typed store
 	// pointers for the legacy handlers below. TODO(sty_4db0e025):
 	// the struct narrows to *client.Client only once every legacy
-	// handler is migrated.
+	// handler is migrated. Slice A8 parked the portal_replicate
+	// boot-time accessors here (the substrate types appear in their
+	// signatures); the substrate-import surface this file imports
+	// did not grow.
 	"mcp.go": {
 		"github.com/bobmcallan/satellites/internal/agentprocess":    {},
 		"github.com/bobmcallan/satellites/internal/changelog":       {},
@@ -100,13 +103,6 @@ var legacyAllowlist = map[string]map[string]struct{}{
 		"github.com/bobmcallan/satellites/internal/story":           {},
 		"github.com/bobmcallan/satellites/internal/task":            {},
 		"github.com/bobmcallan/satellites/internal/workspace":       {},
-	},
-	// portal_replicate.go — wire adapter for portal_replicate;
-	// keeps a portalreplicate.Vocabulary accessor on the server.
-	// TODO(sty_4db0e025): move the vocabulary accessor onto
-	// *client.Client so the transport file imports only client.
-	"portal_replicate.go": {
-		"github.com/bobmcallan/satellites/internal/portalreplicate": {},
 	},
 }
 

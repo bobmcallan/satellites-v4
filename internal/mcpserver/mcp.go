@@ -985,6 +985,70 @@ func (t *tolerantSessionIDManager) Terminate(sessionID string) (bool, error) {
 	return t.inner.Terminate(sessionID)
 }
 
+// --- portal_replicate boot-time wiring (sty_088f6d5c, relocated under
+// sty_4db0e025 slice A8). The accessor methods reference
+// internal/portalreplicate types in their signatures; parking them on
+// mcp.go (the only remaining legacy-allowlisted transport file) keeps
+// the substrate-import out of internal/mcpserver/portal_replicate.go,
+// which now imports only internal/client + the MCP-go SDK + stdlib.
+
+// SetReplicateVocabulary installs the action-alias map the
+// portal_replicate handler consults to translate caller-friendly
+// action names (e.g. "tap", "go-to") into canonical types. Wired
+// from main.go after configseed loads the replicate_vocabulary
+// document. nil keeps the default canonical-only vocabulary.
+// Sty_088f6d5c.
+func (s *Server) SetReplicateVocabulary(v *portalreplicate.Vocabulary) {
+	s.replicateVocab = v
+}
+
+// ReplicateVocabulary returns the currently-loaded action vocabulary.
+// Exposed so the /api/v1 layer (sty_e68ce6fb) can read the same vocab
+// the MCP handler uses without re-loading from the doc store.
+func (s *Server) ReplicateVocabulary() *portalreplicate.Vocabulary {
+	return s.replicateVocab
+}
+
+// ReplicateRunner returns the currently-installed runner override.
+// Returns nil when no SetReplicateRunner has been called — callers
+// fall back to portalreplicate.Run in that case.
+func (s *Server) ReplicateRunner() func(ctx context.Context, opts portalreplicate.RunOptions, actions []portalreplicate.Action) ([]portalreplicate.Result, portalreplicate.Summary, error) {
+	return s.replicateRunner
+}
+
+// SetReplicateRunner overrides the chromedp-driven runner with a
+// custom function. Tests inject a stub that returns deterministic
+// Results; production leaves it nil and the handler falls back to
+// portalreplicate.Run. Sty_088f6d5c.
+func (s *Server) SetReplicateRunner(fn func(ctx context.Context, opts portalreplicate.RunOptions, actions []portalreplicate.Action) ([]portalreplicate.Result, portalreplicate.Summary, error)) {
+	s.replicateRunner = fn
+}
+
+// LoadReplicateVocabularyFromDoc reads the configured
+// replicate_vocabulary document via the typed client and stores the
+// result on the Server. Forwards to *client.Client.LoadReplicateVocabularyFromDoc;
+// failures fall back to the canonical-only vocabulary so the tool
+// stays callable with built-in action names. Called from main.go
+// after configseed.RunAll completes.
+func (s *Server) LoadReplicateVocabularyFromDoc(ctx context.Context, name string) error {
+	v, err := s.cli().LoadReplicateVocabularyFromDoc(ctx, name)
+	s.replicateVocab = v
+	return err
+}
+
+// requireReplicatePrereqs returns nil when the runner has the
+// dependencies it needs (stories + ledger). Used by Server.New to
+// gate tool registration. Sty_088f6d5c.
+func (s *Server) requireReplicatePrereqs() error {
+	if s.stories == nil {
+		return errors.New("portal_replicate: stories store unavailable")
+	}
+	if s.ledger == nil {
+		return errors.New("portal_replicate: ledger store unavailable")
+	}
+	return nil
+}
+
 // ServeHTTP implements http.Handler. AuthMiddleware is responsible for
 // establishing the user context before this handler runs. ServeHTTP also
 // extracts an optional ?project_id=<id> from the request URL and stores

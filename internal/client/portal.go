@@ -27,13 +27,23 @@ import (
 )
 
 // PortalReplicateInput captures the parsed arguments of the
-// portal_replicate verb. Actions/Cookies arrive already-decoded (the
-// wire layer is responsible for JSON unmarshalling the request).
+// portal_replicate verb.
+//
+// The typed Actions/Cookies fields are populated when the wire layer
+// has already-decoded structs (the HTTP /api/v1 path uses its own JSON
+// body decoder). The ActionsJSON/CookiesJSON fields let the MCP wire
+// adapter pass the raw request strings through without importing
+// internal/portalreplicate — the client owns the JSON shape. When both
+// typed and JSON forms are set, the typed slices win; when only the
+// JSON form is set, this method unmarshals it before substrate work.
+// Sty_4db0e025 slice A8.
 type PortalReplicateInput struct {
-	StoryID   string
-	TargetURL string
-	Actions   []portalreplicate.Action
-	Cookies   []portalreplicate.Cookie
+	StoryID      string
+	TargetURL    string
+	Actions      []portalreplicate.Action
+	Cookies      []portalreplicate.Cookie
+	ActionsJSON  string
+	CookiesJSON  string
 	// Now overrides the per-row ledger timestamp; zero falls back to
 	// time.Now().UTC(). Tests inject a fixture time for determinism.
 	Now time.Time
@@ -69,6 +79,22 @@ func (c *Client) PortalReplicate(ctx context.Context, caller Caller, in PortalRe
 	}
 	if in.TargetURL == "" {
 		return PortalReplicateOutput{}, errors.New("target_url is required")
+	}
+	// MCP wire-layer path: caller passes raw JSON strings via
+	// ActionsJSON/CookiesJSON so internal/portalreplicate stays out of
+	// internal/mcpserver/portal_replicate.go. Typed slices, when set,
+	// take precedence (HTTP /api/v1 + tests use that path). Empty
+	// ActionsJSON with empty Actions falls through to the actions-empty
+	// guard below. Sty_4db0e025 slice A8.
+	if len(in.Actions) == 0 && in.ActionsJSON != "" {
+		if err := json.Unmarshal([]byte(in.ActionsJSON), &in.Actions); err != nil {
+			return PortalReplicateOutput{}, fmt.Errorf("actions must be valid JSON: %w", err)
+		}
+	}
+	if len(in.Cookies) == 0 && in.CookiesJSON != "" {
+		if err := json.Unmarshal([]byte(in.CookiesJSON), &in.Cookies); err != nil {
+			return PortalReplicateOutput{}, fmt.Errorf("cookies must be valid JSON: %w", err)
+		}
 	}
 	if len(in.Actions) == 0 {
 		return PortalReplicateOutput{}, errors.New("actions array is empty")

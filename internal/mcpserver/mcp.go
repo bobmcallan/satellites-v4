@@ -205,7 +205,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	// kind:mcp-call. Reads land ephemeral, mutations durable. Disabled
 	// when no ledger store is wired (early-test fixtures).
 	if s.ledger != nil {
-		s.audit = newAuditLogger(s.ledger, s.tasks, s.projects, s.logger,
+		s.audit = newAuditLogger(s.cli, s.logger,
 			deps.AuditReadTTL, s.defaultProjectID, s.nowFunc)
 	}
 

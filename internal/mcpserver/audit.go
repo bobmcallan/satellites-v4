@@ -7,12 +7,16 @@ package mcpserver
 // durability=ephemeral and an expires_at; mutations land durable.
 // Audit-write failures are logged at warn and never block the
 // handler's response to the caller.
+//
+// Sty_4db0e025 slice A3: the three substrate calls (project.GetByID,
+// task.GetByID, ledger.Append) live on *client.Client via
+// AuditWrite. This file owns wire-shape concerns only —
+// classification, sanitisation, summarisation — and delegates the
+// substrate work through the typed surface.
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"github.com/bobmcallan/satellites/internal/auth"
 	"strings"
 	"time"
 
@@ -20,14 +24,13 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/ternarybob/arbor"
 
-	"github.com/bobmcallan/satellites/internal/ledger"
-	"github.com/bobmcallan/satellites/internal/project"
-	"github.com/bobmcallan/satellites/internal/task"
+	"github.com/bobmcallan/satellites/internal/auth"
+	"github.com/bobmcallan/satellites/internal/client"
 )
 
 // AuditTagKind is the canonical tag stamped on every audit row so
 // callers (timeline view, ledger filters) can scope their queries.
-const AuditTagKind = "kind:mcp-call"
+const AuditTagKind = client.AuditTagKindMCPCall
 
 // auditMaxArgBytes is the head-truncation threshold for raw arg blobs
 // before they land in the audit row's structured payload.
@@ -60,20 +63,22 @@ var auditSecretArgKeys = []string{
 }
 
 // auditLogger writes an audit ledger row for each MCP tool call.
+// Holds a Client builder so each call uses the same typed surface the
+// rest of the transport layer delegates through (pr_mcp_cli_shared_path).
 type auditLogger struct {
-	led              ledger.Store
-	tasks            task.Store
-	projects         project.Store
+	build            func() *client.Client
 	logger           arbor.ILogger
 	readTTL          time.Duration
 	defaultProjectID string
 	nowFunc          func() time.Time
 }
 
-// newAuditLogger builds an auditLogger. led is required; the others are
-// optional — when omitted the corresponding resolution paths return
-// empty (project-only fallback or unscoped row).
-func newAuditLogger(led ledger.Store, tasks task.Store, projects project.Store, logger arbor.ILogger, readTTL time.Duration, defaultProjectID string, nowFunc func() time.Time) *auditLogger {
+// newAuditLogger builds an auditLogger backed by the supplied client.
+// build returns the *client.Client to use for each call — passing a
+// builder (rather than a value) lets test fixtures wire stores after
+// construction (the orchestratorFixture pattern). readTTL defaults to
+// 720h, nowFunc defaults to time.Now().UTC().
+func newAuditLogger(build func() *client.Client, logger arbor.ILogger, readTTL time.Duration, defaultProjectID string, nowFunc func() time.Time) *auditLogger {
 	if readTTL <= 0 {
 		readTTL = 720 * time.Hour
 	}
@@ -81,9 +86,7 @@ func newAuditLogger(led ledger.Store, tasks task.Store, projects project.Store, 
 		nowFunc = func() time.Time { return time.Now().UTC() }
 	}
 	return &auditLogger{
-		led:              led,
-		tasks:            tasks,
-		projects:         projects,
+		build:            build,
 		logger:           logger,
 		readTTL:          readTTL,
 		defaultProjectID: defaultProjectID,
@@ -96,7 +99,7 @@ func newAuditLogger(led ledger.Store, tasks task.Store, projects project.Store, 
 // hook. Errors from the audit-write path do not propagate to the
 // caller.
 func (a *auditLogger) middleware(next mcpserver.ToolHandlerFunc) mcpserver.ToolHandlerFunc {
-	if a == nil || a.led == nil {
+	if a == nil || a.build == nil {
 		return next
 	}
 	return func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -107,62 +110,38 @@ func (a *auditLogger) middleware(next mcpserver.ToolHandlerFunc) mcpserver.ToolH
 	}
 }
 
-// write records one audit row. Unscoped calls (no project resolvable
-// from args, no default project) are skipped at the warn level — a row
-// with no workspace_id is invisible to every operator anyway.
+// write delegates substrate work to client.AuditWrite. The middleware
+// owns wire-shape concerns (classification, sanitisation,
+// summarisation) and the typed method owns project / workspace /
+// story resolution + the ledger.Append call.
 func (a *auditLogger) write(ctx context.Context, req mcpgo.CallToolRequest, result *mcpgo.CallToolResult, handlerErr error, start time.Time) {
-	verb := req.Params.Name
-	args := req.GetArguments()
-	sanitised := sanitiseAuditArgs(args)
-	duration := a.nowFunc().Sub(start)
-
-	projectID, workspaceID := a.resolveProjectScope(ctx, args)
-	if projectID == "" {
-		// No project context — system-level calls (satellites_info,
-		// session_register from a fresh client). Skip without surfacing.
+	cli := a.build()
+	if cli == nil {
 		return
 	}
-	storyID := a.resolveStoryID(ctx, args, workspaceID)
+	verb := req.Params.Name
+	args := req.GetArguments()
+	duration := a.nowFunc().Sub(start)
 
-	payload := map[string]any{
-		"verb":           verb,
-		"arguments":      sanitised,
-		"duration_ms":    duration.Milliseconds(),
-		"result_summary": auditResultSummary(result, handlerErr),
-		"caller_user_id": auditCallerUserID(ctx),
+	in := client.AuditWriteInput{
+		Verb:             verb,
+		ProjectIDArg:     auditStringArg(args, "project_id"),
+		StoryIDArg:       auditStringArg(args, "story_id"),
+		TaskIDArg:        auditStringArg(args, "task_id"),
+		SanitisedArgs:    sanitiseAuditArgs(args),
+		DurationMS:       duration.Milliseconds(),
+		ResultSummary:    auditResultSummary(result, handlerErr),
+		CallerUserID:     auditCallerUserID(ctx),
+		Read:             isAuditReadVerb(verb),
+		ReadTTL:          a.readTTL,
+		DefaultProjectID: a.defaultProjectID,
+		Now:              a.nowFunc(),
 	}
 	if handlerErr != nil {
-		payload["error"] = handlerErr.Error()
-	}
-	structured, _ := json.Marshal(payload)
-
-	tags := []string{AuditTagKind, "verb:" + verb}
-	if storyID != "" {
-		tags = append(tags, "story_id:"+storyID)
+		in.HandlerError = handlerErr.Error()
 	}
 
-	durability := ledger.DurabilityDurable
-	var expiresAt *time.Time
-	if isAuditReadVerb(verb) {
-		durability = ledger.DurabilityEphemeral
-		exp := a.nowFunc().Add(a.readTTL)
-		expiresAt = &exp
-	}
-
-	entry := ledger.LedgerEntry{
-		WorkspaceID: workspaceID,
-		ProjectID:   projectID,
-		StoryID:     ledger.StringPtr(storyID),
-		Type:        ledger.TypeDecision,
-		Tags:        tags,
-		Content:     fmt.Sprintf("mcp call: %s", verb),
-		Structured:  structured,
-		Durability:  durability,
-		ExpiresAt:   expiresAt,
-		SourceType:  ledger.SourceUser,
-		CreatedBy:   auditCallerUserID(ctx),
-	}
-	if _, err := a.led.Append(ctx, entry, a.nowFunc()); err != nil {
+	if _, err := cli.AuditWrite(ctx, client.Caller{UserID: in.CallerUserID}, in); err != nil {
 		// Never propagate; the handler already returned. Surface in logs.
 		if a.logger != nil {
 			a.logger.Warn().
@@ -173,54 +152,13 @@ func (a *auditLogger) write(ctx context.Context, req mcpgo.CallToolRequest, resu
 	}
 }
 
-// resolveProjectScope returns (project_id, workspace_id) for the call.
-// Tries the call's `project_id` arg first; falls back to the server's
-// default project. Workspace id is read off the resolved project.
-func (a *auditLogger) resolveProjectScope(ctx context.Context, args map[string]any) (string, string) {
-	if v, ok := args["project_id"].(string); ok && v != "" {
-		if a.projects != nil {
-			if p, err := a.projects.GetByID(ctx, v, nil); err == nil {
-				return p.ID, p.WorkspaceID
-			}
-		}
-		return v, ""
-	}
-	if a.defaultProjectID != "" {
-		ws := ""
-		if a.projects != nil {
-			if p, err := a.projects.GetByID(ctx, a.defaultProjectID, nil); err == nil {
-				ws = p.WorkspaceID
-			}
-		}
-		return a.defaultProjectID, ws
-	}
-	return "", ""
-}
-
-// resolveStoryID stamps `story_id:<id>` when the call carries one.
-// Three sources, in order: explicit `story_id` arg → `task_id` arg
-// resolved through the task store → empty (project_id stamping is
-// enough).
-func (a *auditLogger) resolveStoryID(ctx context.Context, args map[string]any, workspaceID string) string {
-	if v, ok := args["story_id"].(string); ok && v != "" {
+// auditStringArg returns the string-valued arg at key, or "" when the
+// arg is missing / non-string.
+func auditStringArg(args map[string]any, key string) string {
+	if v, ok := args[key].(string); ok {
 		return v
 	}
-	if a.tasks == nil {
-		return ""
-	}
-	taskID, ok := args["task_id"].(string)
-	if !ok || taskID == "" {
-		return ""
-	}
-	memberships := []string(nil)
-	if workspaceID != "" {
-		memberships = []string{workspaceID}
-	}
-	t, err := a.tasks.GetByID(ctx, taskID, memberships)
-	if err != nil {
-		return ""
-	}
-	return t.StoryID
+	return ""
 }
 
 // auditCallerUserID returns the resolved user id from ctx, or "" when

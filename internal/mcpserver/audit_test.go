@@ -11,6 +11,7 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/project"
 	"github.com/bobmcallan/satellites/internal/task"
@@ -38,7 +39,10 @@ func newAuditTestEnv(t *testing.T) *auditTestEnv {
 	if err != nil {
 		t.Fatalf("project create: %v", err)
 	}
-	a := newAuditLogger(led, tasks, projs, satarbor.New("info"), 720*time.Hour, proj.ID, func() time.Time { return now })
+	build := func() *client.Client {
+		return client.New(client.Deps{Ledger: led, Projects: projs, Tasks: tasks})
+	}
+	a := newAuditLogger(build, satarbor.New("info"), 720*time.Hour, proj.ID, func() time.Time { return now })
 	return &auditTestEnv{
 		led:       led,
 		projects:  projs,
@@ -297,7 +301,10 @@ func TestAuditMiddleware_AuditWriteFailureNonBlocking(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
 	led := &auditFailingLedger{}
-	a := newAuditLogger(led, nil, nil, satarbor.New("info"), 720*time.Hour, "proj_x", func() time.Time { return now })
+	build := func() *client.Client {
+		return client.New(client.Deps{Ledger: led})
+	}
+	a := newAuditLogger(build, satarbor.New("info"), 720*time.Hour, "proj_x", func() time.Time { return now })
 	stub := func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		return mcpgo.NewToolResultText("inner ok"), nil
 	}

@@ -7,6 +7,7 @@ import (
 	"github.com/ternarybob/arbor"
 
 	"github.com/bobmcallan/satellites/internal/changelog"
+	"github.com/bobmcallan/satellites/internal/codeindex"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/project"
@@ -44,6 +45,7 @@ type Deps struct {
 	Tasks            task.Store
 	Repos            repo.Store
 	Changelog        changelog.Store
+	Indexer          codeindex.Indexer
 	StartedAt        time.Time
 	DefaultProjectID string
 	Logger           arbor.ILogger

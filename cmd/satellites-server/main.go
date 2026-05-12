@@ -648,6 +648,7 @@ func main() {
 		Tasks:            taskStore,
 		Repos:            repoStore,
 		Changelog:        changelogStore,
+		Indexer:          repoIndexer,
 		StartedAt:        startedAt,
 		DefaultProjectID: defaultProjectID,
 		Logger:           logger,

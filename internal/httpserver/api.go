@@ -70,6 +70,9 @@ func (a *APIRegistrar) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/story/update-status", a.handleStoryUpdateStatus)
 	mux.HandleFunc("POST /api/v1/story/field-set", a.handleStoryFieldSet)
 	mux.HandleFunc("POST /api/v1/project/set", a.handleProjectSet)
+
+	// Operator-tier read routes (sty_ef248ab2).
+	a.registerOperatorRoutes(mux)
 }
 
 // clientCaller builds the typed client.Caller from the AuthMiddleware-

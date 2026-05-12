@@ -76,12 +76,12 @@ func TestPersistentFlagsRecognised(t *testing.T) {
 }
 
 func TestStubReturnsServerExitCode(t *testing.T) {
-	// Only verbs that remain stubs after order:04. Migrated reads
-	// (info, session whoami, task get/walk, story get, agent get,
-	// contract get, principle list, ledger get/list/search) reach
-	// the remote and must be tested via integration paths instead.
+	// Only verbs that remain stubs after order:04 + sty_ef248ab2.
+	// Migrated reads + the operator-tier set from sty_ef248ab2
+	// (kv/project/workspace/agent/etc. read verbs) reach the remote
+	// and must be tested via integration paths instead.
 	verbs := [][]string{
-		{"kv", "get"},
+		{"kv", "set"},
 		{"agent", "compose"},
 		{"project", "create"},
 		{"document", "create"},

@@ -14,10 +14,10 @@ import (
 )
 
 // expectedRoutes lists the verb routes the HTTP API surface exposes.
-// sty_068a6c46 shipped 20; sty_73207fc8 added /api/v1/story/get to
-// close the parity gap (CLI's `story get` needs an HTTP route once
-// cliremote is HTTP-only). Total: 21.
+// sty_068a6c46 shipped 20; sty_73207fc8 added /api/v1/story/get;
+// sty_ef248ab2 added 30 operator-tier read verbs. Total: 51.
 var expectedRoutes = []string{
+	// Order:07a anchor (21).
 	"POST /api/v1/satellites/info",
 	"POST /api/v1/session/whoami",
 	"POST /api/v1/session/register",
@@ -39,15 +39,46 @@ var expectedRoutes = []string{
 	"POST /api/v1/story/update-status",
 	"POST /api/v1/story/field-set",
 	"POST /api/v1/project/set",
+	// sty_ef248ab2 operator-tier reads (28).
+	"POST /api/v1/story/list",
+	"POST /api/v1/story/template-get",
+	"POST /api/v1/story/template-list",
+	"POST /api/v1/story/export-walk",
+	"POST /api/v1/task/list",
+	"POST /api/v1/project/get",
+	"POST /api/v1/project/list",
+	"POST /api/v1/workspace/get",
+	"POST /api/v1/workspace/list",
+	"POST /api/v1/workspace/member-list",
+	"POST /api/v1/changelog/get",
+	"POST /api/v1/changelog/list",
+	"POST /api/v1/document/search",
+	"POST /api/v1/agent/list",
+	"POST /api/v1/agent/search",
+	"POST /api/v1/agent/ephemeral-summary",
+	"POST /api/v1/contract/list",
+	"POST /api/v1/contract/search",
+	"POST /api/v1/principle/get",
+	"POST /api/v1/principle/search",
+	"POST /api/v1/kv/get",
+	"POST /api/v1/kv/list",
+	"POST /api/v1/kv/get-resolved",
+	"POST /api/v1/repo/get",
+	"POST /api/v1/repo/list",
+	"POST /api/v1/repo/search",
+	"POST /api/v1/repo/search-text",
+	"POST /api/v1/repo/get-symbol-source",
+	"POST /api/v1/repo/get-file",
+	"POST /api/v1/repo/get-outline",
 }
 
-// TestAPI_RoutesRegistered asserts the registrar attaches all 21
+// TestAPI_RoutesRegistered asserts the registrar attaches all 51
 // verb routes to the supplied mux. Routes that respond 404 indicate
 // missing registration; any other status (400/500/200) proves the
 // handler was hit.
 func TestAPI_RoutesRegistered(t *testing.T) {
-	if got := len(expectedRoutes); got != 21 {
-		t.Fatalf("expected 21 routes, got %d (update the slice as the verb set grows)", got)
+	if got := len(expectedRoutes); got != 51 {
+		t.Fatalf("expected 51 routes, got %d (update the slice as the verb set grows)", got)
 	}
 
 	reg := NewAPIRegistrar(client.New(client.Deps{StartedAt: time.Now().UTC()}))

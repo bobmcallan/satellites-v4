@@ -84,6 +84,7 @@ func (s *Server) cli() *client.Client {
 		Tasks:            s.tasks,
 		Repos:            s.repos,
 		Changelog:        s.changelog,
+		Indexer:          s.indexer,
 		StartedAt:        s.startedAt,
 		DefaultProjectID: s.defaultProjectID,
 		Logger:           s.logger,

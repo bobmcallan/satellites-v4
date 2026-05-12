@@ -55,14 +55,14 @@ func registerStoryNoun(root *cobra.Command) {
 	noun := nounStub("story", "Stories — units of deliverable work.")
 	noun.AddCommand(
 		verbStub("create", "story create", "Create a new story."),
-		newStoryGetCmd(), // order:04
-		verbStub("list", "story list", "List stories."),
+		newStoryGetCmd(),  // order:04
+		newStoryListCmd(), // sty_ef248ab2
 		verbStub("update", "story update", "Update a story."),
-		newStoryUpdateStatusCmd(), // order:05
-		newStoryFieldSetCmd(),     // order:05
-		verbStub("template-get", "story template-get", "Return the parsed template for a category."),
-		verbStub("template-list", "story template-list", "List story templates."),
-		verbStub("export-walk", "story export-walk", "Render the contract walk as paste-ready markdown."),
+		newStoryUpdateStatusCmd(),   // order:05
+		newStoryFieldSetCmd(),       // order:05
+		newStoryTemplateGetCmd(),    // sty_ef248ab2
+		newStoryTemplateListCmd(),   // sty_ef248ab2
+		newStoryExportWalkCmd(),     // sty_ef248ab2
 	)
 	root.AddCommand(noun)
 }
@@ -70,9 +70,9 @@ func registerStoryNoun(root *cobra.Command) {
 func registerTaskNoun(root *cobra.Command) {
 	noun := nounStub("task", "Tasks — the dispatch unit.")
 	noun.AddCommand(
-		newTaskAddCmd(), // order:05
-		newTaskGetCmd(), // order:04
-		verbStub("list", "task list", "List tasks."),
+		newTaskAddCmd(),    // order:05
+		newTaskGetCmd(),    // order:04
+		newTaskListCmd(),   // sty_ef248ab2
 		newTaskClaimCmd(),  // order:05
 		newTaskRunCmd(),    // sty_3e27a3f5 — orchestrator-invoked dispatch.
 		newTaskUpdateCmd(), // order:05
@@ -99,8 +99,8 @@ func registerProjectNoun(root *cobra.Command) {
 	noun := nounStub("project", "Projects — top-level work surface.")
 	noun.AddCommand(
 		verbStub("create", "project create", "Create a new project."),
-		verbStub("get", "project get", "Get the project orientation bundle."),
-		verbStub("list", "project list", "List the caller's projects."),
+		newProjectGetCmd(),  // sty_ef248ab2
+		newProjectListCmd(), // sty_ef248ab2
 		verbStub("update", "project update", "Update a project's name / mcp_url."),
 		verbStub("delete", "project delete", "Archive a project."),
 		newProjectSetCmd(), // order:05
@@ -113,10 +113,10 @@ func registerWorkspaceNoun(root *cobra.Command) {
 	noun := nounStub("workspace", "Workspaces — tenancy surface (admin).")
 	noun.AddCommand(
 		verbStub("create", "workspace create", "Create a workspace [admin]."),
-		verbStub("get", "workspace get", "Get a workspace."),
-		verbStub("list", "workspace list", "List the caller's workspaces."),
+		newWorkspaceGetCmd(),  // sty_ef248ab2
+		newWorkspaceListCmd(), // sty_ef248ab2
 		verbStub("member-add", "workspace member-add", "Add a workspace member [admin]."),
-		verbStub("member-list", "workspace member-list", "List workspace members."),
+		newWorkspaceMemberListCmd(), // sty_ef248ab2
 		verbStub("member-update-role", "workspace member-update-role", "Change a member's role [admin]."),
 		verbStub("member-remove", "workspace member-remove", "Remove a workspace member [admin]."),
 	)
@@ -126,11 +126,11 @@ func registerWorkspaceNoun(root *cobra.Command) {
 func registerKVNoun(root *cobra.Command) {
 	noun := nounStub("kv", "KV — typed key/value store.")
 	noun.AddCommand(
-		verbStub("get", "kv get", "Get a key."),
+		newKVGetCmd(), // sty_ef248ab2
 		verbStub("set", "kv set", "Set a key/value."),
 		verbStub("delete", "kv delete", "Delete a key."),
-		verbStub("get-resolved", "kv get-resolved", "Resolve a key with skill-template substitution."),
-		verbStub("list", "kv list", "List keys."),
+		newKVGetResolvedCmd(), // sty_ef248ab2
+		newKVListCmd(),        // sty_ef248ab2
 	)
 	root.AddCommand(noun)
 }
@@ -139,13 +139,13 @@ func registerRepoNoun(root *cobra.Command) {
 	noun := nounStub("repo", "Repos — code-index integration.")
 	noun.AddCommand(
 		verbStub("add", "repo add", "Register a git remote on a project."),
-		verbStub("get", "repo get", "Get a repo row."),
-		verbStub("list", "repo list", "List repos."),
-		verbStub("search", "repo search", "Symbol search."),
-		verbStub("search-text", "repo search-text", "Text search."),
-		verbStub("get-symbol-source", "repo get-symbol-source", "Return a symbol's source."),
-		verbStub("get-file", "repo get-file", "Return a file's contents."),
-		verbStub("get-outline", "repo get-outline", "Return a file's outline."),
+		newRepoGetCmd(),             // sty_ef248ab2
+		newRepoListCmd(),            // sty_ef248ab2
+		newRepoSearchCmd(),          // sty_ef248ab2
+		newRepoSearchTextCmd(),      // sty_ef248ab2
+		newRepoGetSymbolSourceCmd(), // sty_ef248ab2
+		newRepoGetFileCmd(),         // sty_ef248ab2
+		newRepoGetOutlineCmd(),      // sty_ef248ab2
 	)
 	root.AddCommand(noun)
 }
@@ -154,13 +154,13 @@ func registerAgentNoun(root *cobra.Command) {
 	noun := nounStub("agent", "Agents — typed roles.")
 	noun.AddCommand(
 		verbStub("create", "agent create", "Create an agent doc."),
-		newAgentGetCmd(), // order:04
-		verbStub("list", "agent list", "List agent docs."),
+		newAgentGetCmd(),  // order:04
+		newAgentListCmd(), // sty_ef248ab2
 		verbStub("update", "agent update", "Update an agent doc."),
 		verbStub("delete", "agent delete", "Archive an agent doc."),
-		verbStub("search", "agent search", "Search agent docs."),
+		newAgentSearchCmd(), // sty_ef248ab2
 		verbStub("compose", "agent compose", "Compose an ephemeral agent."),
-		verbStub("ephemeral-summary", "agent ephemeral-summary", "Summarise ephemeral agents per project."),
+		newAgentEphemeralSummaryCmd(), // sty_ef248ab2
 		verbStub("apikey-create", "agent apikey-create", "Create an agent API key [admin]."),
 		verbStub("apikey-list", "agent apikey-list", "List agent API keys [admin]."),
 		verbStub("apikey-delete", "agent apikey-delete", "Delete an agent API key [admin]."),
@@ -172,11 +172,11 @@ func registerContractNoun(root *cobra.Command) {
 	noun := nounStub("contract", "Contracts — lifecycle phase rubrics.")
 	noun.AddCommand(
 		verbStub("create", "contract create", "Create a contract doc."),
-		newContractGetCmd(), // order:04
-		verbStub("list", "contract list", "List contracts."),
+		newContractGetCmd(),  // order:04
+		newContractListCmd(), // sty_ef248ab2
 		verbStub("update", "contract update", "Update a contract doc."),
 		verbStub("delete", "contract delete", "Archive a contract."),
-		verbStub("search", "contract search", "Search contracts."),
+		newContractSearchCmd(), // sty_ef248ab2
 	)
 	root.AddCommand(noun)
 }
@@ -185,12 +185,11 @@ func registerPrincipleNoun(root *cobra.Command) {
 	noun := nounStub("principle", "Principles — workspace + project policy.")
 	noun.AddCommand(
 		verbStub("create", "principle create", "Create a principle."),
-		verbStub("get", "principle get", "Get a principle."),
+		newPrincipleGetCmd(),  // sty_ef248ab2
 		newPrincipleListCmd(), // order:04
-
 		verbStub("update", "principle update", "Update a principle."),
 		verbStub("delete", "principle delete", "Archive a principle."),
-		verbStub("search", "principle search", "Search principles."),
+		newPrincipleSearchCmd(), // sty_ef248ab2
 	)
 	root.AddCommand(noun)
 }
@@ -203,7 +202,7 @@ func registerDocumentNoun(root *cobra.Command) {
 		verbStub("list", "document list", "List documents."),
 		verbStub("update", "document update", "Update a document."),
 		verbStub("delete", "document delete", "Archive a document."),
-		verbStub("search", "document search", "Search documents."),
+		newDocumentSearchCmd(), // sty_ef248ab2
 		verbStub("ingest-file", "document ingest-file", "Ingest a markdown file as a document."),
 	)
 	root.AddCommand(noun)
@@ -252,8 +251,8 @@ func registerChangelogNoun(root *cobra.Command) {
 	noun := nounStub("changelog", "Changelog — per-binary release entries.")
 	noun.AddCommand(
 		verbStub("add", "changelog add", "Append a changelog row."),
-		verbStub("get", "changelog get", "Get a changelog row."),
-		verbStub("list", "changelog list", "List changelog rows."),
+		newChangelogGetCmd(),  // sty_ef248ab2
+		newChangelogListCmd(), // sty_ef248ab2
 		verbStub("update", "changelog update", "Update a changelog row."),
 		verbStub("delete", "changelog delete", "Delete a changelog row."),
 	)

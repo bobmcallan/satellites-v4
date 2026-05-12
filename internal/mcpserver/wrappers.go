@@ -12,11 +12,17 @@ import (
 
 // registerDocumentWrappers exposes the §9 type-specific thin wrappers
 // (`principle_*`, `contract_*`, `skill_*`, `reviewer_*`, `agent_*`,
-// `role_*`) on the MCP surface. Each wrapper pins `type` to its kind,
-// applies per-type payload validation on add, and forwards to the
-// matching generic handleDocument* method. There is exactly one
-// storage path per operation (the generic verb's handler) — wrappers
-// never duplicate store calls.
+// `role_*`) on the MCP surface. After sty_4db0e025 slice B1 the
+// surface is read-only: only `<kind>_get` and `<kind>_list` register,
+// with two carve-outs — reviewer/role drop `_get` (redundant with
+// `agent_get` per the kept-catalogue plan) and agent drops `_list`
+// (agent extras are reachable via /api/v1 + CLI). Wrapper write verbs
+// (`_add` / `_update` / `_delete` / `_search`) are reachable only
+// through the typed methods on *client.Client via the HTTP API and
+// the satellites-client CLI; the wrapperCreate / wrapperSearch
+// closures and validateWrapperPayload remain because the typed
+// client surface still calls into the same per-type validation /
+// type-pinning helpers (handler bodies stay untouched per slice B1).
 //
 // `artifact` intentionally has no wrapper (per docs/architecture.md §9
 // note); artefacts are exercised through the generic verbs and the
@@ -34,71 +40,53 @@ func (s *Server) registerDocumentWrappers() {
 	}
 }
 
-// registerWrapperFamily registers the six wrapper verbs for one kind.
+// wrapperKindHasGet reports whether kind exposes `<kind>_get` on the
+// MCP surface. sty_4db0e025 slice B1: reviewer + role are redundant
+// with agent_get; callers should switch.
+func wrapperKindHasGet(kind string) bool {
+	switch kind {
+	case "reviewer", "role":
+		return false
+	}
+	return true
+}
+
+// wrapperKindHasList reports whether kind exposes `<kind>_list` on the
+// MCP surface. sty_4db0e025 slice B1: agent_list is reachable only
+// through the HTTP API + CLI.
+func wrapperKindHasList(kind string) bool {
+	return kind != "agent"
+}
+
+// registerWrapperFamily registers the kept read verbs for one kind.
+// Write verbs (`_add` / `_update` / `_delete` / `_search`) were
+// unregistered in sty_4db0e025 slice B1; the handler bodies remain on
+// *Server (wrapperCreate / wrapperSearch / handleDocumentUpdate /
+// handleDocumentDelete) so the HTTP layer + internal/client continue
+// to drive them.
 func (s *Server) registerWrapperFamily(kind string) {
-	add := mcpgo.NewTool(kind+"_add",
-		mcpgo.WithDescription(fmt.Sprintf("Add a %s document. Type is pinned to %q.", kind, kind)),
-		mcpgo.WithString("scope", mcpgo.Required(), mcpgo.Description("system | project")),
-		mcpgo.WithString("name", mcpgo.Required(), mcpgo.Description("Document name.")),
-		mcpgo.WithString("project_id", mcpgo.Description("Required when scope=project.")),
-		mcpgo.WithString("body", mcpgo.Description("Markdown body.")),
-		mcpgo.WithString("structured", mcpgo.Description("Type-specific JSON payload.")),
-		mcpgo.WithString("contract_binding", mcpgo.Description("Required for skill/reviewer.")),
-		mcpgo.WithArray("tags", mcpgo.Description("Free-form tags."),
-			mcpgo.Items(map[string]any{"type": "string"})),
-		mcpgo.WithString("status", mcpgo.Description("active (default) | archived")),
-	)
-	s.mcp.AddTool(add, s.wrapperCreate(kind))
+	if wrapperKindHasGet(kind) {
+		get := mcpgo.NewTool(kind+"_get",
+			mcpgo.WithDescription(fmt.Sprintf("Get a %s document by id (preferred) or name.", kind)),
+			mcpgo.WithString("id", mcpgo.Description("Document id.")),
+			mcpgo.WithString("name", mcpgo.Description("Document name (used when id is omitted).")),
+			mcpgo.WithString("project_id", mcpgo.Description("Project scope for name-keyed lookups.")),
+		)
+		s.mcp.AddTool(get, s.wrapperGet(kind))
+	}
 
-	get := mcpgo.NewTool(kind+"_get",
-		mcpgo.WithDescription(fmt.Sprintf("Get a %s document by id (preferred) or name.", kind)),
-		mcpgo.WithString("id", mcpgo.Description("Document id.")),
-		mcpgo.WithString("name", mcpgo.Description("Document name (used when id is omitted).")),
-		mcpgo.WithString("project_id", mcpgo.Description("Project scope for name-keyed lookups.")),
-	)
-	s.mcp.AddTool(get, s.wrapperGet(kind))
-
-	list := mcpgo.NewTool(kind+"_list",
-		mcpgo.WithDescription(fmt.Sprintf("List %s documents in the caller's workspaces.", kind)),
-		mcpgo.WithString("scope", mcpgo.Description("Filter by scope.")),
-		mcpgo.WithString("project_id", mcpgo.Description("Filter by project.")),
-		mcpgo.WithString("contract_binding", mcpgo.Description("Filter by contract_binding.")),
-		mcpgo.WithArray("tags", mcpgo.Description("Filter by tags (any-of)."),
-			mcpgo.Items(map[string]any{"type": "string"})),
-		mcpgo.WithNumber("limit", mcpgo.Description("Max rows to return.")),
-	)
-	s.mcp.AddTool(list, s.wrapperList(kind))
-
-	update := mcpgo.NewTool(kind+"_update",
-		mcpgo.WithDescription(fmt.Sprintf("Patch a %s document. Type is pinned; immutable fields rejected.", kind)),
-		mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Document id.")),
-		mcpgo.WithString("body", mcpgo.Description("Markdown body.")),
-		mcpgo.WithString("structured", mcpgo.Description("Type-specific JSON payload.")),
-		mcpgo.WithArray("tags", mcpgo.Description("Replace the tag set."),
-			mcpgo.Items(map[string]any{"type": "string"})),
-		mcpgo.WithString("status", mcpgo.Description("active | archived")),
-		mcpgo.WithString("contract_binding", mcpgo.Description("Document id of an active type=contract row.")),
-	)
-	s.mcp.AddTool(update, s.handleDocumentUpdate)
-
-	del := mcpgo.NewTool(kind+"_delete",
-		mcpgo.WithDescription(fmt.Sprintf("Archive (default) or hard-delete a %s document.", kind)),
-		mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Document id.")),
-		mcpgo.WithString("mode", mcpgo.Description("archive (default) | hard")),
-	)
-	s.mcp.AddTool(del, s.handleDocumentDelete)
-
-	search := mcpgo.NewTool(kind+"_search",
-		mcpgo.WithDescription(fmt.Sprintf("Search %s documents in the caller's workspaces.", kind)),
-		mcpgo.WithString("query", mcpgo.Description("Free-text query.")),
-		mcpgo.WithString("scope", mcpgo.Description("Filter by scope.")),
-		mcpgo.WithString("project_id", mcpgo.Description("Filter by project.")),
-		mcpgo.WithString("contract_binding", mcpgo.Description("Filter by contract_binding.")),
-		mcpgo.WithArray("tags", mcpgo.Description("Filter by tags (any-of)."),
-			mcpgo.Items(map[string]any{"type": "string"})),
-		mcpgo.WithNumber("top_k", mcpgo.Description("Max rows to return.")),
-	)
-	s.mcp.AddTool(search, s.wrapperSearch(kind))
+	if wrapperKindHasList(kind) {
+		list := mcpgo.NewTool(kind+"_list",
+			mcpgo.WithDescription(fmt.Sprintf("List %s documents in the caller's workspaces.", kind)),
+			mcpgo.WithString("scope", mcpgo.Description("Filter by scope.")),
+			mcpgo.WithString("project_id", mcpgo.Description("Filter by project.")),
+			mcpgo.WithString("contract_binding", mcpgo.Description("Filter by contract_binding.")),
+			mcpgo.WithArray("tags", mcpgo.Description("Filter by tags (any-of)."),
+				mcpgo.Items(map[string]any{"type": "string"})),
+			mcpgo.WithNumber("limit", mcpgo.Description("Max rows to return.")),
+		)
+		s.mcp.AddTool(list, s.wrapperList(kind))
+	}
 }
 
 // wrapperCreate returns a handler that pins the type, runs per-type

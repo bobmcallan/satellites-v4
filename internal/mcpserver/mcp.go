@@ -279,33 +279,6 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		)
 		s.mcp.AddTool(getTool, s.handleDocumentGet)
 
-		createTool := mcpgo.NewTool("document_create",
-			mcpgo.WithDescription("Create a new document. Workspace is resolved from the caller; project_id is required when scope=project and forbidden when scope=system. type=configuration (story_d371f155) accepts scope=project or scope=system (story_764726d3 — configseed ships a system-default Configuration operators can clone) and requires a structured payload of shape {\"contract_refs\":[...],\"skill_refs\":[...],\"principle_refs\":[...]} whose ids must resolve to active documents of the matching type in the same workspace."),
-			mcpgo.WithString("type", mcpgo.Required(), mcpgo.Description("artifact | contract | skill | principle | reviewer | agent | role | configuration")),
-			mcpgo.WithString("scope", mcpgo.Required(), mcpgo.Description("system | project | workspace (workspace only valid for type=role)")),
-			mcpgo.WithString("name", mcpgo.Required(), mcpgo.Description("Document name.")),
-			mcpgo.WithString("project_id", mcpgo.Description("Project scope. Required when scope=project; rejected when scope=system.")),
-			mcpgo.WithString("body", mcpgo.Description("Markdown body.")),
-			mcpgo.WithString("structured", mcpgo.Description("Type-specific JSON payload (raw JSON string).")),
-			mcpgo.WithString("contract_binding", mcpgo.Description("Document id of an active type=contract row. Required for type=skill or type=reviewer; forbidden otherwise.")),
-			mcpgo.WithArray("tags", mcpgo.Description("Free-form tags."),
-				mcpgo.Items(map[string]any{"type": "string"})),
-			mcpgo.WithString("status", mcpgo.Description("active (default) | archived")),
-		)
-		s.mcp.AddTool(createTool, s.handleDocumentCreate)
-
-		updateTool := mcpgo.NewTool("document_update",
-			mcpgo.WithDescription("Patch the mutable fields of a document. Immutable fields (id, workspace_id, project_id, type, scope, name) are rejected."),
-			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Document id (doc_<8hex>).")),
-			mcpgo.WithString("body", mcpgo.Description("Markdown body.")),
-			mcpgo.WithString("structured", mcpgo.Description("Type-specific JSON payload (raw JSON string).")),
-			mcpgo.WithArray("tags", mcpgo.Description("Replace the tag set."),
-				mcpgo.Items(map[string]any{"type": "string"})),
-			mcpgo.WithString("status", mcpgo.Description("active | archived")),
-			mcpgo.WithString("contract_binding", mcpgo.Description("Document id of an active type=contract row.")),
-		)
-		s.mcp.AddTool(updateTool, s.handleDocumentUpdate)
-
 		listTool := mcpgo.NewTool("document_list",
 			mcpgo.WithDescription("List documents in the caller's workspaces, filtered by type/scope/tags/contract_binding/project_id. Workspace scoping is enforced at the handler."),
 			mcpgo.WithString("type", mcpgo.Description("Filter by type.")),
@@ -318,27 +291,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		)
 		s.mcp.AddTool(listTool, s.handleDocumentList)
 
-		deleteTool := mcpgo.NewTool("document_delete",
-			mcpgo.WithDescription("Archive (default) or hard-delete a document."),
-			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Document id.")),
-			mcpgo.WithString("mode", mcpgo.Description("archive (default) | hard")),
-		)
-		s.mcp.AddTool(deleteTool, s.handleDocumentDelete)
-
 		s.registerDocumentWrappers()
-
-		searchTool := mcpgo.NewTool("document_search",
-			mcpgo.WithDescription("Search documents in the caller's workspaces. Combines structured filters (type/scope/tags/contract_binding/project_id) with a case-insensitive substring match on name + body when query is supplied. Empty query + at least one filter returns an updated_at DESC list. Workspace scoping is enforced at the handler."),
-			mcpgo.WithString("query", mcpgo.Description("Free-text query; case-insensitive substring on name + body.")),
-			mcpgo.WithString("type", mcpgo.Description("Filter by type.")),
-			mcpgo.WithString("scope", mcpgo.Description("Filter by scope.")),
-			mcpgo.WithString("project_id", mcpgo.Description("Filter by project.")),
-			mcpgo.WithString("contract_binding", mcpgo.Description("Filter by contract_binding.")),
-			mcpgo.WithArray("tags", mcpgo.Description("Filter by tags (any-of)."),
-				mcpgo.Items(map[string]any{"type": "string"})),
-			mcpgo.WithNumber("top_k", mcpgo.Description("Max rows to return (default 20, capped at 100).")),
-		)
-		s.mcp.AddTool(searchTool, s.handleDocumentSearch)
 	}
 
 	if s.projects != nil {
@@ -592,51 +545,14 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		)
 		s.mcp.AddTool(kvListTool, s.handleKVList)
 
-		agentComposeTool := mcpgo.NewTool("agent_compose",
-			mcpgo.WithDescription("Create a type=agent document carrying explicit skill_refs + permission_patterns. When ephemeral=true the agent is scoped to story_id and the project_status sweeper archives it after SATELLITES_EPHEMERAL_AGENT_RETENTION_HOURS once the story reaches a terminal state. Writes a kind:agent-compose ledger row capturing {agent_id, name, skill_refs, permission_patterns, story_id, ephemeral, reason} in Structured. story_b19260d8."),
-			mcpgo.WithString("name", mcpgo.Required(), mcpgo.Description("Agent document name. Must be unique within scope.")),
-			mcpgo.WithString("project_id", mcpgo.Description("Project for the agent. Defaults to the owning story's project when story_id is supplied; otherwise scope=system.")),
-			mcpgo.WithArray("skill_refs", mcpgo.Description("Document ids of active type=skill rows the agent pulls."),
-				mcpgo.Items(map[string]any{"type": "string"})),
-			mcpgo.WithArray("permission_patterns", mcpgo.Description("Action_claim patterns this agent grants when allocated to a CI (e.g. Edit:internal/portal/**)."),
-				mcpgo.Items(map[string]any{"type": "string"})),
-			mcpgo.WithBoolean("ephemeral", mcpgo.Description("When true, the agent is story-scoped and the sweeper archives it on story completion. Requires story_id.")),
-			mcpgo.WithString("story_id", mcpgo.Description("Owning story id. Required when ephemeral=true.")),
-			mcpgo.WithString("reason", mcpgo.Description("Orchestrator's rationale; recorded on the kind:agent-compose ledger row + agent body.")),
-		)
-		s.mcp.AddTool(agentComposeTool, s.handleAgentCompose)
-
-		agentSummaryTool := mcpgo.NewTool("agent_ephemeral_summary",
-			mcpgo.WithDescription("Per-project hint surface (story_b19260d8 AC #7) — returns the count of active ephemeral type=agent documents and groups them by their sorted skill_refs so operators can spot promotion candidates: 'N agents created with skills X+Y → promote to canonical?'. Optional project_id; omit for an all-projects summary."),
-			mcpgo.WithString("project_id", mcpgo.Description("Project to scope the summary to. Omit for all visible projects.")),
-		)
-		s.mcp.AddTool(agentSummaryTool, s.handleAgentEphemeralSummary)
-
-		// sty_3191fbfc: agent api-key mint/list/delete. Disabled when
-		// no APIKeyStore is wired (early-test fixtures); production
-		// wires SurrealAgentAPIKeyStore in cmd/satellites/main.go.
-		if s.apiKeys != nil {
-			apiKeyCreateTool := mcpgo.NewTool("agent_apikey_create",
-				mcpgo.WithDescription("Mint a new agent api-key. Returns the cleartext `key` once — subsequent agent_apikey_list calls return only metadata. The cleartext is hashed (SHA-256 with a per-row salt) at rest. The caller becomes the owner; AuthMiddleware Bearer requests carrying the cleartext resolve as the owner identity. story_3191fbfc."),
-				mcpgo.WithString("name", mcpgo.Required(), mcpgo.Description("Operator-friendly label, e.g. 'agent-laptop' or 'sty_ccb35588-dogfood'.")),
-				mcpgo.WithString("project_id", mcpgo.Description("Optional project scope. When set, the caller must be a member of the project's workspace. Future enforcement may scope the resulting Bearer to project-level operations only.")),
-				mcpgo.WithString("expires_at", mcpgo.Description("Optional RFC3339 expiry. When set, AuthMiddleware rejects the key after this instant. Omit for keys that never expire.")),
-			)
-			s.mcp.AddTool(apiKeyCreateTool, s.handleAgentAPIKeyCreate)
-
-			apiKeyListTool := mcpgo.NewTool("agent_apikey_list",
-				mcpgo.WithDescription("List the caller's agent api-keys. Global admins see every key. The cleartext key is NEVER returned; only id, prefix, name, owner, project, status, last_used_at, expires_at, and created_at. story_3191fbfc."),
-				mcpgo.WithString("project_id", mcpgo.Description("Optional project filter. Empty = all projects the caller owns keys for.")),
-				mcpgo.WithBoolean("include_archived", mcpgo.Description("Include status=archived rows. Default false — only active keys are returned.")),
-			)
-			s.mcp.AddTool(apiKeyListTool, s.handleAgentAPIKeyList)
-
-			apiKeyDeleteTool := mcpgo.NewTool("agent_apikey_delete",
-				mcpgo.WithDescription("Soft-delete an agent api-key by flipping its status to archived. The row remains queryable by id so audit ledger rows referencing apikey:<id> still resolve. Cross-owner deletes are rejected unless the caller is a global admin. Writes a kind:agent-apikey-archived ledger row. story_3191fbfc."),
-				mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("api-key id (apk_<8hex>) to archive.")),
-			)
-			s.mcp.AddTool(apiKeyDeleteTool, s.handleAgentAPIKeyDelete)
-		}
+		// agent_compose, agent_ephemeral_summary, agent_apikey_* MCP
+		// registrations removed in sty_4db0e025 slice B1 — these verbs
+		// are now reachable through /api/v1 + the satellites-client CLI
+		// only. Handler bodies remain (handleAgentCompose,
+		// handleAgentEphemeralSummary, handleAgentAPIKey* in
+		// agent_compose.go / agent_apikey_handlers.go) so the typed
+		// methods on *client.Client continue to back the HTTP routes
+		// and CLI verbs.
 
 		if s.sessions != nil {
 			// task_add (sty_a427368d): mint one task at status=published

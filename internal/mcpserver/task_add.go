@@ -30,25 +30,7 @@ func (s *Server) handleTaskAdd(ctx context.Context, req mcpgo.CallToolRequest) (
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
-
-	in := client.TaskAddInput{
-		AgentID:     strings.TrimSpace(req.GetString("agent_id", "")),
-		Prompt:      req.GetString("prompt", ""),
-		StoryID:     strings.TrimSpace(req.GetString("story_id", "")),
-		Kind:        strings.TrimSpace(req.GetString("kind", "")),
-		Action:      strings.TrimSpace(req.GetString("action", "")),
-		Priority:    strings.TrimSpace(req.GetString("priority", "")),
-		Memberships: memberships,
-		Now:         s.nowUTC(),
-		Resolve: client.TaskAddResolveDeps{
-			CallerActiveProjectID: func(ctx context.Context, c client.Caller) string {
-				return s.callerActiveProjectID(ctx, auth.CallerIdentity{UserID: c.UserID, Email: c.Email})
-			},
-			ResolveStoryProjectID:     s.resolveStoryProjectID,
-			ResolveProjectWorkspaceID: s.resolveProjectWorkspaceID,
-			DefaultProjectID:          s.defaultProjectID,
-		},
-	}
+	in := s.buildTaskAddInput(req, memberships)
 	out, err := s.cli().TaskAdd(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, in)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -69,6 +51,31 @@ func (s *Server) handleTaskAdd(ctx context.Context, req mcpgo.CallToolRequest) (
 		Int64("duration_ms", time.Since(start).Milliseconds()).
 		Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+// buildTaskAddInput assembles the typed TaskAdd input from the wire
+// request. Splits out of handleTaskAdd so the handler stays inside the
+// adapter line-budget; the Resolve closures keep the wire-layer's
+// session + URL context plumbing in mcpserver.
+func (s *Server) buildTaskAddInput(req mcpgo.CallToolRequest, memberships []string) client.TaskAddInput {
+	return client.TaskAddInput{
+		AgentID:     strings.TrimSpace(req.GetString("agent_id", "")),
+		Prompt:      req.GetString("prompt", ""),
+		StoryID:     strings.TrimSpace(req.GetString("story_id", "")),
+		Kind:        strings.TrimSpace(req.GetString("kind", "")),
+		Action:      strings.TrimSpace(req.GetString("action", "")),
+		Priority:    strings.TrimSpace(req.GetString("priority", "")),
+		Memberships: memberships,
+		Now:         s.nowUTC(),
+		Resolve: client.TaskAddResolveDeps{
+			CallerActiveProjectID: func(ctx context.Context, c client.Caller) string {
+				return s.callerActiveProjectID(ctx, auth.CallerIdentity{UserID: c.UserID, Email: c.Email})
+			},
+			ResolveStoryProjectID:     s.resolveStoryProjectID,
+			ResolveProjectWorkspaceID: s.resolveProjectWorkspaceID,
+			DefaultProjectID:          s.defaultProjectID,
+		},
+	}
 }
 
 // callerActiveProjectID returns the project id stamped on the caller's

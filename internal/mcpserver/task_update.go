@@ -14,6 +14,7 @@ import (
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	"github.com/ternarybob/arbor"
 
 	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/client"
@@ -30,7 +31,26 @@ func (s *Server) handleTaskUpdate(ctx context.Context, req mcpgo.CallToolRequest
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	in := client.TaskUpdateInput{
+	in := s.buildTaskUpdateInput(req, taskID, memberships)
+	out, err := s.cli().TaskUpdate(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, in)
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	logTaskUpdate(s.logger, out, start)
+	body, _ := json.Marshal(map[string]any{
+		"task_id":             out.TaskID,
+		"status":              out.Status,
+		"outcome":             out.Outcome,
+		"evidence_ledger_ids": out.EvidenceLedgerIDs,
+	})
+	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+// buildTaskUpdateInput assembles the typed TaskUpdate input from the
+// wire request. Lifts the wire-arg fan-out out of handleTaskUpdate so
+// the adapter stays inside the line-budget.
+func (s *Server) buildTaskUpdateInput(req mcpgo.CallToolRequest, taskID string, memberships []string) client.TaskUpdateInput {
+	return client.TaskUpdateInput{
 		ID:                taskID,
 		Status:            strings.TrimSpace(req.GetString("status", "")),
 		Outcome:           req.GetString("outcome", task.OutcomeSuccess),
@@ -38,17 +58,13 @@ func (s *Server) handleTaskUpdate(ctx context.Context, req mcpgo.CallToolRequest
 		Memberships:       memberships,
 		Now:               s.nowUTC(),
 	}
-	out, err := s.cli().TaskUpdate(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, in)
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	body, _ := json.Marshal(map[string]any{
-		"task_id":             out.TaskID,
-		"status":              out.Status,
-		"outcome":             out.Outcome,
-		"evidence_ledger_ids": out.EvidenceLedgerIDs,
-	})
-	s.logger.Info().
+}
+
+// logTaskUpdate emits the task_update audit row at the wire layer.
+// Splits out of handleTaskUpdate so the handler stays inside the
+// adapter line-budget; the row shape is unchanged.
+func logTaskUpdate(logger arbor.ILogger, out client.TaskUpdateOutput, start time.Time) {
+	logger.Info().
 		Str("method", "tools/call").
 		Str("tool", "task_update").
 		Str("status", out.Status).
@@ -56,7 +72,6 @@ func (s *Server) handleTaskUpdate(ctx context.Context, req mcpgo.CallToolRequest
 		Str("outcome", out.Outcome).
 		Int64("duration_ms", time.Since(start).Milliseconds()).
 		Msg("mcp tool call")
-	return mcpgo.NewToolResultText(string(body)), nil
 }
 
 // parseStringArray decodes a JSON array argument as a string slice.

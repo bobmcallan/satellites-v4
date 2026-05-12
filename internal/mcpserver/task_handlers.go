@@ -14,31 +14,11 @@ import (
 
 // handleTaskPlan implements task_plan: write a task at status=planned —
 // the agent's drafting state. Subscribers do not see planned rows.
-// Thin forwarder per cli-primary order:07a-layer-2 (sty_df1cb227).
+// Thin forwarder to client.TaskPlan.
 func (s *Server) handleTaskPlan(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	args := req.GetArguments()
-	expectedStr := getString(args, "expected_duration")
-	var expected time.Duration
-	if expectedStr != "" {
-		if d, err := time.ParseDuration(expectedStr); err == nil {
-			expected = d
-		}
-	}
-	in := client.TaskPlanInput{
-		Origin:           getString(args, "origin"),
-		WorkspaceID:      getString(args, "workspace_id"),
-		ProjectID:        getString(args, "project_id"),
-		Kind:             getString(args, "kind"),
-		AgentID:          getString(args, "agent_id"),
-		ParentTaskID:     getString(args, "parent_task_id"),
-		PriorTaskID:      getString(args, "prior_task_id"),
-		Priority:         getString(args, "priority"),
-		Trigger:          []byte(getString(args, "trigger")),
-		ExpectedDuration: expected,
-		Memberships:      memberships,
-	}
+	in := buildTaskPlanInput(req, memberships)
 	out, err := s.cli().TaskPlan(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, in)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
@@ -51,6 +31,32 @@ func (s *Server) handleTaskPlan(ctx context.Context, req mcpgo.CallToolRequest) 
 		"priority":       out.Priority,
 		"origin":         out.Origin,
 	})
+}
+
+// buildTaskPlanInput lifts the wire-arg fan-out out of handleTaskPlan
+// so the adapter stays inside the line-budget. expected_duration is
+// the one arg that needs parsing — bad input degrades to "no hint".
+func buildTaskPlanInput(req mcpgo.CallToolRequest, memberships []string) client.TaskPlanInput {
+	args := req.GetArguments()
+	var expected time.Duration
+	if raw := getString(args, "expected_duration"); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil {
+			expected = d
+		}
+	}
+	return client.TaskPlanInput{
+		Origin:           getString(args, "origin"),
+		WorkspaceID:      getString(args, "workspace_id"),
+		ProjectID:        getString(args, "project_id"),
+		Kind:             getString(args, "kind"),
+		AgentID:          getString(args, "agent_id"),
+		ParentTaskID:     getString(args, "parent_task_id"),
+		PriorTaskID:      getString(args, "prior_task_id"),
+		Priority:         getString(args, "priority"),
+		Trigger:          []byte(getString(args, "trigger")),
+		ExpectedDuration: expected,
+		Memberships:      memberships,
+	}
 }
 
 // handleTaskGet implements task_get with workspace scoping. Thin
@@ -69,30 +75,29 @@ func (s *Server) handleTaskGet(ctx context.Context, req mcpgo.CallToolRequest) (
 	return jsonResult(t)
 }
 
-// handleTaskList implements task_list. Out of Slice-A scope — kept
-// here unmodified (Slice B/C territory). Behaviour-parity proof.
+// handleTaskList implements task_list. Thin forwarder to
+// client.TaskList — filter parsing lives at the wire boundary, the
+// scoped store query lives on the typed surface.
 func (s *Server) handleTaskList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	if s.tasks == nil {
-		return mcpgo.NewToolResultError("task_list unavailable"), nil
-	}
 	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	args := req.GetArguments()
-	opts := task.ListOptions{
-		Origin:    getString(args, "origin"),
-		Status:    getString(args, "status"),
-		Priority:  getString(args, "priority"),
-		ClaimedBy: getString(args, "claimed_by"),
-		StoryID:   getString(args, "story_id"),
-		Kind:      getString(args, "kind"),
+	in := client.TaskListInput{
+		Origin:      getString(args, "origin"),
+		Status:      getString(args, "status"),
+		Priority:    getString(args, "priority"),
+		ClaimedBy:   getString(args, "claimed_by"),
+		StoryID:     getString(args, "story_id"),
+		Kind:        getString(args, "kind"),
+		Memberships: memberships,
 	}
 	if v, ok := args["include_archived"].(bool); ok {
-		opts.IncludeArchived = v
+		in.IncludeArchived = v
 	}
 	if v, ok := args["limit"].(float64); ok {
-		opts.Limit = int(v)
+		in.Limit = int(v)
 	}
-	rows, err := s.tasks.List(ctx, opts, memberships)
+	rows, err := s.cli().TaskList(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, in)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -106,9 +111,8 @@ func (s *Server) handleTaskClaim(ctx context.Context, req mcpgo.CallToolRequest)
 	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	args := req.GetArguments()
-	workerID := getString(args, "worker_id")
 	in := client.TaskClaimInput{
-		WorkerID:    workerID,
+		WorkerID:    getString(args, "worker_id"),
 		Memberships: memberships,
 		Now:         time.Now().UTC(),
 	}

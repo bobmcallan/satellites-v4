@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satellites/internal/agentprocess"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
 )
@@ -66,7 +67,7 @@ func TestStoryGet_HappyPath(t *testing.T) {
 		t.Fatalf("expected success, got error: %s", firstText(res))
 	}
 
-	var view storyView
+	var view client.StoryGetOutput
 	if err := json.Unmarshal([]byte(firstText(res)), &view); err != nil {
 		t.Fatalf("unmarshal: %v; body=%s", err, firstText(res))
 	}

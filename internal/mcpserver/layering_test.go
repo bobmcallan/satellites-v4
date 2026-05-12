@@ -114,16 +114,6 @@ var legacyAllowlist = map[string]map[string]struct{}{
 	"portal_replicate.go": {
 		"github.com/bobmcallan/satellites/internal/portalreplicate": {},
 	},
-	// story_get.go — story orientation bundle; assembles agent
-	// process + ledger + project + story. TODO(sty_4db0e025):
-	// converge onto client.StoryGet (already exists post-07b) +
-	// fold the orientation helpers into the client tier.
-	"story_get.go": {
-		"github.com/bobmcallan/satellites/internal/agentprocess": {},
-		"github.com/bobmcallan/satellites/internal/ledger":       {},
-		"github.com/bobmcallan/satellites/internal/project":      {},
-		"github.com/bobmcallan/satellites/internal/story":        {},
-	},
 	// wrappers.go — document type wrappers (principle_*, contract_*,
 	// skill_*, reviewer_*); fans out through the document type
 	// constants. TODO(sty_4db0e025): the wrappers themselves become

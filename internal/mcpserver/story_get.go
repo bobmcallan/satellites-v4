@@ -9,96 +9,52 @@
 // sty_48e38e83 merged the prior thin row-only `story_get` with the
 // orientation-bundle `story_context` verb. The CRUD-shaped name wins;
 // the orientation-bundle behaviour is what callers want.
+//
+// sty_4db0e025 slice A9 converged this handler onto the typed
+// *client.Client surface: the orientation-bundle assembly now lives in
+// client.StoryGet (internal/client/story.go), and this file is a thin
+// wire adapter — it unmarshals the JSON-RPC args, calls one typed
+// method, and shapes the response. Per pr_mcp_cli_shared_path,
+// transport handlers do not import substrate domain packages directly.
 package mcpserver
 
 import (
 	"context"
-	"encoding/json"
-	"github.com/bobmcallan/satellites/internal/auth"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/bobmcallan/satellites/internal/agentprocess"
+	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/client"
-	"github.com/bobmcallan/satellites/internal/ledger"
-	"github.com/bobmcallan/satellites/internal/project"
-	"github.com/bobmcallan/satellites/internal/story"
 )
 
-// storyView is the JSON-marshalled response shape for story_get. Each
-// field is independently optional so that a missing project / template
-// / ledger / docs store degrades a single section instead of failing
-// the whole call.
-type storyView struct {
-	Story          story.Story             `json:"story"`
-	Project        *project.Project        `json:"project,omitempty"`
-	RecentEvidence []ledger.LedgerEntry    `json:"recent_evidence,omitempty"`
-	AgentProcess   string                  `json:"agent_process,omitempty"`
-	Template       *story.Template         `json:"template,omitempty"`
-	IntentBody     string                  `json:"intent_body,omitempty"`
-	Principles     []client.PrincipleEntry `json:"principles,omitempty"`
-}
-
 // handleStoryGet implements `story_get`. Workspace-scoped via
-// memberships; cross-workspace stories return story_not_found.
+// memberships; cross-workspace stories return story_not_found. Thin
+// forwarder to client.StoryGet.
 func (s *Server) handleStoryGet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	if s.stories == nil {
-		return mcpgo.NewToolResultError("story_get unavailable: story store not configured"), nil
-	}
 	caller, _ := auth.UserFrom(ctx)
 	id, err := req.RequireString("id")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	st, err := s.stories.GetByID(ctx, id, memberships)
+	out, err := s.cli().StoryGet(ctx, client.Caller{
+		UserID:      caller.UserID,
+		Email:       caller.Email,
+		Memberships: memberships,
+	}, client.StoryGetInput{
+		ID:          id,
+		Memberships: memberships,
+	})
 	if err != nil {
 		return mcpgo.NewToolResultError("story not found"), nil
 	}
-	if _, err := s.resolveProjectID(ctx, st.ProjectID, caller, memberships); err != nil {
-		return mcpgo.NewToolResultError("story not found"), nil
-	}
-
-	view := storyView{Story: st}
-
-	if s.projects != nil {
-		if p, err := s.projects.GetByID(ctx, st.ProjectID, memberships); err == nil {
-			view.Project = &p
-			bundle := s.cli().BuildOrientation(ctx, p)
-			view.IntentBody = bundle.IntentBody
-			view.Principles = bundle.Principles
-		}
-	}
-
-	if s.ledger != nil {
-		entries, err := s.ledger.List(ctx, st.ProjectID, ledger.ListOptions{
-			StoryID: st.ID,
-			Limit:   recentEvidenceLimit,
-		}, memberships)
-		if err == nil && len(entries) > 0 {
-			view.RecentEvidence = entries
-		}
-	}
-
-	if s.docs != nil {
-		view.AgentProcess = agentprocess.Resolve(ctx, s.docs, st.ProjectID, nil)
-	}
-
-	if t, ok := s.loadStoryTemplate(ctx, st.Category); ok {
-		view.Template = &t
-	}
-
-	body, _ := json.Marshal(view)
 	s.logger.Info().
 		Str("method", "tools/call").
 		Str("tool", "story_get").
 		Str("story_id", id).
 		Int64("duration_ms", time.Since(start).Milliseconds()).
 		Msg("mcp tool call")
-	return mcpgo.NewToolResultText(string(body)), nil
+	return jsonResult(out)
 }
-
-// recentEvidenceLimit caps the recent_evidence section.
-const recentEvidenceLimit = 10

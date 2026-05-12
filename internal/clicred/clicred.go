@@ -1,11 +1,11 @@
 // Package clicred resolves the bearer token for `satellites-client`
 // invocations. Resolution chain (highest priority first):
 //
-//	1. --token <t> flag
-//	2. SATELLITES_TOKEN env var
-//	3. bin/satellites-client.toml (loaded by internal/config.LoadClient;
-//	   passed in via ResolveWithTOML)
-//	4. ~/.satellites/credentials.json (per-server keyed)
+//  1. --token <t> flag
+//  2. SATELLITES_TOKEN env var
+//  3. bin/satellites-client.toml (loaded by internal/config.LoadClient;
+//     passed in via ResolveWithTOML)
+//  4. ~/.satellites/credentials.json (per-server keyed)
 //
 // Per docs/cli-primary-design.md §3 ("Credential resolution").
 //
@@ -85,6 +85,41 @@ func ResolveWithTOML(flagToken, tomlToken, server string) (string, error) {
 		return "", ErrNoToken
 	}
 	return tok, nil
+}
+
+// WriteToken upserts the bearer for the given server into the
+// credentials file at path. Reads the existing map (preserving other
+// servers' entries) if present, then writes the merged map back with
+// 0o600 perms. Creates the parent directory at 0o700 if missing.
+// Idempotent — writing the same bearer twice is observable as the
+// same file contents.
+func WriteToken(path, server, bearer string) error {
+	if server == "" {
+		return errors.New("WriteToken: server must not be empty")
+	}
+	if bearer == "" {
+		return errors.New("WriteToken: bearer must not be empty")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("mkdir parent: %w", err)
+	}
+	creds := map[string]string{}
+	if raw, err := os.ReadFile(path); err == nil {
+		if jerr := json.Unmarshal(raw, &creds); jerr != nil {
+			return fmt.Errorf("parse %s: %w", path, jerr)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	creds[server] = bearer
+	encoded, err := json.MarshalIndent(creds, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal credentials: %w", err)
+	}
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
 }
 
 // readCredentialsFile reads the json file at path and returns the

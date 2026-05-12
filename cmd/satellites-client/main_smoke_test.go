@@ -133,6 +133,7 @@ func TestNounGroupsRegistered(t *testing.T) {
 		"session":   2,
 		"system":    1,
 		"portal":    1,
+		"auth":      1,
 	}
 	root := newRootCmd()
 	for nounName, wantVerbs := range expected {

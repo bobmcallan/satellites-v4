@@ -19,8 +19,8 @@ import (
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
 	"github.com/bobmcallan/satellites/internal/cliconfig"
-	"github.com/bobmcallan/satellites/internal/cliexit"
 	"github.com/bobmcallan/satellites/internal/clicred"
+	"github.com/bobmcallan/satellites/internal/cliexit"
 	"github.com/bobmcallan/satellites/internal/cliio"
 	"github.com/bobmcallan/satellites/internal/cliremote"
 	"github.com/bobmcallan/satellites/internal/config"
@@ -41,19 +41,19 @@ var remote *cliremote.Client
 // docs/cli-primary-design.md §3. All flags are persistent on the
 // root command — every subcommand inherits them.
 type PersistentFlags struct {
-	JSON     bool
-	Compact  bool
-	Quiet    bool
-	DryRun   bool
-	Stdin    bool
-	Yes      bool
-	NoInput  bool
-	NoCache  bool
-	NoColor  bool
-	Select   string
-	Server   string
-	Token    string
-	Config   string
+	JSON    bool
+	Compact bool
+	Quiet   bool
+	DryRun  bool
+	Stdin   bool
+	Yes     bool
+	NoInput bool
+	NoCache bool
+	NoColor bool
+	Select  string
+	Server  string
+	Token   string
+	Config  string
 }
 
 // pf is the package-level holder Cobra binds the persistent-flag

@@ -28,6 +28,7 @@ var satellitesClientNouns = []func(*cobra.Command){
 	registerSessionNoun,
 	registerSystemNoun,
 	registerPortalNoun,
+	registerAuthNoun,
 }
 
 // nounStub builds a noun group cobra.Command with the given short
@@ -69,8 +70,8 @@ func registerStoryNoun(root *cobra.Command) {
 func registerTaskNoun(root *cobra.Command) {
 	noun := nounStub("task", "Tasks — the dispatch unit.")
 	noun.AddCommand(
-		newTaskAddCmd(),  // order:05
-		newTaskGetCmd(),  // order:04
+		newTaskAddCmd(), // order:05
+		newTaskGetCmd(), // order:04
 		verbStub("list", "task list", "List tasks."),
 		newTaskClaimCmd(),  // order:05
 		newTaskRunCmd(),    // sty_3e27a3f5 — orchestrator-invoked dispatch.

@@ -26,10 +26,11 @@ import (
 	"github.com/bobmcallan/satellites/internal/config"
 )
 
-// DefaultServer is the canonical satellites-server URL the CLI
+// DefaultServer is the canonical satellites-server base URL the CLI
 // defaults to when the operator does not set --server. Matches the
-// pprod deploy URL.
-const DefaultServer = "https://satellites-pprod.fly.dev/mcp"
+// pprod deploy URL. internal/cliremote appends "/api/v1/<noun>/<verb>"
+// at call time (sty_73207fc8 — order:07b).
+const DefaultServer = "https://satellites-pprod.fly.dev"
 
 // remote is the shared cliremote client used by all read verbs in
 // orders 04+. PreRunE on the root constructs it lazily — verbs that
@@ -153,7 +154,7 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().BoolVar(&pf.NoCache, "no-cache", false, "Bypass any client-side cache (reserved).")
 	root.PersistentFlags().BoolVar(&pf.NoColor, "no-color", false, "Strip ANSI escape codes from output.")
 	root.PersistentFlags().StringVar(&pf.Select, "select", "", "Project the output down to one field name.")
-	root.PersistentFlags().StringVar(&pf.Server, "server", "", "Override the canonical satellites-server URL.")
+	root.PersistentFlags().StringVar(&pf.Server, "server", "", "Override the satellites-server base URL (no /mcp or /api/v1 suffix).")
 	root.PersistentFlags().StringVar(&pf.Token, "token", "", "Override the bearer (otherwise SATELLITES_TOKEN / bin/satellites-client.toml / credentials.json).")
 	root.PersistentFlags().StringVar(&pf.Config, "config", "", "Path to satellites-client TOML config (else SATELLITES_CLIENT_CONFIG / bin/satellites-client.toml / XDG).")
 

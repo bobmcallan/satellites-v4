@@ -13,11 +13,10 @@ import (
 	"github.com/bobmcallan/satellites/internal/client"
 )
 
-// expectedRoutes lists the 20 verb routes the HTTP API surface
-// exposes after sty_068a6c46. The integration test in
-// tests/api/api_integration_test.go drives each against a live
-// satellites-server boot via testcontainers (AC-4); this smoke
-// test asserts that registration is complete and the mux is wired.
+// expectedRoutes lists the verb routes the HTTP API surface exposes.
+// sty_068a6c46 shipped 20; sty_73207fc8 added /api/v1/story/get to
+// close the parity gap (CLI's `story get` needs an HTTP route once
+// cliremote is HTTP-only). Total: 21.
 var expectedRoutes = []string{
 	"POST /api/v1/satellites/info",
 	"POST /api/v1/session/whoami",
@@ -36,18 +35,19 @@ var expectedRoutes = []string{
 	"POST /api/v1/task/update",
 	"POST /api/v1/task/add",
 	"POST /api/v1/task/plan",
+	"POST /api/v1/story/get",
 	"POST /api/v1/story/update-status",
 	"POST /api/v1/story/field-set",
 	"POST /api/v1/project/set",
 }
 
-// TestAPI_RoutesRegistered asserts the registrar attaches all 20
+// TestAPI_RoutesRegistered asserts the registrar attaches all 21
 // verb routes to the supplied mux. Routes that respond 404 indicate
 // missing registration; any other status (400/500/200) proves the
 // handler was hit.
 func TestAPI_RoutesRegistered(t *testing.T) {
-	if got := len(expectedRoutes); got != 20 {
-		t.Fatalf("expected 20 routes, got %d (update the slice as the verb set grows)", got)
+	if got := len(expectedRoutes); got != 21 {
+		t.Fatalf("expected 21 routes, got %d (update the slice as the verb set grows)", got)
 	}
 
 	reg := NewAPIRegistrar(client.New(client.Deps{StartedAt: time.Now().UTC()}))

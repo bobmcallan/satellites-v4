@@ -12,40 +12,30 @@ import (
 	"github.com/bobmcallan/satellites/internal/cliexit"
 )
 
-// stubMutateServer records the most recent envelope so tests can
-// assert what the CLI POSTed. Returns a fixed text payload as the
-// MCP result.
-func stubMutateServer(t *testing.T, replyText string) (*httptest.Server, *captured) {
+// stubMutateServer records the most recent request so tests can
+// assert what the CLI POSTed to the HTTP API. Returns the supplied
+// reply body verbatim (must be valid JSON) for any request.
+func stubMutateServer(t *testing.T, replyBody string) (*httptest.Server, *captured) {
 	t.Helper()
 	cap := &captured{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var rpc struct {
-			Method string         `json:"method"`
-			Params map[string]any `json:"params"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil {
+		var args map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&args); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		cap.method = rpc.Method
-		cap.params = rpc.Params
-		body := map[string]any{
-			"jsonrpc": "2.0",
-			"id":      1,
-			"result": map[string]any{
-				"content": []map[string]any{{"type": "text", "text": replyText}},
-				"isError": false,
-			},
-		}
-		_ = json.NewEncoder(w).Encode(body)
+		cap.path = r.URL.Path
+		cap.args = args
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(replyBody))
 	}))
 	t.Cleanup(srv.Close)
 	return srv, cap
 }
 
 type captured struct {
-	method string
-	params map[string]any
+	path string
+	args map[string]any
 }
 
 func TestWrites_TaskAddHappy(t *testing.T) {
@@ -59,7 +49,7 @@ func TestWrites_TaskAddHappy(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	args, _ := cap.params["arguments"].(map[string]any)
+	args := cap.args
 	if args["agent_id"] != "doc_x" {
 		t.Fatalf("agent_id not forwarded: %+v", args)
 	}
@@ -111,7 +101,7 @@ func TestWrites_TaskUpdateHappy(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	args, _ := cap.params["arguments"].(map[string]any)
+	args := cap.args
 	if args["id"] != "task_x" || args["status"] != "closed" {
 		t.Fatalf("forwarding wrong: %+v", args)
 	}
@@ -129,7 +119,7 @@ func TestWrites_LedgerAppendHappy(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	args, _ := cap.params["arguments"].(map[string]any)
+	args := cap.args
 	if args["project_id"] != "proj_x" || args["type"] != "evidence" || args["content"] != "ok" {
 		t.Fatalf("forwarding wrong: %+v", args)
 	}
@@ -147,7 +137,7 @@ func TestWrites_StoryUpdateStatusHappy(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	args, _ := cap.params["arguments"].(map[string]any)
+	args := cap.args
 	if args["status"] != "done" {
 		t.Fatalf("status not forwarded: %+v", args)
 	}
@@ -165,7 +155,7 @@ func TestWrites_ProjectSetHappy(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	args, _ := cap.params["arguments"].(map[string]any)
+	args := cap.args
 	if !strings.Contains(args["repo_url"].(string), "foo/bar") {
 		t.Fatalf("repo_url not forwarded: %+v", args)
 	}
@@ -174,8 +164,9 @@ func TestWrites_ProjectSetHappy(t *testing.T) {
 func TestWrites_NotFoundEnvelopeMapsTo3(t *testing.T) {
 	resetCLIState(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body := `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"task not found"}],"isError":true}}`
-		_, _ = w.Write([]byte(body))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"task not found"}`))
 	}))
 	t.Cleanup(srv.Close)
 	root := newRootCmd()

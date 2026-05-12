@@ -10,40 +10,30 @@ import (
 	"testing"
 
 	"github.com/bobmcallan/satellites/internal/cliexit"
+	"github.com/bobmcallan/satellites/internal/cliremote"
 )
 
-// stubMCPServer wraps an httptest.Server that responds to MCP
-// tools/call with the supplied per-tool payload map. The payload's
-// JSON-encoded form lands in result.content[0].text, matching
-// satellites-server's wire shape.
-func stubMCPServer(t *testing.T, payloads map[string]any) *httptest.Server {
+// stubHTTPAPIServer wraps an httptest.Server that responds to
+// POST /api/v1/<noun>/<verb> with the payload registered under
+// the corresponding tool name. The map key matches the toolName
+// passed by the cobra handlers (e.g. "task_get"); the stub maps
+// that to the path via cliremote.ToolNameToPath.
+func stubHTTPAPIServer(t *testing.T, payloads map[string]any) *httptest.Server {
 	t.Helper()
+	pathToPayload := map[string]any{}
+	for toolName, payload := range payloads {
+		pathToPayload["/api/v1"+cliremote.ToolNameToPath(toolName)] = payload
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var rpc struct {
-			Method string `json:"method"`
-			Params struct {
-				Name string `json:"name"`
-			} `json:"params"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		payload, ok := payloads[rpc.Params.Name]
+		payload, ok := pathToPayload[r.URL.Path]
 		if !ok {
-			http.Error(w, "unknown tool", http.StatusInternalServerError)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "no payload registered for " + r.URL.Path})
 			return
 		}
-		text, _ := json.Marshal(payload)
-		body := map[string]any{
-			"jsonrpc": "2.0",
-			"id":      1,
-			"result": map[string]any{
-				"content": []map[string]any{{"type": "text", "text": string(text)}},
-				"isError": false,
-			},
-		}
-		_ = json.NewEncoder(w).Encode(body)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(payload)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -61,7 +51,7 @@ func resetCLIState(t *testing.T) {
 
 func TestReads_InfoHappyPath(t *testing.T) {
 	resetCLIState(t)
-	srv := stubMCPServer(t, map[string]any{
+	srv := stubHTTPAPIServer(t, map[string]any{
 		"satellites_info": map[string]any{"version": "0.0.0", "user_id": "u_x"},
 	})
 	root := newRootCmd()
@@ -76,7 +66,7 @@ func TestReads_InfoHappyPath(t *testing.T) {
 
 func TestReads_TaskGetHappyPath(t *testing.T) {
 	resetCLIState(t)
-	srv := stubMCPServer(t, map[string]any{
+	srv := stubHTTPAPIServer(t, map[string]any{
 		"task_get": map[string]any{"id": "task_x", "kind": "work"},
 	})
 	root := newRootCmd()
@@ -120,7 +110,7 @@ func TestReads_LedgerListMissingProjectID(t *testing.T) {
 
 func TestReads_StoryGetCompactProjection(t *testing.T) {
 	resetCLIState(t)
-	srv := stubMCPServer(t, map[string]any{
+	srv := stubHTTPAPIServer(t, map[string]any{
 		"story_get": map[string]any{
 			"story": map[string]any{
 				"id":       "sty_x",
@@ -151,9 +141,9 @@ func TestReads_StoryGetCompactProjection(t *testing.T) {
 func TestReads_NotFoundEnvelopeMapsTo3(t *testing.T) {
 	resetCLIState(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body := `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"story not found"}],"isError":true}}`
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(body))
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"story not found"}`))
 	}))
 	t.Cleanup(srv.Close)
 	root := newRootCmd()

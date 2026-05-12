@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bobmcallan/satellites/internal/agentprocess"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
+	"github.com/bobmcallan/satellites/internal/project"
 	"github.com/bobmcallan/satellites/internal/story"
 )
 
@@ -129,6 +131,92 @@ func (c *Client) StoryFieldSet(ctx context.Context, caller Caller, in StoryField
 		now = time.Now().UTC()
 	}
 	return c.deps.Stories.SetField(ctx, in.ID, in.Field, in.Value, caller.UserID, now, in.Memberships)
+}
+
+// StoryGetInput identifies the story to retrieve. Memberships scope
+// the GetByID lookup; cross-workspace stories return errStoryNotFoundForUpdate.
+type StoryGetInput struct {
+	ID          string
+	Memberships []string
+}
+
+// StoryGetOutput is the orientation bundle the substrate returns on
+// story_get. Mirrors the shape mcpserver.handleStoryGet emitted before
+// the typed-method extraction (sty_73207fc8): the story row + owning
+// project + recent ledger evidence + resolved agent_process + category
+// template + project orientation (intent + principles).
+type StoryGetOutput struct {
+	Story          story.Story          `json:"story"`
+	Project        *project.Project     `json:"project,omitempty"`
+	RecentEvidence []ledger.LedgerEntry `json:"recent_evidence,omitempty"`
+	AgentProcess   string               `json:"agent_process,omitempty"`
+	Template       *story.Template      `json:"template,omitempty"`
+	IntentBody     string               `json:"intent_body,omitempty"`
+	Principles     []PrincipleEntry     `json:"principles,omitempty"`
+}
+
+// recentEvidenceLimit caps the recent_evidence section.
+const recentEvidenceLimit = 10
+
+// StoryGet returns the orientation bundle for the given story id.
+// Workspace-scoped via memberships; cross-workspace stories return
+// errStoryNotFoundForUpdate.
+//
+// Mirrors the prior mcpserver.handleStoryGet composer: pulls the story,
+// the owning project (with intent + principles via BuildOrientation),
+// recent ledger evidence, the resolved agent_process artifact, and
+// the category template when one exists. Missing dependencies degrade
+// individual sections; the call only fails when the story itself
+// can't be resolved.
+func (c *Client) StoryGet(ctx context.Context, caller Caller, in StoryGetInput) (StoryGetOutput, error) {
+	if c.deps.Stories == nil {
+		return StoryGetOutput{}, errStoryStoreNotConfigured
+	}
+	if in.ID == "" {
+		return StoryGetOutput{}, errors.New("id required")
+	}
+	memberships := in.Memberships
+	if memberships == nil {
+		memberships = c.ResolveCallerMemberships(ctx, caller)
+	}
+	st, err := c.deps.Stories.GetByID(ctx, in.ID, memberships)
+	if err != nil {
+		return StoryGetOutput{}, errStoryNotFoundForUpdate
+	}
+	if _, err := c.ResolveProjectID(ctx, st.ProjectID, "", caller, memberships); err != nil {
+		return StoryGetOutput{}, errStoryNotFoundForUpdate
+	}
+
+	out := StoryGetOutput{Story: st}
+
+	if c.deps.Projects != nil {
+		if p, err := c.deps.Projects.GetByID(ctx, st.ProjectID, memberships); err == nil {
+			out.Project = &p
+			bundle := c.BuildOrientation(ctx, p)
+			out.IntentBody = bundle.IntentBody
+			out.Principles = bundle.Principles
+		}
+	}
+
+	if c.deps.Ledger != nil {
+		entries, err := c.deps.Ledger.List(ctx, st.ProjectID, ledger.ListOptions{
+			StoryID: st.ID,
+			Limit:   recentEvidenceLimit,
+		}, memberships)
+		if err == nil && len(entries) > 0 {
+			out.RecentEvidence = entries
+		}
+	}
+
+	if c.deps.Documents != nil {
+		out.AgentProcess = agentprocess.Resolve(ctx, c.deps.Documents, st.ProjectID, nil)
+	}
+
+	if t, ok := c.loadStoryTemplate(ctx, st.Category); ok {
+		out.Template = &t
+	}
+
+	return out, nil
 }
 
 // loadStoryTemplate resolves a category → story.Template by reading

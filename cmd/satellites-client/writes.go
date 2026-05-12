@@ -10,6 +10,7 @@ import (
 
 	"github.com/bobmcallan/satellites/internal/cliexit"
 	"github.com/bobmcallan/satellites/internal/cliio"
+	"github.com/bobmcallan/satellites/internal/cliremote"
 )
 
 // readBodyFromStdin returns os.Stdin's contents as a string, or an
@@ -27,15 +28,14 @@ func readBodyFromStdin() (string, error) {
 	return string(raw), nil
 }
 
-// renderDryRun prints the JSON envelope that would be POSTed to the
-// MCP endpoint. Used by mutating verbs when --dry-run is set; the
-// caller returns nil immediately after.
+// renderDryRun prints the HTTP wire shape that would be POSTed to the
+// satellites-server /api/v1/<noun>/<verb> route. Used by mutating verbs
+// when --dry-run is set; the caller returns nil immediately after.
 func renderDryRun(toolName string, args any) error {
 	envelope := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      0,
-		"method":  "tools/call",
-		"params":  map[string]any{"name": toolName, "arguments": args},
+		"method": "POST",
+		"path":   "/api/v1" + cliremote.ToolNameToPath(toolName),
+		"body":   args,
 	}
 	return cliio.RenderJSONIndent(os.Stdout, envelope)
 }

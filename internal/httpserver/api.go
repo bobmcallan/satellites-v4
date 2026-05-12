@@ -66,6 +66,7 @@ func (a *APIRegistrar) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/task/update", a.handleTaskUpdate)
 	mux.HandleFunc("POST /api/v1/task/add", a.handleTaskAdd)
 	mux.HandleFunc("POST /api/v1/task/plan", a.handleTaskPlan)
+	mux.HandleFunc("POST /api/v1/story/get", a.handleStoryGet)
 	mux.HandleFunc("POST /api/v1/story/update-status", a.handleStoryUpdateStatus)
 	mux.HandleFunc("POST /api/v1/story/field-set", a.handleStoryFieldSet)
 	mux.HandleFunc("POST /api/v1/project/set", a.handleProjectSet)
@@ -190,16 +191,16 @@ func (a *APIRegistrar) handleLedgerGet(w http.ResponseWriter, r *http.Request) {
 
 func (a *APIRegistrar) handleLedgerList(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ProjectID            string   `json:"project_id"`
-		StoryID              string   `json:"story_id"`
-		Type                 string   `json:"type"`
-		Tags                 []string `json:"tags"`
-		Durability           string   `json:"durability"`
-		SourceType           string   `json:"source_type"`
-		Status               string   `json:"status"`
-		Sensitive            string   `json:"sensitive"`
-		IncludeDereferenced  bool     `json:"include_dereferenced"`
-		Limit                int      `json:"limit"`
+		ProjectID           string   `json:"project_id"`
+		StoryID             string   `json:"story_id"`
+		Type                string   `json:"type"`
+		Tags                []string `json:"tags"`
+		Durability          string   `json:"durability"`
+		SourceType          string   `json:"source_type"`
+		Status              string   `json:"status"`
+		Sensitive           string   `json:"sensitive"`
+		IncludeDereferenced bool     `json:"include_dereferenced"`
+		Limit               int      `json:"limit"`
 	}
 	if err := decodeJSONBody(r, &req); err != nil {
 		writeAPIError(w, err)
@@ -645,6 +646,27 @@ func (a *APIRegistrar) handleTaskPlan(w http.ResponseWriter, r *http.Request) {
 		in.ExpectedDuration = d
 	}
 	out, err := a.client.TaskPlan(r.Context(), cc, in)
+	if err != nil {
+		writeAPIError(w, err)
+		return
+	}
+	writeAPIJSON(w, out)
+}
+
+func (a *APIRegistrar) handleStoryGet(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeAPIError(w, err)
+		return
+	}
+	cc := a.clientCaller(r)
+	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
+	out, err := a.client.StoryGet(r.Context(), cc, client.StoryGetInput{
+		ID:          req.ID,
+		Memberships: cc.Memberships,
+	})
 	if err != nil {
 		writeAPIError(w, err)
 		return

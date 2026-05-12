@@ -3,6 +3,7 @@ package cliremote_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,9 +13,10 @@ import (
 	"github.com/bobmcallan/satellites/internal/cliremote"
 )
 
-// stubServer wraps an httptest server that asserts the JSON-RPC
-// shape and replies with the supplied body.
-func stubServer(t *testing.T, status int, body string) (*httptest.Server, *cliremote.Client) {
+// stubServer wraps an httptest server that asserts the HTTP API
+// wire shape (POST /api/v1/<noun>/<verb>, JSON body, Bearer auth)
+// and replies with the supplied (status, body) pair.
+func stubServer(t *testing.T, wantPath string, status int, body string) (*httptest.Server, *cliremote.Client) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -25,6 +27,16 @@ func stubServer(t *testing.T, status int, body string) (*httptest.Server, *clire
 			http.Error(w, "content-type", http.StatusBadRequest)
 			return
 		}
+		if wantPath != "" && r.URL.Path != wantPath {
+			http.Error(w, "path: "+r.URL.Path, http.StatusBadRequest)
+			return
+		}
+		if auth := r.Header.Get("Authorization"); auth != "Bearer test-bearer" {
+			http.Error(w, "missing auth", http.StatusUnauthorized)
+			return
+		}
+		// Drain body so the test can assert the client wrote valid JSON.
+		_, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(body))
@@ -34,9 +46,7 @@ func stubServer(t *testing.T, status int, body string) (*httptest.Server, *clire
 }
 
 func TestCall_HappyPath(t *testing.T) {
-	payload, _ := json.Marshal(map[string]any{"id": "task_x", "kind": "work"})
-	body := `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":` + jsonString(string(payload)) + `}],"isError":false}}`
-	_, client := stubServer(t, http.StatusOK, body)
+	_, client := stubServer(t, "/api/v1/task/get", http.StatusOK, `{"id":"task_x","kind":"work"}`)
 
 	var got struct {
 		ID   string `json:"id"`
@@ -50,61 +60,96 @@ func TestCall_HappyPath(t *testing.T) {
 	}
 }
 
-func TestCall_NotFoundEnvelope(t *testing.T) {
-	body := `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"story not found"}],"isError":true}}`
-	_, client := stubServer(t, http.StatusOK, body)
+func TestCall_NilArgsBecomeEmptyObject(t *testing.T) {
+	captured := make(chan []byte, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		captured <- body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	client := cliremote.New(srv.URL, "test-bearer", nil)
+	if err := client.Call(context.Background(), "session_whoami", nil, nil); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	body := <-captured
+	if string(body) != "{}" {
+		t.Fatalf("nil args body = %q, want \"{}\"", string(body))
+	}
+}
+
+func TestCall_NotFound404WithEnvelope(t *testing.T) {
+	_, client := stubServer(t, "/api/v1/story/get", http.StatusNotFound, `{"error":"story not found"}`)
 	err := client.Call(context.Background(), "story_get", map[string]any{"id": "sty_x"}, nil)
 	if got := cliexit.Resolve(err); got != cliexit.NotFound {
-		t.Fatalf("Resolve(NotFoundEnvelope) = %d, want %d", got, cliexit.NotFound)
+		t.Fatalf("Resolve(404+envelope) = %d, want %d", got, cliexit.NotFound)
+	}
+	if !strings.Contains(err.Error(), "story not found") {
+		t.Fatalf("error missing envelope message: %v", err)
 	}
 }
 
-func TestCall_UnauthorizedHTTP(t *testing.T) {
-	_, client := stubServer(t, http.StatusUnauthorized, "")
+func TestCall_Auth401WithEnvelope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"bearer expired"}`))
+	}))
+	t.Cleanup(srv.Close)
+	client := cliremote.New(srv.URL, "test-bearer", nil)
 	err := client.Call(context.Background(), "session_whoami", nil, nil)
 	if got := cliexit.Resolve(err); got != cliexit.Auth {
-		t.Fatalf("Resolve(401) = %d, want %d", got, cliexit.Auth)
+		t.Fatalf("Resolve(401+envelope) = %d, want %d", got, cliexit.Auth)
+	}
+	if !strings.Contains(err.Error(), "bearer expired") {
+		t.Fatalf("error missing envelope message: %v", err)
 	}
 }
 
-func TestCall_ForbiddenHTTP(t *testing.T) {
-	_, client := stubServer(t, http.StatusForbidden, "")
+func TestCall_Forbidden403(t *testing.T) {
+	_, client := stubServer(t, "/api/v1/session/whoami", http.StatusForbidden, "")
 	err := client.Call(context.Background(), "session_whoami", nil, nil)
 	if got := cliexit.Resolve(err); got != cliexit.Auth {
 		t.Fatalf("Resolve(403) = %d, want %d", got, cliexit.Auth)
 	}
 }
 
-func TestCall_NotFoundHTTP(t *testing.T) {
-	_, client := stubServer(t, http.StatusNotFound, "")
+func TestCall_NotFound404NoBody(t *testing.T) {
+	_, client := stubServer(t, "/api/v1/task/get", http.StatusNotFound, "")
 	err := client.Call(context.Background(), "task_get", nil, nil)
 	if got := cliexit.Resolve(err); got != cliexit.NotFound {
 		t.Fatalf("Resolve(404) = %d, want %d", got, cliexit.NotFound)
 	}
 }
 
+func TestCall_BadRequest400(t *testing.T) {
+	_, client := stubServer(t, "/api/v1/task/get", http.StatusBadRequest, `{"error":"id is required"}`)
+	err := client.Call(context.Background(), "task_get", nil, nil)
+	if got := cliexit.Resolve(err); got != cliexit.Usage {
+		t.Fatalf("Resolve(400) = %d, want %d", got, cliexit.Usage)
+	}
+	if !strings.Contains(err.Error(), "id is required") {
+		t.Fatalf("error missing envelope message: %v", err)
+	}
+}
+
 func TestCall_ServerError(t *testing.T) {
-	_, client := stubServer(t, http.StatusInternalServerError, "boom")
+	_, client := stubServer(t, "/api/v1/task/get", http.StatusInternalServerError, `{"error":"db boom"}`)
 	err := client.Call(context.Background(), "task_get", nil, nil)
 	if got := cliexit.Resolve(err); got != cliexit.Server {
 		t.Fatalf("Resolve(500) = %d, want %d", got, cliexit.Server)
 	}
 }
 
-func TestCall_AuthEnvelope(t *testing.T) {
-	body := `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"unauthorized: bearer expired"}],"isError":true}}`
-	_, client := stubServer(t, http.StatusOK, body)
-	err := client.Call(context.Background(), "task_get", nil, nil)
-	if got := cliexit.Resolve(err); got != cliexit.Auth {
-		t.Fatalf("Resolve(authEnvelope) = %d, want %d", got, cliexit.Auth)
-	}
-}
-
 func TestCall_ParseFailure(t *testing.T) {
-	_, client := stubServer(t, http.StatusOK, "not json")
-	err := client.Call(context.Background(), "task_get", nil, nil)
-	if got := cliexit.Resolve(err); got != cliexit.Server {
-		t.Fatalf("Resolve(parseFail) = %d, want %d", got, cliexit.Server)
+	_, client := stubServer(t, "/api/v1/task/get", http.StatusOK, "not json")
+	var got struct {
+		ID string `json:"id"`
+	}
+	err := client.Call(context.Background(), "task_get", nil, &got)
+	if c := cliexit.Resolve(err); c != cliexit.Server {
+		t.Fatalf("Resolve(parseFail) = %d, want %d", c, cliexit.Server)
 	}
 }
 
@@ -116,9 +161,61 @@ func TestCall_NilClient(t *testing.T) {
 	}
 }
 
-// jsonString quotes the supplied raw text for embedding into a
-// json-rpc text envelope.
-func jsonString(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b)
+func TestCall_PassesAuthHeader(t *testing.T) {
+	var seen string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	client := cliremote.New(srv.URL, "abc123", nil)
+	if err := client.Call(context.Background(), "satellites_info", nil, nil); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if seen != "Bearer abc123" {
+		t.Fatalf("Authorization header = %q, want %q", seen, "Bearer abc123")
+	}
 }
+
+func TestCall_PathMappingViaServer(t *testing.T) {
+	// End-to-end confirmation that the in-package mapping resolves to
+	// the correct route. Each test case fires one POST against the
+	// expected path; a mismatch surfaces as a 400 from the stub.
+	cases := []struct {
+		toolName string
+		wantPath string
+	}{
+		{"satellites_info", "/api/v1/satellites/info"},
+		{"session_whoami", "/api/v1/session/whoami"},
+		{"session_register", "/api/v1/session/register"},
+		{"task_get", "/api/v1/task/get"},
+		{"task_walk", "/api/v1/task/walk"},
+		{"task_claim", "/api/v1/task/claim"},
+		{"task_add", "/api/v1/task/add"},
+		{"task_update", "/api/v1/task/update"},
+		{"task_plan", "/api/v1/task/plan"},
+		{"ledger_get", "/api/v1/ledger/get"},
+		{"ledger_list", "/api/v1/ledger/list"},
+		{"ledger_search", "/api/v1/ledger/search"},
+		{"ledger_recall", "/api/v1/ledger/recall"},
+		{"ledger_append", "/api/v1/ledger/append"},
+		{"ledger_dereference", "/api/v1/ledger/dereference"},
+		{"document_get", "/api/v1/document/get"},
+		{"document_list", "/api/v1/document/list"},
+		{"story_get", "/api/v1/story/get"},
+		{"story_update_status", "/api/v1/story/update-status"},
+		{"story_field_set", "/api/v1/story/field-set"},
+		{"project_set", "/api/v1/project/set"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.toolName, func(t *testing.T) {
+			_, client := stubServer(t, tc.wantPath, http.StatusOK, `{}`)
+			if err := client.Call(context.Background(), tc.toolName, nil, nil); err != nil {
+				t.Fatalf("%s: %v", tc.toolName, err)
+			}
+		})
+	}
+}
+
+// silence unused import in dev cycles where the helper is dropped.
+var _ = json.RawMessage(nil)

@@ -66,12 +66,21 @@ func runTaskCmd(cmd *cobra.Command, args []string) error {
 		AuthToken:        resolvedToken,
 		ExecuteTimeout:   resolvedClientConfig.ExecuteTimeout,
 		LogLevel:         resolvedClientConfig.LogLevel,
+		ClientConfigPath: resolvedClientConfig.LoadedTOMLPath(),
 	}
 	if cfg.ExecuteTimeout == 0 {
 		cfg.ExecuteTimeout = 30 * time.Minute
 	}
 
-	logger := satarbor.New(cfg.LogLevel)
+	// Use the shared logger constructed in PersistentPreRunE
+	// (sty_ef4eedaa) so task run shares the satellites-agent-shaped
+	// console + bin/logs/ output. Falls back to a console-only logger
+	// when called outside the cobra root (e.g. from tests that bypass
+	// PersistentPreRunE).
+	logger := resolvedLogger
+	if logger == nil {
+		logger = satarbor.New(cfg.LogLevel)
+	}
 
 	env := worker.TaskEnvelope{
 		ID:          taskID,

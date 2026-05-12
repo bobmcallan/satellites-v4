@@ -74,6 +74,17 @@ type AgentConfig struct {
 	// defaultsAgent. sty_92bfd9e6.
 	LogPath string `toml:"log_path"`
 
+	// ClientConfigPath is the absolute path to the operator-resolved
+	// satellites-client TOML. The orchestrator-side dispatcher (in
+	// cmd/satellites-client) populates this from
+	// cliconfig.Config.LoadedTOMLPath() before invoking RunDispatched,
+	// so the dispatched subprocess can locate the same config via
+	// SATELLITES_CLIENT_CONFIG. Empty when no TOML resolved (loader
+	// fell back to defaults) or on the satellites-agent daemon path
+	// (daemon uses its own TOML, not the client's). Populated by the
+	// caller; never read from TOML. sty_ef4eedaa.
+	ClientConfigPath string `toml:"-"`
+
 	// loadedTOMLPath records the path that was actually read; "" when
 	// the loader fell back to defaults.
 	loadedTOMLPath string

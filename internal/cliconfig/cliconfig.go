@@ -122,6 +122,14 @@ func (c Config) String() string {
 // defaults builds the in-code default Config. Lowest precedence layer;
 // TOML overrides it.
 func defaults() *Config {
+	// LogPath defaults to <exe_dir>/logs/ — matches satellites-agent's
+	// default in internal/config/agent_config.go::defaultsAgent. With the
+	// binary at bin/satellites-client, this resolves to bin/logs/.
+	// sty_ef4eedaa.
+	logDir := ""
+	if len(os.Args) > 0 && os.Args[0] != "" {
+		logDir = filepath.Join(filepath.Dir(os.Args[0]), "logs")
+	}
 	return &Config{
 		Server:         "",
 		Token:          "",
@@ -131,7 +139,7 @@ func defaults() *Config {
 		BranchTemplate: "agent-{task_id}-from-{base_sha}",
 		ExecuteTimeout: 30 * time.Minute,
 		LogLevel:       "info",
-		LogPath:        "",
+		LogPath:        logDir,
 	}
 }
 
@@ -235,8 +243,26 @@ func resolveConfigPath(explicit string) (string, string, error) {
 		}
 		return p, sourceEnv, nil
 	}
-	if _, err := os.Stat(defaultBinFile); err == nil {
-		return defaultBinFile, sourceBin, nil
+	// Walk-up: search CWD and its ancestors for bin/satellites-client.toml.
+	// Stops at the filesystem root or a .git directory (repo boundary), so
+	// a dispatched subprocess whose CWD is <repo>/.satellites-agents/<task_id>/
+	// finds the operator's repo-root TOML without leaking out of the repo.
+	if cwd, err := os.Getwd(); err == nil {
+		dir := cwd
+		for {
+			candidate := filepath.Join(dir, defaultBinFile)
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate, sourceBin, nil
+			}
+			if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+				break
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		xdg := filepath.Join(home, ".config", "satellites-client", "config.toml")

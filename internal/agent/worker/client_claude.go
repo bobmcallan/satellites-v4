@@ -525,7 +525,16 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 	cmd.Dir = worktreePath
 	// cmd.Env left at default — exec.CommandContext inherits the operator's
 	// os.Environ() automatically. Satellites does not configure the
-	// dispatched subprocess's environment.
+	// dispatched subprocess's environment. The one exception is the
+	// SATELLITES_CLIENT_CONFIG pointer (sty_ef4eedaa) — when the
+	// orchestrator-invoked dispatcher resolved a satellites-client TOML,
+	// it forwards the path so the subprocess's `satellites-client …`
+	// invocations find the same operator-controlled config from any CWD.
+	// This is satellites pointing the subprocess at satellites' own
+	// state, not a claude-config touch.
+	if c.cfg.ClientConfigPath != "" {
+		cmd.Env = append(os.Environ(), "SATELLITES_CLIENT_CONFIG="+c.cfg.ClientConfigPath)
+	}
 	// sty_3e27a3f5: when the orchestrator-invoked RunDispatched path
 	// sets stdoutTee/stderrTee, the subprocess output is mirrored live
 	// to the operator's terminal. The worktree log file is always

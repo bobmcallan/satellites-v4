@@ -65,6 +65,7 @@ func TestClaudeClient_Execute_EndToEnd_StubBinary(t *testing.T) {
 		WorktreeRoot:     worktreeRoot,
 		BranchTemplate:   "agent-{task_id}-from-{base_sha}",
 		ClaudeBinaryPath: stubPath,
+		ClientConfigPath: "/operator/path/to/bin/satellites-client.toml",
 	}
 
 	client := worker.NewClaudeClient(cfg, nil)
@@ -93,6 +94,13 @@ func TestClaudeClient_Execute_EndToEnd_StubBinary(t *testing.T) {
 	// Satellites does not configure the dispatched subprocess; whatever
 	// HOME the operator has set is what claude sees.
 	assert.Equal(t, srcHome, manifest.HomeEnv, "stub claude did not see operator HOME — satellites must not override the subprocess's HOME")
+
+	// SATELLITES_CLIENT_CONFIG points the subprocess's satellites-client
+	// invocations at the operator-resolved TOML, even from the per-task
+	// worktree CWD (sty_ef4eedaa). The worker conditionally forwards the
+	// path whenever AgentConfig.ClientConfigPath is non-empty.
+	assert.Equal(t, "/operator/path/to/bin/satellites-client.toml", manifest.ClientConfigEnv,
+		"SATELLITES_CLIENT_CONFIG not forwarded to dispatched subprocess")
 
 	// Worktree exists at <root>/<task_id> and is the cmd.Dir.
 	expectedWorktree := filepath.Join(worktreeRoot, "task_test_e2e")
@@ -173,6 +181,7 @@ for arg in "$@"; do
   i=$((i+1))
 done
 echo "$i" > "` + dir + `/argc"
+printf '%s' "${SATELLITES_CLIENT_CONFIG:-}" > "` + dir + `/sat_client_config"
 
 exit 0
 `
@@ -181,9 +190,10 @@ exit 0
 }
 
 type stubManifest struct {
-	PWD     string
-	HomeEnv string
-	Argv    []string
+	PWD             string
+	HomeEnv         string
+	Argv            []string
+	ClientConfigEnv string
 }
 
 // readStubManifest reads the captures the stub script wrote out and
@@ -218,6 +228,9 @@ func readStubManifest(t *testing.T, dir string) (stubManifest, error) {
 			return m, err
 		}
 		m.Argv = append(m.Argv, string(argRaw))
+	}
+	if raw, err := os.ReadFile(filepath.Join(dir, "sat_client_config")); err == nil {
+		m.ClientConfigEnv = string(raw)
 	}
 	return m, nil
 }

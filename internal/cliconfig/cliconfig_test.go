@@ -117,6 +117,128 @@ log_path = "/tmp/logs"
 	}
 }
 
+// TestLoad_WalkUp: from a nested subdirectory inside the repo, the
+// loader walks up to find bin/satellites-client.toml. The walk halts
+// at a .git directory (the repo root) so it can never resolve a TOML
+// outside the current repo.
+//
+// Layout under <root>:
+//   .git/
+//   bin/satellites-client.toml
+//   sub/deep/                  ← test chdirs here
+//
+// Expected: the loader returns <root>/bin/satellites-client.toml even
+// though CWD is two levels below.
+func TestLoad_WalkUp(t *testing.T) {
+	t.Setenv("SATELLITES_CLIENT_CONFIG", "")
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	tomlPath := filepath.Join(binDir, "satellites-client.toml")
+	if err := os.WriteFile(tomlPath, []byte(`server = "https://walk.example/mcp"
+token = "walked-up"
+`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	deep := filepath.Join(root, "sub", "deep")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatalf("mkdir deep: %v", err)
+	}
+
+	prevWD, _ := os.Getwd()
+	if err := os.Chdir(deep); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prevWD) })
+
+	cfg, warnings, err := cliconfig.Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	resolveSymlinks := func(p string) string {
+		out, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			return p
+		}
+		return out
+	}
+	gotPath := resolveSymlinks(cfg.LoadedTOMLPath())
+	wantPath := resolveSymlinks(tomlPath)
+	if gotPath != wantPath {
+		t.Fatalf("loaded path mismatch: got %q want %q", gotPath, wantPath)
+	}
+	if cfg.Server != "https://walk.example/mcp" {
+		t.Fatalf("server: got %q", cfg.Server)
+	}
+	if cfg.Token != "walked-up" {
+		t.Fatalf("token: got %q", cfg.Token)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings: %v", warnings)
+	}
+}
+
+// TestLoad_WalkUpStopsAtRepoBoundary: the walk-up halts when it sees
+// a .git directory whose bin/satellites-client.toml is absent. The
+// outer repo's TOML must not resolve from inside an inner repo —
+// otherwise a dispatched subprocess could accidentally pick up the
+// wrong project's bearer.
+//
+// Layout under <outer>:
+//   bin/satellites-client.toml ← outer config, must NOT resolve
+//   inner/.git/
+//   inner/sub/                  ← test chdirs here
+func TestLoad_WalkUpStopsAtRepoBoundary(t *testing.T) {
+	t.Setenv("SATELLITES_CLIENT_CONFIG", "")
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	outer := t.TempDir()
+	outerBin := filepath.Join(outer, "bin")
+	if err := os.MkdirAll(outerBin, 0o755); err != nil {
+		t.Fatalf("mkdir outer bin: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outerBin, "satellites-client.toml"),
+		[]byte(`server = "outer"
+token = "outer"
+`), 0o600); err != nil {
+		t.Fatalf("write outer toml: %v", err)
+	}
+	innerGit := filepath.Join(outer, "inner", ".git")
+	if err := os.MkdirAll(innerGit, 0o755); err != nil {
+		t.Fatalf("mkdir inner/.git: %v", err)
+	}
+	innerSub := filepath.Join(outer, "inner", "sub")
+	if err := os.MkdirAll(innerSub, 0o755); err != nil {
+		t.Fatalf("mkdir inner/sub: %v", err)
+	}
+
+	prevWD, _ := os.Getwd()
+	if err := os.Chdir(innerSub); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prevWD) })
+
+	cfg, _, err := cliconfig.Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LoadedTOMLPath() != "" {
+		t.Fatalf("expected walk to halt at inner/.git/, got %q", cfg.LoadedTOMLPath())
+	}
+	if cfg.Server != "" || cfg.Token != "" {
+		t.Fatalf("outer TOML leaked across repo boundary: server=%q token=%q", cfg.Server, cfg.Token)
+	}
+}
+
 // TestLoad_XDG: ~/.config/satellites-client/config.toml is the
 // fallback when bin/ has nothing.
 func TestLoad_XDG(t *testing.T) {

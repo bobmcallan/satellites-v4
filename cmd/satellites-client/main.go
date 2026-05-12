@@ -12,9 +12,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"github.com/ternarybob/arbor"
 
+	satarbor "github.com/bobmcallan/satellites/internal/arbor"
 	"github.com/bobmcallan/satellites/internal/cliconfig"
 	"github.com/bobmcallan/satellites/internal/cliexit"
 	"github.com/bobmcallan/satellites/internal/clicred"
@@ -73,6 +76,11 @@ var resolvedClientConfig *cliconfig.Config
 // invocation. Subcommands consume it when rendering output.
 var resolvedMode cliio.Mode
 
+// resolvedLogger is the arbor logger constructed during
+// PersistentPreRunE. Mirrors satellites-agent's setup: console writer
+// always, file writer in <exe>/logs/ when log_path resolves. sty_ef4eedaa.
+var resolvedLogger arbor.ILogger
+
 // newRootCmd constructs the satellites-client root command + the
 // noun-grouped subcommand tree. Factored out so smoke tests can
 // exercise it without process re-entry.
@@ -98,6 +106,25 @@ func newRootCmd() *cobra.Command {
 				return cliexit.Wrap(cliexit.Usage, err)
 			}
 			resolvedClientConfig = cfg
+
+			// Arbor logger — mirrors cmd/satellites-agent's setup
+			// (sty_ef4eedaa): console writer always; file writer in
+			// <exe>/logs/ when cfg.LogPath resolves to a writable dir.
+			// Mkdir failures fall back to console-only silently — a CLI
+			// auth verb shouldn't fail boot because logs/ is read-only.
+			resolvedLogPath := ""
+			if cfg.LogPath != "" {
+				if abs, abserr := filepath.Abs(cfg.LogPath); abserr == nil {
+					if mkerr := os.MkdirAll(abs, 0o755); mkerr == nil {
+						resolvedLogPath = abs
+					}
+				}
+			}
+			if resolvedLogPath != "" {
+				resolvedLogger = satarbor.NewWithFile(cfg.LogLevel, resolvedLogPath)
+			} else {
+				resolvedLogger = satarbor.New(cfg.LogLevel)
+			}
 			return nil
 		},
 	}

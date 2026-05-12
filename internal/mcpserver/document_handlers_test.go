@@ -136,15 +136,15 @@ func TestHandleDocumentList_WorkspaceIsolation(t *testing.T) {
 	}
 }
 
-// TestHandleDocumentCreate_ScopeSystemRejectsProjectID confirms the
+// TestHandleDocumentAdd_ScopeSystemRejectsProjectID confirms the
 // scope-vs-project-id invariant is enforced at the handler layer (not
 // only in document.Validate at the store layer).
-func TestHandleDocumentCreate_ScopeSystemRejectsProjectID(t *testing.T) {
+func TestHandleDocumentAdd_ScopeSystemRejectsProjectID(t *testing.T) {
 	t.Parallel()
 	s := newDocumentTestServer(t)
 	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_a", Source: "session"})
 
-	res, err := s.handleDocumentCreate(ctx, newCallToolReq("document_create", map[string]any{
+	res, err := s.handleDocumentAdd(ctx, newCallToolReq("document_add", map[string]any{
 		"type":       "principle",
 		"scope":      "system",
 		"name":       "bad",
@@ -158,17 +158,17 @@ func TestHandleDocumentCreate_ScopeSystemRejectsProjectID(t *testing.T) {
 	}
 }
 
-// TestHandleDocumentCreate_ScopeSystemDropsWorkspaceID covers
+// TestHandleDocumentAdd_ScopeSystemDropsWorkspaceID covers
 // sty_e2512dbd: when the caller creates a scope=system row, the
 // handler MUST NOT stamp the caller's workspace on it. The system
 // tier is non-tenant; a stamped workspace would violate Validate()
 // and pull downstream readers into the wrong tenancy.
-func TestHandleDocumentCreate_ScopeSystemDropsWorkspaceID(t *testing.T) {
+func TestHandleDocumentAdd_ScopeSystemDropsWorkspaceID(t *testing.T) {
 	t.Parallel()
 	s := newDocumentTestServer(t)
 	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "user_creator", Source: "session"})
 
-	res, err := s.handleDocumentCreate(ctx, newCallToolReq("document_create", map[string]any{
+	res, err := s.handleDocumentAdd(ctx, newCallToolReq("document_add", map[string]any{
 		"type":  "principle",
 		"scope": "system",
 		"name":  "sample-principle",

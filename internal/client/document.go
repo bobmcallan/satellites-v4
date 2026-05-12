@@ -40,17 +40,17 @@ func KnownDocumentKinds() []string {
 	return out
 }
 
-// ErrDocumentNoCallerIdentity is returned when document_create is
+// ErrDocumentNoCallerIdentity is returned when document_add is
 // invoked without a caller user id. Mirrors the "no caller identity"
-// wire envelope previously emitted by handleDocumentCreate.
+// wire envelope previously emitted by handleDocumentAdd.
 var ErrDocumentNoCallerIdentity = errors.New("no caller identity")
 
-// ErrDocumentSystemRejectsProject is returned when document_create is
+// ErrDocumentSystemRejectsProject is returned when document_add is
 // invoked with scope=system and a non-empty project_id. Mirrors the
 // "scope=system does not accept project_id" wire envelope.
 var ErrDocumentSystemRejectsProject = errors.New("scope=system does not accept project_id")
 
-// ErrDocumentStructuredInvalid is returned when document_create or
+// ErrDocumentStructuredInvalid is returned when document_add or
 // document_update is supplied a structured payload that is not valid
 // JSON. Mirrors the "structured must be valid JSON" wire envelope.
 var ErrDocumentStructuredInvalid = errors.New("structured must be valid JSON")
@@ -232,12 +232,12 @@ func (c *Client) DocumentIngestFile(ctx context.Context, caller Caller, in Docum
 	}, nil
 }
 
-// DocumentCreateInput captures the document_create request shape. The
+// DocumentAddInput captures the document_add request shape. The
 // wire layer pre-resolves WorkspaceID + ResolvedProjectID (when
 // scope=project) and threads them in; the typed method owns the
 // per-scope branching (scope=project sets ProjectID, scope=system
 // drops WorkspaceID per sty_e2512dbd).
-type DocumentCreateInput struct {
+type DocumentAddInput struct {
 	Type              string
 	Scope             string
 	Name              string
@@ -251,10 +251,10 @@ type DocumentCreateInput struct {
 	Now               time.Time
 }
 
-// DocumentCreate mints a new document row in the supplied scope.
-// Mirrors mcpserver.Server.handleDocumentCreate minus the wire-format
+// DocumentAdd mints a new document row in the supplied scope.
+// Mirrors mcpserver.Server.handleDocumentAdd minus the wire-format
 // wrap; per-scope branching + structured-JSON validation live here.
-func (c *Client) DocumentCreate(ctx context.Context, caller Caller, in DocumentCreateInput) (document.Document, error) {
+func (c *Client) DocumentAdd(ctx context.Context, caller Caller, in DocumentAddInput) (document.Document, error) {
 	if c.deps.Documents == nil {
 		return document.Document{}, ErrDocumentStoreNotConfigured
 	}

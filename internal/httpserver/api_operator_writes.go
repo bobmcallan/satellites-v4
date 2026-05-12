@@ -63,7 +63,7 @@ func (a *APIRegistrar) registerOperatorWriteRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("POST /api/v1/repo/add", a.handleRepoAdd)
 
-	mux.HandleFunc("POST /api/v1/document/create", a.handleDocumentCreate)
+	mux.HandleFunc("POST /api/v1/document/add", a.handleDocumentAdd)
 	mux.HandleFunc("POST /api/v1/document/update", a.handleDocumentUpdate)
 	mux.HandleFunc("POST /api/v1/document/delete", a.handleDocumentDelete)
 
@@ -935,10 +935,10 @@ func (a *APIRegistrar) handleRepoAdd(w http.ResponseWriter, r *http.Request) {
 
 // ----- document family -----
 
-// runDocumentCreate handles document_create and the type-pinned wrappers
+// runDocumentAdd handles document_add and the type-pinned wrappers
 // (agent_add / contract_add / etc.). When pinnedType is non-empty,
 // the caller's type field is ignored and pinnedType wins.
-func (a *APIRegistrar) runDocumentCreate(w http.ResponseWriter, r *http.Request, pinnedType string) {
+func (a *APIRegistrar) runDocumentAdd(w http.ResponseWriter, r *http.Request, pinnedType string) {
 	var req struct {
 		Type            string   `json:"type"`
 		Scope           string   `json:"scope"`
@@ -1098,8 +1098,8 @@ func (a *APIRegistrar) runDocumentDelete(w http.ResponseWriter, r *http.Request)
 }
 
 // Document family — pinned-type wrappers.
-func (a *APIRegistrar) handleDocumentCreate(w http.ResponseWriter, r *http.Request) {
-	a.runDocumentCreate(w, r, "")
+func (a *APIRegistrar) handleDocumentAdd(w http.ResponseWriter, r *http.Request) {
+	a.runDocumentAdd(w, r, "")
 }
 func (a *APIRegistrar) handleDocumentUpdate(w http.ResponseWriter, r *http.Request) {
 	a.runDocumentUpdate(w, r)
@@ -1109,7 +1109,7 @@ func (a *APIRegistrar) handleDocumentDelete(w http.ResponseWriter, r *http.Reque
 }
 
 func (a *APIRegistrar) handleAgentAdd(w http.ResponseWriter, r *http.Request) {
-	a.runDocumentCreate(w, r, document.TypeAgent)
+	a.runDocumentAdd(w, r, document.TypeAgent)
 }
 func (a *APIRegistrar) handleAgentUpdate(w http.ResponseWriter, r *http.Request) {
 	a.runDocumentUpdate(w, r)
@@ -1119,7 +1119,7 @@ func (a *APIRegistrar) handleAgentDelete(w http.ResponseWriter, r *http.Request)
 }
 
 func (a *APIRegistrar) handleContractAdd(w http.ResponseWriter, r *http.Request) {
-	a.runDocumentCreate(w, r, document.TypeContract)
+	a.runDocumentAdd(w, r, document.TypeContract)
 }
 func (a *APIRegistrar) handleContractUpdate(w http.ResponseWriter, r *http.Request) {
 	a.runDocumentUpdate(w, r)
@@ -1129,7 +1129,7 @@ func (a *APIRegistrar) handleContractDelete(w http.ResponseWriter, r *http.Reque
 }
 
 func (a *APIRegistrar) handlePrincipleAdd(w http.ResponseWriter, r *http.Request) {
-	a.runDocumentCreate(w, r, document.TypePrinciple)
+	a.runDocumentAdd(w, r, document.TypePrinciple)
 }
 func (a *APIRegistrar) handlePrincipleUpdate(w http.ResponseWriter, r *http.Request) {
 	a.runDocumentUpdate(w, r)
@@ -1139,7 +1139,7 @@ func (a *APIRegistrar) handlePrincipleDelete(w http.ResponseWriter, r *http.Requ
 }
 
 func (a *APIRegistrar) handleReviewerAdd(w http.ResponseWriter, r *http.Request) {
-	a.runDocumentCreate(w, r, document.TypeReviewer)
+	a.runDocumentAdd(w, r, document.TypeReviewer)
 }
 func (a *APIRegistrar) handleReviewerUpdate(w http.ResponseWriter, r *http.Request) {
 	a.runDocumentUpdate(w, r)
@@ -1149,7 +1149,7 @@ func (a *APIRegistrar) handleReviewerDelete(w http.ResponseWriter, r *http.Reque
 }
 
 func (a *APIRegistrar) handleRoleAdd(w http.ResponseWriter, r *http.Request) {
-	a.runDocumentCreate(w, r, document.TypeRole)
+	a.runDocumentAdd(w, r, document.TypeRole)
 }
 func (a *APIRegistrar) handleRoleUpdate(w http.ResponseWriter, r *http.Request) {
 	a.runDocumentUpdate(w, r)
@@ -1159,7 +1159,7 @@ func (a *APIRegistrar) handleRoleDelete(w http.ResponseWriter, r *http.Request) 
 }
 
 func (a *APIRegistrar) handleSkillAdd(w http.ResponseWriter, r *http.Request) {
-	a.runDocumentCreate(w, r, document.TypeSkill)
+	a.runDocumentAdd(w, r, document.TypeSkill)
 }
 func (a *APIRegistrar) handleSkillUpdate(w http.ResponseWriter, r *http.Request) {
 	a.runDocumentUpdate(w, r)

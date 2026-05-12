@@ -19,7 +19,7 @@ import (
 // (agent extras are reachable via /api/v1 + CLI). Wrapper write verbs
 // (`_add` / `_update` / `_delete` / `_search`) are reachable only
 // through the typed methods on *client.Client via the HTTP API and
-// the satellites-client CLI; the wrapperCreate / wrapperSearch
+// the satellites-client CLI; the wrapperAdd / wrapperSearch
 // closures and validateWrapperPayload remain because the typed
 // client surface still calls into the same per-type validation /
 // type-pinning helpers (handler bodies stay untouched per slice B1).
@@ -61,7 +61,7 @@ func wrapperKindHasList(kind string) bool {
 // registerWrapperFamily registers the kept read verbs for one kind.
 // Write verbs (`_add` / `_update` / `_delete` / `_search`) were
 // unregistered in sty_4db0e025 slice B1; the handler bodies remain on
-// *Server (wrapperCreate / wrapperSearch / handleDocumentUpdate /
+// *Server (wrapperAdd / wrapperSearch / handleDocumentUpdate /
 // handleDocumentDelete) so the HTTP layer + internal/client continue
 // to drive them.
 func (s *Server) registerWrapperFamily(kind string) {
@@ -89,9 +89,9 @@ func (s *Server) registerWrapperFamily(kind string) {
 	}
 }
 
-// wrapperCreate returns a handler that pins the type, runs per-type
-// payload validation, and forwards to handleDocumentCreate.
-func (s *Server) wrapperCreate(kind string) func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+// wrapperAdd returns a handler that pins the type, runs per-type
+// payload validation, and forwards to handleDocumentAdd.
+func (s *Server) wrapperAdd(kind string) func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	return func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		args := req.GetArguments()
 		if v, ok := args["type"]; ok {
@@ -104,7 +104,7 @@ func (s *Server) wrapperCreate(kind string) func(context.Context, mcpgo.CallTool
 		}
 		args["type"] = kind
 		req.Params.Arguments = args
-		return s.handleDocumentCreate(ctx, req)
+		return s.handleDocumentAdd(ctx, req)
 	}
 }
 
@@ -151,7 +151,7 @@ func (s *Server) wrapperSearch(kind string) func(context.Context, mcpgo.CallTool
 }
 
 // validateWrapperPayload runs per-type structured/payload checks before
-// forwarding to handleDocumentCreate. Reads from args without mutating.
+// forwarding to handleDocumentAdd. Reads from args without mutating.
 // kind is the wire-level document type string (compared as literals so
 // this file no longer imports internal/document — pr_mcp_cli_shared_path).
 // The MCP verbs that reach this validator are the `<kind>_add` wrappers.

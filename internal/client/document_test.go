@@ -107,9 +107,9 @@ func TestDocumentGet_RejectsMissingIDAndName(t *testing.T) {
 	assert.Contains(t, err.Error(), "id or name")
 }
 
-func TestDocumentCreate_ProjectScopeStampsProjectID(t *testing.T) {
+func TestDocumentAdd_ProjectScopeStampsProjectID(t *testing.T) {
 	c, wsID, now := newDocClient(t)
-	got, err := c.DocumentCreate(context.Background(), Caller{UserID: "u_alice"}, DocumentCreateInput{
+	got, err := c.DocumentAdd(context.Background(), Caller{UserID: "u_alice"}, DocumentAddInput{
 		Type: document.TypeAgent, Scope: document.ScopeProject, Name: "alpha_agent",
 		Body: "tenant agent body", WorkspaceID: wsID, ResolvedProjectID: "proj_alpha", Now: now,
 	})
@@ -120,27 +120,27 @@ func TestDocumentCreate_ProjectScopeStampsProjectID(t *testing.T) {
 	assert.Equal(t, wsID, got.WorkspaceID)
 }
 
-func TestDocumentCreate_SystemScopeRejectsProjectID(t *testing.T) {
+func TestDocumentAdd_SystemScopeRejectsProjectID(t *testing.T) {
 	c, _, now := newDocClient(t)
-	_, err := c.DocumentCreate(context.Background(), Caller{UserID: "u_alice"}, DocumentCreateInput{
+	_, err := c.DocumentAdd(context.Background(), Caller{UserID: "u_alice"}, DocumentAddInput{
 		Type: document.TypeContract, Scope: document.ScopeSystem, Name: "plan",
 		ResolvedProjectID: "proj_alpha", Now: now,
 	})
 	require.ErrorIs(t, err, ErrDocumentSystemRejectsProject)
 }
 
-func TestDocumentCreate_RequiresCallerIdentity(t *testing.T) {
+func TestDocumentAdd_RequiresCallerIdentity(t *testing.T) {
 	c, wsID, now := newDocClient(t)
-	_, err := c.DocumentCreate(context.Background(), Caller{}, DocumentCreateInput{
+	_, err := c.DocumentAdd(context.Background(), Caller{}, DocumentAddInput{
 		Type: document.TypeAgent, Scope: document.ScopeProject, Name: "alpha_agent",
 		WorkspaceID: wsID, ResolvedProjectID: "proj_alpha", Now: now,
 	})
 	require.ErrorIs(t, err, ErrDocumentNoCallerIdentity)
 }
 
-func TestDocumentCreate_StructuredInvalidJSONRejected(t *testing.T) {
+func TestDocumentAdd_StructuredInvalidJSONRejected(t *testing.T) {
 	c, wsID, now := newDocClient(t)
-	_, err := c.DocumentCreate(context.Background(), Caller{UserID: "u_alice"}, DocumentCreateInput{
+	_, err := c.DocumentAdd(context.Background(), Caller{UserID: "u_alice"}, DocumentAddInput{
 		Type: document.TypeAgent, Scope: document.ScopeProject, Name: "alpha_agent",
 		WorkspaceID: wsID, ResolvedProjectID: "proj_alpha", Structured: "{not valid", Now: now,
 	})
@@ -149,7 +149,7 @@ func TestDocumentCreate_StructuredInvalidJSONRejected(t *testing.T) {
 
 func TestDocumentUpdate_RejectsImmutableFields(t *testing.T) {
 	c, wsID, now := newDocClient(t)
-	doc, err := c.DocumentCreate(context.Background(), Caller{UserID: "u_alice"}, DocumentCreateInput{
+	doc, err := c.DocumentAdd(context.Background(), Caller{UserID: "u_alice"}, DocumentAddInput{
 		Type: document.TypeAgent, Scope: document.ScopeProject, Name: "alpha_agent",
 		WorkspaceID: wsID, ResolvedProjectID: "proj_alpha", Now: now,
 	})
@@ -167,7 +167,7 @@ func TestDocumentUpdate_RejectsImmutableFields(t *testing.T) {
 
 func TestDocumentUpdate_SystemTierDropsMemberships(t *testing.T) {
 	c, _, now := newDocClient(t)
-	doc, err := c.DocumentCreate(context.Background(), Caller{UserID: "u_admin"}, DocumentCreateInput{
+	doc, err := c.DocumentAdd(context.Background(), Caller{UserID: "u_admin"}, DocumentAddInput{
 		Type: document.TypeContract, Scope: document.ScopeSystem, Name: "plan",
 		Body: "system contract", Now: now,
 	})
@@ -183,7 +183,7 @@ func TestDocumentUpdate_SystemTierDropsMemberships(t *testing.T) {
 
 func TestDocumentDelete_DefaultsToArchive(t *testing.T) {
 	c, wsID, now := newDocClient(t)
-	doc, err := c.DocumentCreate(context.Background(), Caller{UserID: "u_alice"}, DocumentCreateInput{
+	doc, err := c.DocumentAdd(context.Background(), Caller{UserID: "u_alice"}, DocumentAddInput{
 		Type: document.TypeAgent, Scope: document.ScopeProject, Name: "alpha_agent",
 		WorkspaceID: wsID, ResolvedProjectID: "proj_alpha", Now: now,
 	})

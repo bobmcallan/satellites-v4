@@ -198,7 +198,7 @@ func registerPrincipleNoun(root *cobra.Command) {
 func registerDocumentNoun(root *cobra.Command) {
 	noun := nounStub("document", "Documents — generic typed markdown.")
 	noun.AddCommand(
-		newDocumentCreateCmd(), // sty_f38bd573
+		newDocumentAddCmd(), // sty_4db0e025
 		newDocumentGetCmd(),    // sty_004f3d3a
 		newDocumentListCmd(),   // sty_004f3d3a
 		newDocumentUpdateCmd(), // sty_f38bd573

@@ -518,12 +518,12 @@ func newSessionRegisterCmd() *cobra.Command {
 	return c
 }
 
-// ----- document family (create/update/delete) -----
+// ----- document family (add/update/delete) -----
 
-// documentCreateArgs builds shared create-shape. Per-noun wrappers
+// documentAddArgs builds shared add-shape. Per-noun wrappers
 // (agent_add / contract_add / etc.) pin type at the server-route
 // layer; the CLI just sends the supplied --type-flag value (or none).
-func documentCreateArgs(cmd *cobra.Command, args []string) (any, error) {
+func documentAddArgs(cmd *cobra.Command, args []string) (any, error) {
 	scope, _ := cmd.Flags().GetString("scope")
 	name, _ := cmd.Flags().GetString("name")
 	if scope == "" || name == "" {
@@ -565,7 +565,7 @@ func documentCreateArgs(cmd *cobra.Command, args []string) (any, error) {
 	return out, nil
 }
 
-func addDocumentCreateFlags(c *cobra.Command, withType bool) {
+func addDocumentAddFlags(c *cobra.Command, withType bool) {
 	c.Flags().String("scope", "", "system | project (required).")
 	c.Flags().String("name", "", "Document name (required).")
 	if withType {
@@ -648,13 +648,13 @@ func addDocumentDeleteFlags(c *cobra.Command) {
 	_ = c.MarkFlagRequired("id")
 }
 
-func newDocumentCreateCmd() *cobra.Command {
+func newDocumentAddCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:   "create",
-		Short: "Create a document.",
-		RunE:  writeHandler("document_create", documentCreateArgs),
+		Use:   "add",
+		Short: "Add a document.",
+		RunE:  writeHandler("document_add", documentAddArgs),
 	}
-	addDocumentCreateFlags(c, true)
+	addDocumentAddFlags(c, true)
 	return c
 }
 
@@ -680,8 +680,8 @@ func newDocumentDeleteCmd() *cobra.Command {
 
 // Doc-family wrappers — same arg-builders, route-pinned type on server.
 func newAgentAddCmd() *cobra.Command {
-	c := &cobra.Command{Use: "add", Short: "Add an agent doc.", RunE: writeHandler("agent_add", documentCreateArgs)}
-	addDocumentCreateFlags(c, false)
+	c := &cobra.Command{Use: "add", Short: "Add an agent doc.", RunE: writeHandler("agent_add", documentAddArgs)}
+	addDocumentAddFlags(c, false)
 	return c
 }
 func newAgentUpdateCmd() *cobra.Command {
@@ -695,8 +695,8 @@ func newAgentDeleteCmd() *cobra.Command {
 	return c
 }
 func newContractAddCmd() *cobra.Command {
-	c := &cobra.Command{Use: "add", Short: "Add a contract doc.", RunE: writeHandler("contract_add", documentCreateArgs)}
-	addDocumentCreateFlags(c, false)
+	c := &cobra.Command{Use: "add", Short: "Add a contract doc.", RunE: writeHandler("contract_add", documentAddArgs)}
+	addDocumentAddFlags(c, false)
 	return c
 }
 func newContractUpdateCmd() *cobra.Command {
@@ -710,8 +710,8 @@ func newContractDeleteCmd() *cobra.Command {
 	return c
 }
 func newPrincipleAddCmd() *cobra.Command {
-	c := &cobra.Command{Use: "add", Short: "Add a principle.", RunE: writeHandler("principle_add", documentCreateArgs)}
-	addDocumentCreateFlags(c, false)
+	c := &cobra.Command{Use: "add", Short: "Add a principle.", RunE: writeHandler("principle_add", documentAddArgs)}
+	addDocumentAddFlags(c, false)
 	return c
 }
 func newPrincipleUpdateCmd() *cobra.Command {
@@ -725,8 +725,8 @@ func newPrincipleDeleteCmd() *cobra.Command {
 	return c
 }
 func newReviewerAddCmd() *cobra.Command {
-	c := &cobra.Command{Use: "add", Short: "Add a reviewer doc.", RunE: writeHandler("reviewer_add", documentCreateArgs)}
-	addDocumentCreateFlags(c, false)
+	c := &cobra.Command{Use: "add", Short: "Add a reviewer doc.", RunE: writeHandler("reviewer_add", documentAddArgs)}
+	addDocumentAddFlags(c, false)
 	return c
 }
 func newReviewerUpdateCmd() *cobra.Command {
@@ -740,8 +740,8 @@ func newReviewerDeleteCmd() *cobra.Command {
 	return c
 }
 func newRoleAddCmd() *cobra.Command {
-	c := &cobra.Command{Use: "add", Short: "Add a role doc.", RunE: writeHandler("role_add", documentCreateArgs)}
-	addDocumentCreateFlags(c, false)
+	c := &cobra.Command{Use: "add", Short: "Add a role doc.", RunE: writeHandler("role_add", documentAddArgs)}
+	addDocumentAddFlags(c, false)
 	return c
 }
 func newRoleUpdateCmd() *cobra.Command {
@@ -755,8 +755,8 @@ func newRoleDeleteCmd() *cobra.Command {
 	return c
 }
 func newSkillAddCmd() *cobra.Command {
-	c := &cobra.Command{Use: "add", Short: "Add a skill doc.", RunE: writeHandler("skill_add", documentCreateArgs)}
-	addDocumentCreateFlags(c, false)
+	c := &cobra.Command{Use: "add", Short: "Add a skill doc.", RunE: writeHandler("skill_add", documentAddArgs)}
+	addDocumentAddFlags(c, false)
 	return c
 }
 func newSkillUpdateCmd() *cobra.Command {

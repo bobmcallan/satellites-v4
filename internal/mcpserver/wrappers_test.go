@@ -37,7 +37,7 @@ func TestWrapper_RejectsCallerType(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.kind, func(t *testing.T) {
-			handler := s.wrapperCreate(tc.kind)
+			handler := s.wrapperAdd(tc.kind)
 			res, err := handler(ctx, newCallToolReq(tc.kind+"_create", map[string]any{
 				"type":  "artifact",
 				"scope": "system",
@@ -64,7 +64,7 @@ func TestWrapper_PerTypePayloadValidation(t *testing.T) {
 	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_a", Source: "session"})
 
 	t.Run("contract_add requires structured", func(t *testing.T) {
-		res, _ := s.wrapperCreate("contract")(ctx, newCallToolReq("contract_add", map[string]any{
+		res, _ := s.wrapperAdd("contract")(ctx, newCallToolReq("contract_add", map[string]any{
 			"scope": "system", "name": "c",
 		}))
 		if !res.IsError {
@@ -73,7 +73,7 @@ func TestWrapper_PerTypePayloadValidation(t *testing.T) {
 	})
 
 	t.Run("contract_add requires required keys", func(t *testing.T) {
-		res, _ := s.wrapperCreate("contract")(ctx, newCallToolReq("contract_add", map[string]any{
+		res, _ := s.wrapperAdd("contract")(ctx, newCallToolReq("contract_add", map[string]any{
 			"scope":      "system",
 			"name":       "c",
 			"structured": `{"category":"plan"}`,
@@ -84,7 +84,7 @@ func TestWrapper_PerTypePayloadValidation(t *testing.T) {
 	})
 
 	t.Run("skill_add requires contract_binding", func(t *testing.T) {
-		res, _ := s.wrapperCreate("skill")(ctx, newCallToolReq("skill_add", map[string]any{
+		res, _ := s.wrapperAdd("skill")(ctx, newCallToolReq("skill_add", map[string]any{
 			"scope": "system", "name": "s",
 		}))
 		if !res.IsError {
@@ -93,7 +93,7 @@ func TestWrapper_PerTypePayloadValidation(t *testing.T) {
 	})
 
 	t.Run("reviewer_add requires contract_binding", func(t *testing.T) {
-		res, _ := s.wrapperCreate("reviewer")(ctx, newCallToolReq("reviewer_add", map[string]any{
+		res, _ := s.wrapperAdd("reviewer")(ctx, newCallToolReq("reviewer_add", map[string]any{
 			"scope": "system", "name": "r",
 		}))
 		if !res.IsError {
@@ -102,7 +102,7 @@ func TestWrapper_PerTypePayloadValidation(t *testing.T) {
 	})
 
 	t.Run("principle_add requires scope and tags", func(t *testing.T) {
-		res, _ := s.wrapperCreate("principle")(ctx, newCallToolReq("principle_add", map[string]any{
+		res, _ := s.wrapperAdd("principle")(ctx, newCallToolReq("principle_add", map[string]any{
 			"scope": "system", "name": "p",
 		}))
 		if !res.IsError {

@@ -14,16 +14,16 @@ import (
 )
 
 // TestDocumentCRUDVerbs_RoundTrip exercises the slice 6.2 generic
-// document_create / document_list / document_get(id) / document_update /
+// document_add / document_list / document_get(id) / document_update /
 // document_delete verbs against a real SurrealDB. The walk is:
 //
-//  1. document_create — happy path returns the new doc
+//  1. document_add — happy path returns the new doc
 //  2. document_list   — finds the new row by type filter
 //  3. document_get    — id-keyed retrieval
 //  4. document_update — partial update on body + tags; immutable rejection
 //  5. document_delete — default archive hides from list; mode=hard removes
 //
-// FK rejection: a separate document_create with a dangling
+// FK rejection: a separate document_add with a dangling
 // contract_binding must isError; binding to an existing type=contract row
 // passes.
 func TestDocumentCRUDVerbs_RoundTrip(t *testing.T) {
@@ -82,7 +82,7 @@ func TestDocumentCRUDVerbs_RoundTrip(t *testing.T) {
 		"jsonrpc": "2.0", "id": 2, "method": "tools/list",
 	})
 	want := map[string]bool{
-		"document_create": false, "document_update": false,
+		"document_add": false, "document_update": false,
 		"document_list": false, "document_delete": false,
 		"document_get": false,
 	}
@@ -105,8 +105,8 @@ func TestDocumentCRUDVerbs_RoundTrip(t *testing.T) {
 		}
 	}
 
-	// 2. document_create — system-scope principle (no project_id).
-	created := callTool(t, ctx, mcpURL, "key_crud", "document_create", map[string]any{
+	// 2. document_add — system-scope principle (no project_id).
+	created := callTool(t, ctx, mcpURL, "key_crud", "document_add", map[string]any{
 		"type":  "principle",
 		"scope": "system",
 		"name":  "test-principle",
@@ -115,14 +115,14 @@ func TestDocumentCRUDVerbs_RoundTrip(t *testing.T) {
 	})
 	docID, _ := created["id"].(string)
 	if docID == "" {
-		t.Fatalf("document_create returned no id: %+v", created)
+		t.Fatalf("document_add returned no id: %+v", created)
 	}
 	if got, _ := created["scope"].(string); got != "system" {
 		t.Errorf("created scope = %q, want system", got)
 	}
 
-	// 3. document_create — project=system mismatch → rejection.
-	bogus := callToolRaw(t, ctx, mcpURL, "key_crud", "document_create", map[string]any{
+	// 3. document_add — project=system mismatch → rejection.
+	bogus := callToolRaw(t, ctx, mcpURL, "key_crud", "document_add", map[string]any{
 		"type":       "principle",
 		"scope":      "system",
 		"name":       "bad",
@@ -132,8 +132,8 @@ func TestDocumentCRUDVerbs_RoundTrip(t *testing.T) {
 		t.Errorf("scope=system + project_id should isError; got %+v", bogus)
 	}
 
-	// 4. document_create — dangling contract_binding rejected.
-	dangling := callToolRaw(t, ctx, mcpURL, "key_crud", "document_create", map[string]any{
+	// 4. document_add — dangling contract_binding rejected.
+	dangling := callToolRaw(t, ctx, mcpURL, "key_crud", "document_add", map[string]any{
 		"type":             "skill",
 		"scope":            "system",
 		"name":             "skill-dangling",
@@ -143,15 +143,15 @@ func TestDocumentCRUDVerbs_RoundTrip(t *testing.T) {
 		t.Errorf("dangling contract_binding should isError; got %+v", dangling)
 	}
 
-	// 5. document_create — bind a skill to a real contract.
-	contract := callTool(t, ctx, mcpURL, "key_crud", "document_create", map[string]any{
+	// 5. document_add — bind a skill to a real contract.
+	contract := callTool(t, ctx, mcpURL, "key_crud", "document_add", map[string]any{
 		"type":  "contract",
 		"scope": "system",
 		"name":  "test-contract",
 		"body":  "contract body",
 	})
 	contractID, _ := contract["id"].(string)
-	skill := callTool(t, ctx, mcpURL, "key_crud", "document_create", map[string]any{
+	skill := callTool(t, ctx, mcpURL, "key_crud", "document_add", map[string]any{
 		"type":             "skill",
 		"scope":            "system",
 		"name":             "test-skill",

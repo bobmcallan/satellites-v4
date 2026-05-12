@@ -1030,46 +1030,46 @@ func (s *Server) handleDocumentGet(ctx context.Context, req mcpgo.CallToolReques
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
-func (s *Server) handleDocumentCreate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+func (s *Server) handleDocumentAdd(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
-	in, err := s.buildDocumentCreateInput(ctx, caller, req)
+	in, err := s.buildDocumentAddInput(ctx, caller, req)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	created, err := s.cli().DocumentCreate(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: in.Memberships}, in.Payload)
+	created, err := s.cli().DocumentAdd(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: in.Memberships}, in.Payload)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	body, _ := json.Marshal(created)
-	s.logger.Info().Str("method", "tools/call").Str("tool", "document_create").Str("doc_id", created.ID).Str("type", created.Type).Str("scope", created.Scope).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "document_add").Str("doc_id", created.ID).Str("type", created.Type).Str("scope", created.Scope).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
-// documentCreateRequest pairs the resolved memberships with the
-// payload the typed method consumes; lets handleDocumentCreate stay
+// documentAddRequest pairs the resolved memberships with the
+// payload the typed method consumes; lets handleDocumentAdd stay
 // inside the ≤25-line adapter budget.
-type documentCreateRequest struct {
+type documentAddRequest struct {
 	Memberships []string
-	Payload     client.DocumentCreateInput
+	Payload     client.DocumentAddInput
 }
 
-// buildDocumentCreateInput owns the wire-side argument parsing +
-// per-scope project/workspace resolution that handleDocumentCreate
+// buildDocumentAddInput owns the wire-side argument parsing +
+// per-scope project/workspace resolution that handleDocumentAdd
 // previously inlined. The typed client method consumes the resolved
 // payload verbatim.
-func (s *Server) buildDocumentCreateInput(ctx context.Context, caller auth.CallerIdentity, req mcpgo.CallToolRequest) (documentCreateRequest, error) {
+func (s *Server) buildDocumentAddInput(ctx context.Context, caller auth.CallerIdentity, req mcpgo.CallToolRequest) (documentAddRequest, error) {
 	docType, err := req.RequireString("type")
 	if err != nil {
-		return documentCreateRequest{}, err
+		return documentAddRequest{}, err
 	}
 	scope, err := req.RequireString("scope")
 	if err != nil {
-		return documentCreateRequest{}, err
+		return documentAddRequest{}, err
 	}
 	name, err := req.RequireString("name")
 	if err != nil {
-		return documentCreateRequest{}, err
+		return documentAddRequest{}, err
 	}
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	wsID := s.resolveCallerWorkspaceID(ctx, caller)
@@ -1081,7 +1081,7 @@ func (s *Server) buildDocumentCreateInput(ctx context.Context, caller auth.Calle
 	case "project":
 		resolvedID, err = s.resolveProjectID(ctx, req.GetString("project_id", ""), caller, memberships)
 		if err != nil {
-			return documentCreateRequest{}, err
+			return documentAddRequest{}, err
 		}
 		if cascade := s.resolveProjectWorkspaceID(ctx, resolvedID); cascade != "" {
 			wsID = cascade
@@ -1089,9 +1089,9 @@ func (s *Server) buildDocumentCreateInput(ctx context.Context, caller auth.Calle
 	case "system":
 		resolvedID = req.GetString("project_id", "")
 	}
-	return documentCreateRequest{
+	return documentAddRequest{
 		Memberships: memberships,
-		Payload: client.DocumentCreateInput{
+		Payload: client.DocumentAddInput{
 			Type: docType, Scope: scope, Name: name,
 			Body: req.GetString("body", ""), Tags: req.GetStringSlice("tags", nil),
 			Status: req.GetString("status", ""), ContractBinding: req.GetString("contract_binding", ""),

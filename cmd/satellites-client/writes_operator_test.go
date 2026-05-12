@@ -34,7 +34,7 @@ var writesOperatorHappy = []struct {
 	{"repo add", []string{"repo", "add", "--git-remote", "git@github.com:o/r.git"}, "repo_add", map[string]any{"repo_id": "repo_x"}},
 	{"ledger dereference", []string{"ledger", "dereference", "--id", "ldg_x", "--reason", "wrong project"}, "ledger_dereference", map[string]any{"id": "ldg_x"}},
 	{"session register", []string{"session", "register"}, "session_register", map[string]any{"session_id": "sess_x"}},
-	{"document create", []string{"document", "create", "--scope", "system", "--name", "x", "--type", "agent"}, "document_create", map[string]any{"id": "doc_x"}},
+	{"document add", []string{"document", "add", "--scope", "system", "--name", "x", "--type", "agent"}, "document_add", map[string]any{"id": "doc_x"}},
 	{"document update", []string{"document", "update", "--id", "doc_x", "--body", "b"}, "document_update", map[string]any{"id": "doc_x"}},
 	{"document delete", []string{"document", "delete", "--id", "doc_x"}, "document_delete", map[string]any{"id": "doc_x", "deleted": true}},
 	{"agent add", []string{"agent", "add", "--scope", "system", "--name", "a"}, "agent_add", map[string]any{"id": "doc_a"}},

@@ -147,3 +147,84 @@ func TestStoryFieldSet_RejectsMissingField(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "field required")
 }
+
+func TestStoryCreate_HappyPathDefaultsPriorityAndCategory(t *testing.T) {
+	f := newStoryFixture(t)
+	st, err := f.c.StoryCreate(context.Background(), f.caller, StoryCreateInput{
+		ProjectID:   "proj_test",
+		WorkspaceID: f.wsID,
+		Title:       "ship widgets",
+		Now:         f.now,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "ship widgets", st.Title)
+	assert.Equal(t, "medium", st.Priority)
+	assert.Equal(t, "feature", st.Category)
+	assert.Equal(t, "u_alice", st.CreatedBy)
+	assert.Equal(t, f.wsID, st.WorkspaceID)
+	assert.NotEmpty(t, st.ID)
+}
+
+func TestStoryCreate_RejectsMissingProjectID(t *testing.T) {
+	f := newStoryFixture(t)
+	_, err := f.c.StoryCreate(context.Background(), f.caller, StoryCreateInput{
+		WorkspaceID: f.wsID,
+		Title:       "x",
+	})
+	require.ErrorIs(t, err, ErrStoryProjectIDRequired)
+}
+
+func TestStoryCreate_RejectsMissingTitle(t *testing.T) {
+	f := newStoryFixture(t)
+	_, err := f.c.StoryCreate(context.Background(), f.caller, StoryCreateInput{
+		ProjectID:   "proj_test",
+		WorkspaceID: f.wsID,
+	})
+	require.ErrorIs(t, err, ErrStoryTitleRequired)
+}
+
+func TestStoryUpdate_AppliesProvidedFields(t *testing.T) {
+	f := newStoryFixture(t)
+	newTitle := "renamed"
+	newPrio := "high"
+	updated, err := f.c.StoryUpdate(context.Background(), f.caller, StoryUpdateInput{
+		ID:          f.storyID,
+		Title:       &newTitle,
+		Priority:    &newPrio,
+		Memberships: f.caller.Memberships,
+		Now:         f.now.Add(time.Minute),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "renamed", updated.Title)
+	assert.Equal(t, "high", updated.Priority)
+}
+
+func TestStoryUpdate_RejectsInvalidCategory(t *testing.T) {
+	f := newStoryFixture(t)
+	bogus := "nonsense_category"
+	_, err := f.c.StoryUpdate(context.Background(), f.caller, StoryUpdateInput{
+		ID:          f.storyID,
+		Category:    &bogus,
+		Memberships: f.caller.Memberships,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid category")
+}
+
+func TestStoryUpdate_MissingIDErrors(t *testing.T) {
+	f := newStoryFixture(t)
+	_, err := f.c.StoryUpdate(context.Background(), f.caller, StoryUpdateInput{})
+	require.ErrorIs(t, err, ErrStoryIDRequired)
+}
+
+func TestStoryUpdate_CrossWorkspaceHidesStory(t *testing.T) {
+	f := newStoryFixture(t)
+	newTitle := "renamed"
+	_, err := f.c.StoryUpdate(context.Background(), f.caller, StoryUpdateInput{
+		ID:          f.storyID,
+		Title:       &newTitle,
+		Memberships: []string{"wksp_other"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "story not found")
+}

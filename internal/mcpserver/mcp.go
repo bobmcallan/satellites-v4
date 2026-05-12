@@ -1893,48 +1893,31 @@ func buildLedgerListOptions(req mcpgo.CallToolRequest) ledger.ListOptions {
 	return opts
 }
 
+// handleStoryCreate is the thin wire adapter for story_create. Resolves
+// the caller's project + workspace scope, delegates to
+// client.StoryCreate, marshals the freshly-persisted row unchanged.
 func (s *Server) handleStoryCreate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
-	projectID, err := req.RequireString("project_id")
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	title, err := req.RequireString("title")
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	resolvedID, err := s.resolveProjectID(ctx, projectID, caller, memberships)
+	resolvedID, err := s.resolveProjectID(ctx, req.GetString("project_id", ""), caller, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	tagsRaw := req.GetStringSlice("tags", nil)
-	wsID := s.resolveProjectWorkspaceID(ctx, resolvedID)
-
-	candidate := story.Story{
-		WorkspaceID:        wsID,
-		ProjectID:          resolvedID,
-		Title:              title,
-		Description:        req.GetString("description", ""),
+	st, err := s.cli().StoryCreate(ctx, toClientCaller(caller), client.StoryCreateInput{
+		ProjectID: resolvedID, WorkspaceID: s.resolveProjectWorkspaceID(ctx, resolvedID),
+		Title: req.GetString("title", ""), Description: req.GetString("description", ""),
 		AcceptanceCriteria: req.GetString("acceptance_criteria", ""),
-		Priority:           req.GetString("priority", "medium"),
-		Category:           req.GetString("category", "feature"),
-		Tags:               tagsRaw,
-		CreatedBy:          caller.UserID,
-	}
-	st, err := s.stories.Create(ctx, candidate, time.Now().UTC())
+		Priority:           req.GetString("priority", ""), Category: req.GetString("category", ""),
+		Tags: req.GetStringSlice("tags", nil), Now: s.nowUTC(),
+	})
 	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
+		return mcpgo.NewToolResultError(storyErrMessage(err)), nil
 	}
 	body, _ := json.Marshal(st)
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "story_create").
-		Str("project_id", resolvedID).
-		Str("story_id", st.ID).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "story_create").
+		Str("project_id", resolvedID).Str("story_id", st.ID).
+		Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
@@ -1958,78 +1941,70 @@ func (s *Server) handleStoryUpdate(ctx context.Context, req mcpgo.CallToolReques
 	if _, err := s.resolveProjectID(ctx, current.ProjectID, caller, memberships); err != nil {
 		return mcpgo.NewToolResultError("story not found"), nil
 	}
-
-	fields, err := buildStoryUpdateFields(req)
+	in := buildStoryUpdateInput(req, id, memberships, s.nowUTC())
+	updated, err := s.cli().StoryUpdate(ctx, toClientCaller(caller), in)
 	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	updated, err := s.stories.Update(ctx, id, fields, caller.UserID, time.Now().UTC(), memberships)
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
+		return mcpgo.NewToolResultError(storyErrMessage(err)), nil
 	}
 	body, _ := json.Marshal(updated)
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "story_update").
-		Str("story_id", id).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "story_update").
+		Str("story_id", id).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
-// validStoryCategories enumerates the categories accepted by story_create
-// and story_update. Kept here (rather than in the story package) because
-// it gates the MCP surface — the store layer is intentionally
-// schema-free on category strings.
-var validStoryCategories = map[string]struct{}{
-	"feature":        {},
-	"bug":            {},
-	"improvement":    {},
-	"infrastructure": {},
-	"documentation":  {},
-}
-
-// buildStoryUpdateFields reads optional update fields from req. A field
-// is "provided" when its key is present in the argument map (regardless
-// of value), so callers can clear strings or tags by passing an empty
-// value. Returns a structured error when category is provided but not
-// in the allowed set.
-func buildStoryUpdateFields(req mcpgo.CallToolRequest) (story.UpdateFields, error) {
+// buildStoryUpdateInput reads optional update fields from req using
+// argument-map presence semantics (a key present with an empty value
+// clears the field; an omitted key leaves it untouched). The category
+// validation lives on client.StoryUpdate so the typed surface owns the
+// allowed-set rule.
+func buildStoryUpdateInput(req mcpgo.CallToolRequest, id string, memberships []string, now time.Time) client.StoryUpdateInput {
 	args := req.GetArguments()
-	fields := story.UpdateFields{}
+	in := client.StoryUpdateInput{ID: id, Memberships: memberships, Now: now}
 	if _, ok := args["title"]; ok {
 		v := req.GetString("title", "")
-		fields.Title = &v
+		in.Title = &v
 	}
 	if _, ok := args["description"]; ok {
 		v := req.GetString("description", "")
-		fields.Description = &v
+		in.Description = &v
 	}
 	if _, ok := args["acceptance_criteria"]; ok {
 		v := req.GetString("acceptance_criteria", "")
-		fields.AcceptanceCriteria = &v
+		in.AcceptanceCriteria = &v
 	}
 	if _, ok := args["category"]; ok {
 		v := req.GetString("category", "")
-		if v != "" {
-			if _, allowed := validStoryCategories[v]; !allowed {
-				return story.UpdateFields{}, fmt.Errorf("invalid category %q (allowed: feature | bug | improvement | infrastructure | documentation)", v)
-			}
-		}
-		fields.Category = &v
+		in.Category = &v
 	}
 	if _, ok := args["priority"]; ok {
 		v := req.GetString("priority", "")
-		fields.Priority = &v
+		in.Priority = &v
 	}
 	if _, ok := args["tags"]; ok {
 		v := req.GetStringSlice("tags", []string{})
 		if v == nil {
 			v = []string{}
 		}
-		fields.Tags = &v
+		in.Tags = &v
 	}
-	return fields, nil
+	return in
+}
+
+// storyErrMessage maps typed sentinels from internal/client into the
+// wire-error envelopes the story_create/update handlers historically
+// produced. Mirrors the projectErrMessage pattern (slice 1) so each
+// adapter stays inside the ≤25-line floor.
+func storyErrMessage(err error) string {
+	switch {
+	case errors.Is(err, client.ErrStoryProjectIDRequired):
+		return "project_id is required"
+	case errors.Is(err, client.ErrStoryTitleRequired):
+		return "title is required"
+	case errors.Is(err, client.ErrStoryIDRequired):
+		return "id is required"
+	default:
+		return err.Error()
+	}
 }
 
 // loadStoryTemplate resolves a category → story.Template by reading the

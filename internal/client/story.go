@@ -30,6 +30,30 @@ var errStoryStoreNotConfigured = errors.New("story store not configured")
 // callers can map "story_not_found" envelope tags consistently.
 var errStoryNotFoundForUpdate = errors.New("story not found")
 
+// ErrStoryProjectIDRequired is returned when StoryCreate is called
+// without a project id. Mirrors the historical "project_id is required"
+// envelope produced by the MCP RequireString path.
+var ErrStoryProjectIDRequired = errors.New("project_id is required")
+
+// ErrStoryTitleRequired is returned when StoryCreate is called without
+// a title. Mirrors the historical "title is required" envelope.
+var ErrStoryTitleRequired = errors.New("title is required")
+
+// ErrStoryIDRequired is returned when StoryUpdate is called without
+// an id. Mirrors the historical "id is required" envelope.
+var ErrStoryIDRequired = errors.New("id is required")
+
+// validStoryCategories enumerates the categories accepted by
+// StoryCreate / StoryUpdate. Kept on the typed surface because the
+// store layer is intentionally schema-free on category strings.
+var validStoryCategories = map[string]struct{}{
+	"feature":        {},
+	"bug":            {},
+	"improvement":    {},
+	"infrastructure": {},
+	"documentation":  {},
+}
+
 // StoryUpdateStatusInput names the transition target. ID + Status
 // are required. Memberships scope the GetByID + UpdateStatus
 // lookups. Now is overridable for testing; zero falls through to
@@ -217,6 +241,118 @@ func (c *Client) StoryGet(ctx context.Context, caller Caller, in StoryGetInput) 
 	}
 
 	return out, nil
+}
+
+// StoryCreateInput captures the story_create request shape. The wire
+// layer pre-resolves project + workspace ids (the MCP handler runs
+// resolveProjectID + resolveProjectWorkspaceID before calling); the
+// typed method requires those to be supplied so it stays free of
+// wire-only request context. Now overrides the timestamp for
+// deterministic tests; zero falls back to time.Now().UTC().
+type StoryCreateInput struct {
+	ProjectID          string
+	WorkspaceID        string
+	Title              string
+	Description        string
+	AcceptanceCriteria string
+	Priority           string
+	Category           string
+	Tags               []string
+	Now                time.Time
+}
+
+// StoryCreate mints a new story row owned by caller.UserID. Returns
+// the freshly-persisted story.Story; the wire layer marshals it
+// unchanged. Default priority is "medium"; default category is
+// "feature" — mirrors the historical MCP handler defaults so the
+// JSON wire shape is byte-identical for omitted fields.
+func (c *Client) StoryCreate(ctx context.Context, caller Caller, in StoryCreateInput) (story.Story, error) {
+	if c.deps.Stories == nil {
+		return story.Story{}, errStoryStoreNotConfigured
+	}
+	if in.ProjectID == "" {
+		return story.Story{}, ErrStoryProjectIDRequired
+	}
+	if in.Title == "" {
+		return story.Story{}, ErrStoryTitleRequired
+	}
+	priority := in.Priority
+	if priority == "" {
+		priority = "medium"
+	}
+	category := in.Category
+	if category == "" {
+		category = "feature"
+	}
+	now := in.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	candidate := story.Story{
+		WorkspaceID:        in.WorkspaceID,
+		ProjectID:          in.ProjectID,
+		Title:              in.Title,
+		Description:        in.Description,
+		AcceptanceCriteria: in.AcceptanceCriteria,
+		Priority:           priority,
+		Category:           category,
+		Tags:               in.Tags,
+		CreatedBy:          caller.UserID,
+	}
+	return c.deps.Stories.Create(ctx, candidate, now)
+}
+
+// StoryUpdateInput captures the per-call mutable subset for
+// StoryUpdate. Each *string / *[]string carries pointer-presence
+// semantics: nil means "field omitted, leave untouched"; a non-nil
+// pointer to an empty value clears the field on the story row. This
+// mirrors the wire-layer GetArguments()-presence test the MCP
+// handler historically used.
+type StoryUpdateInput struct {
+	ID                 string
+	Title              *string
+	Description        *string
+	AcceptanceCriteria *string
+	Category           *string
+	Priority           *string
+	Tags               *[]string
+	Memberships        []string
+	Now                time.Time
+}
+
+// StoryUpdate applies the input's optional fields to the story.
+// Resolves the existing row first (workspace-scoped via memberships)
+// to surface a "story not found" envelope on cross-workspace access,
+// then delegates to the store's narrow Update verb. Status
+// transitions remain on StoryUpdateStatus per the V3 surface split.
+func (c *Client) StoryUpdate(ctx context.Context, caller Caller, in StoryUpdateInput) (story.Story, error) {
+	if c.deps.Stories == nil {
+		return story.Story{}, errStoryStoreNotConfigured
+	}
+	if in.ID == "" {
+		return story.Story{}, ErrStoryIDRequired
+	}
+	if _, err := c.deps.Stories.GetByID(ctx, in.ID, in.Memberships); err != nil {
+		return story.Story{}, errStoryNotFoundForUpdate
+	}
+	if in.Category != nil && *in.Category != "" {
+		if _, ok := validStoryCategories[*in.Category]; !ok {
+			return story.Story{}, fmt.Errorf("invalid category %q (allowed: feature | bug | improvement | infrastructure | documentation)", *in.Category)
+		}
+	}
+	now := in.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	fields := story.UpdateFields{
+		Title:              in.Title,
+		Description:        in.Description,
+		AcceptanceCriteria: in.AcceptanceCriteria,
+		Category:           in.Category,
+		Priority:           in.Priority,
+		Tags:               in.Tags,
+	}
+	return c.deps.Stories.Update(ctx, in.ID, fields, caller.UserID, now, in.Memberships)
 }
 
 // loadStoryTemplate resolves a category → story.Template by reading

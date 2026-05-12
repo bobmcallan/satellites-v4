@@ -9,7 +9,6 @@ import (
 
 	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/client"
-	"github.com/bobmcallan/satellites/internal/task"
 )
 
 // handleTaskPlan implements task_plan: write a task at status=planned —
@@ -120,7 +119,7 @@ func (s *Server) handleTaskClaim(ctx context.Context, req mcpgo.CallToolRequest)
 		in.WorkspaceIDs = []string{scoped}
 	}
 	t, err := s.cli().TaskClaim(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, in)
-	if errors.Is(err, task.ErrNoTaskAvailable) {
+	if errors.Is(err, client.ErrNoTaskAvailable) {
 		return jsonResult(nil)
 	}
 	if err != nil {

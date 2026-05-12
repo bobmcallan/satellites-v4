@@ -18,7 +18,6 @@ import (
 
 	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/client"
-	"github.com/bobmcallan/satellites/internal/task"
 )
 
 // handleTaskUpdate implements `task_update`. Thin forwarder to
@@ -53,7 +52,7 @@ func (s *Server) buildTaskUpdateInput(req mcpgo.CallToolRequest, taskID string, 
 	return client.TaskUpdateInput{
 		ID:                taskID,
 		Status:            strings.TrimSpace(req.GetString("status", "")),
-		Outcome:           req.GetString("outcome", task.OutcomeSuccess),
+		Outcome:           req.GetString("outcome", ""),
 		EvidenceLedgerIDs: parseStringArray(req.GetString("evidence_ledger_ids", "")),
 		Memberships:       memberships,
 		Now:               s.nowUTC(),

@@ -157,6 +157,21 @@ func TestTaskGet_RoundtripsAddedTask(t *testing.T) {
 	assert.Equal(t, task.StatusPublished, got.Status)
 }
 
+// TestTaskClaim_EmptyQueueReturnsErrNoTaskAvailable: claiming against an
+// empty queue surfaces the re-exported sentinel (client.ErrNoTaskAvailable
+// == task.ErrNoTaskAvailable). Transport handlers branch on the client
+// sentinel without importing internal/task (pr_mcp_cli_shared_path).
+func TestTaskClaim_EmptyQueueReturnsErrNoTaskAvailable(t *testing.T) {
+	f := newTaskFixture(t)
+	_, err := f.c.TaskClaim(context.Background(), f.caller, TaskClaimInput{
+		WorkerID:    "worker_empty",
+		Memberships: f.caller.Memberships,
+		Now:         f.now,
+	})
+	assert.ErrorIs(t, err, ErrNoTaskAvailable)
+	assert.ErrorIs(t, err, task.ErrNoTaskAvailable, "re-export must alias the substrate sentinel")
+}
+
 // TestTaskClaim_PicksPublishedTask: TaskAdd publishes; TaskClaim picks.
 func TestTaskClaim_PicksPublishedTask(t *testing.T) {
 	f := newTaskFixture(t)

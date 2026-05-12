@@ -145,17 +145,6 @@ var legacyAllowlist = map[string]map[string]struct{}{
 		"github.com/bobmcallan/satellites/internal/project":      {},
 		"github.com/bobmcallan/satellites/internal/story":        {},
 	},
-	// task_handlers.go — task_list / task_get / task_walk wire
-	// adapter; reaches task store directly. TODO(sty_4db0e025):
-	// converge onto client.Task* methods.
-	"task_handlers.go": {
-		"github.com/bobmcallan/satellites/internal/task": {},
-	},
-	// task_update.go — task_update handler; mutates task store
-	// directly. TODO(sty_4db0e025): converge onto client.TaskUpdate.
-	"task_update.go": {
-		"github.com/bobmcallan/satellites/internal/task": {},
-	},
 	// wrappers.go — document type wrappers (principle_*, contract_*,
 	// skill_*, reviewer_*); fans out through the document type
 	// constants. TODO(sty_4db0e025): the wrappers themselves become

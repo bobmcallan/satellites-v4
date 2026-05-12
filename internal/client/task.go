@@ -27,6 +27,12 @@ var ErrStoryStoreNotConfigured = errors.New("story store not configured")
 // does not resolve in the caller's workspaces.
 var ErrStoryNotFound = errors.New("story_not_found")
 
+// ErrNoTaskAvailable is re-exported from internal/task so transport
+// handlers can branch on the empty-queue case without importing the
+// substrate task package (pr_mcp_cli_shared_path). TaskClaim returns
+// it verbatim when no enqueued task matches the caller's workspaces.
+var ErrNoTaskAvailable = task.ErrNoTaskAvailable
+
 // TaskGetInput names the task being read.
 type TaskGetInput struct {
 	ID          string

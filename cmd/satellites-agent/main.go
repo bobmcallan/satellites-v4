@@ -97,7 +97,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	var logger = satarbor.New(cfg.LogLevel)
 	if resolvedLogPath != "" {
-		logger = satarbor.NewWithFile(cfg.LogLevel, resolvedLogPath)
+		logger = satarbor.NewWithFile(cfg.LogLevel, resolvedLogPath, "satellites-agent.log")
 	}
 	logger.Info().
 		Str("binary", "satellites-agent").

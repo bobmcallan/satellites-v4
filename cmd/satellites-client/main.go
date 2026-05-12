@@ -121,10 +121,24 @@ func newRootCmd() *cobra.Command {
 				}
 			}
 			if resolvedLogPath != "" {
-				resolvedLogger = satarbor.NewWithFile(cfg.LogLevel, resolvedLogPath)
+				resolvedLogger = satarbor.NewWithFile(cfg.LogLevel, resolvedLogPath, "satellites-client.log")
 			} else {
 				resolvedLogger = satarbor.New(cfg.LogLevel)
 			}
+			// Emit a single boot-line Info log (mirrors
+			// cmd/satellites-agent/main.go's pattern) so arbor's lazy
+			// file writer opens the log file and operators have a
+			// known anchor when tailing bin/logs/satellites-client.log.
+			// sty_b1345841.
+			resolvedLogger.Info().
+				Str("binary", "satellites-client").
+				Str("version", config.Version).
+				Str("build", config.Build).
+				Str("commit", config.GitCommit).
+				Str("config_path", cfg.LoadedTOMLPath()).
+				Str("server", cfg.Server).
+				Str("log_path", resolvedLogPath).
+				Msgf("satellites-client %s", config.GetFullVersion())
 			return nil
 		},
 	}

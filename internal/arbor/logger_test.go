@@ -43,7 +43,7 @@ func TestNewRespectsLevel(t *testing.T) {
 // degrades to console-only behaviour (matching New). sty_92bfd9e6.
 func TestNewWithFile_ConsoleOnlyWhenEmpty(t *testing.T) {
 	t.Parallel()
-	if NewWithFile("info", "") == nil {
+	if NewWithFile("info", "", "satellites-agent.log") == nil {
 		t.Fatal("NewWithFile(empty) must return a non-nil logger")
 	}
 }
@@ -58,7 +58,7 @@ func TestNewWithFile_WritesFile(t *testing.T) {
 	tmp := t.TempDir()
 	logDir := filepath.Join(tmp, "nested", "logs")
 
-	logger := NewWithFile("info", logDir)
+	logger := NewWithFile("info", logDir, "satellites-agent.log")
 	if logger == nil {
 		t.Fatal("NewWithFile must return a non-nil logger")
 	}

@@ -30,11 +30,11 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.RepoPath != "." {
 		t.Fatalf("expected repo_path default '.', got %q", cfg.RepoPath)
 	}
-	if cfg.WorktreeRoot != ".satellites-agents/" {
-		t.Fatalf("expected worktree_root default '.satellites-agents/', got %q", cfg.WorktreeRoot)
+	if cfg.WorktreeRoot != ".satellites-clients/" {
+		t.Fatalf("expected worktree_root default '.satellites-clients/', got %q", cfg.WorktreeRoot)
 	}
-	if cfg.BranchTemplate != "agent-{task_id}-from-{base_sha}" {
-		t.Fatalf("expected branch_template default, got %q", cfg.BranchTemplate)
+	if cfg.BranchTemplate != "client-{task_id}-from-{base_sha}" {
+		t.Fatalf("expected branch_template default 'client-{task_id}-from-{base_sha}', got %q", cfg.BranchTemplate)
 	}
 	if cfg.ExecuteTimeout != 30*time.Minute {
 		t.Fatalf("expected execute_timeout 30m, got %s", cfg.ExecuteTimeout)

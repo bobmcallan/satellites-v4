@@ -48,18 +48,18 @@ func New(level string) arbor.ILogger {
 // console writer (matching New) AND a file writer rooted at logDir.
 // arbor's FileWriter applies its own daily rotation + size-based
 // rollover (defaults: 500KB rolling files, 20 backups) — the satellites
-// caller passes the directory; the filename inside it is fixed at
-// "satellites-agent.log" so an operator can `tail -f` a known path.
+// caller passes the directory and the basename so each binary writes
+// to its own log file (e.g. "satellites-agent.log" / "satellites-client.log").
 //
 // logDir is created on first write via phuslu/log's EnsureFolder
 // option; an unwritable path surfaces as a write-time error rather
 // than aborting boot. An empty logDir is a programming error — call
-// New() instead. sty_92bfd9e6.
-func NewWithFile(level, logDir string) arbor.ILogger {
+// New() instead. sty_92bfd9e6 / sty_b1345841.
+func NewWithFile(level, logDir, basename string) arbor.ILogger {
 	if logDir == "" {
 		return New(level)
 	}
-	fileName := filepath.Join(logDir, "satellites-agent.log")
+	fileName := filepath.Join(logDir, basename)
 	return arbor.NewLogger().
 		WithConsoleWriter(arbormodels.WriterConfiguration{
 			Type:       arbormodels.LogWriterTypeConsole,

@@ -131,12 +131,16 @@ func defaults() *Config {
 		logDir = filepath.Join(filepath.Dir(os.Args[0]), "logs")
 	}
 	return &Config{
-		Server:         "",
-		Token:          "",
-		OAuthEnabled:   false,
-		RepoPath:       ".",
-		WorktreeRoot:   ".satellites-agents/",
-		BranchTemplate: "agent-{task_id}-from-{base_sha}",
+		Server:       "",
+		Token:        "",
+		OAuthEnabled: false,
+		RepoPath:     ".",
+		// WorktreeRoot + BranchTemplate use a "client-" prefix so
+		// satellites-client's per-task worktrees + branches don't
+		// collide with satellites-agent's (which use ".satellites-agents/"
+		// and "agent-…"). sty_b1345841.
+		WorktreeRoot:   ".satellites-clients/",
+		BranchTemplate: "client-{task_id}-from-{base_sha}",
 		ExecuteTimeout: 30 * time.Minute,
 		LogLevel:       "info",
 		LogPath:        logDir,

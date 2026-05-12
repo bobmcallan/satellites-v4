@@ -50,6 +50,19 @@ var readsOperatorHappy = []struct {
 	{"repo get-symbol-source", []string{"repo", "get-symbol-source", "--repo-id", "repo_x", "--symbol-id", "s"}, "repo_get_symbol_source", map[string]any{"source": ""}},
 	{"repo get-file", []string{"repo", "get-file", "--repo-id", "repo_x", "--path", "main.go"}, "repo_get_file", map[string]any{"content": ""}},
 	{"repo get-outline", []string{"repo", "get-outline", "--repo-id", "repo_x", "--path", "main.go"}, "repo_get_outline", map[string]any{"outline": ""}},
+	// sty_004f3d3a — read-tier gap-fill verbs.
+	{"document get", []string{"document", "get", "--id", "doc_x"}, "document_get", map[string]any{"id": "doc_x"}},
+	{"document list", []string{"document", "list"}, "document_list", map[string]any{"items": []any{}}},
+	{"reviewer get", []string{"reviewer", "get", "--name", "rev"}, "reviewer_get", map[string]any{"id": "doc_r"}},
+	{"reviewer list", []string{"reviewer", "list"}, "reviewer_list", map[string]any{"items": []any{}}},
+	{"reviewer search", []string{"reviewer", "search", "--query", "x"}, "reviewer_search", map[string]any{"items": []any{}}},
+	{"role get", []string{"role", "get", "--name", "ro"}, "role_get", map[string]any{"id": "doc_ro"}},
+	{"role list", []string{"role", "list"}, "role_list", map[string]any{"items": []any{}}},
+	{"role search", []string{"role", "search", "--query", "x"}, "role_search", map[string]any{"items": []any{}}},
+	{"skill get", []string{"skill", "get", "--name", "sk"}, "skill_get", map[string]any{"id": "doc_s"}},
+	{"skill list", []string{"skill", "list"}, "skill_list", map[string]any{"items": []any{}}},
+	{"skill search", []string{"skill", "search", "--query", "x"}, "skill_search", map[string]any{"items": []any{}}},
+	{"ledger recall", []string{"ledger", "recall", "--root-id", "ldg_root"}, "ledger_recall", map[string]any{"items": []any{}}},
 }
 
 func TestReads_Operator_HappyPath(t *testing.T) {
@@ -89,6 +102,11 @@ var readsOperatorMissingFlag = []struct {
 	{"repo get-file no path", []string{"repo", "get-file", "--repo-id", "repo_x"}},
 	{"repo get-outline no path", []string{"repo", "get-outline", "--repo-id", "repo_x"}},
 	{"principle get neither id nor name", []string{"principle", "get"}},
+	{"document get neither id nor name", []string{"document", "get"}},
+	{"reviewer get neither id nor name", []string{"reviewer", "get"}},
+	{"role get neither id nor name", []string{"role", "get"}},
+	{"skill get neither id nor name", []string{"skill", "get"}},
+	{"ledger recall no root", []string{"ledger", "recall"}},
 }
 
 func TestReads_Operator_MissingRequiredFlag(t *testing.T) {

@@ -16,7 +16,8 @@ import (
 // expectedRoutes lists the verb routes the HTTP API surface exposes.
 // sty_068a6c46 shipped 20; sty_73207fc8 added /api/v1/story/get;
 // sty_ef248ab2 added 30 operator-tier reads; sty_f38bd573 Tier A added
-// 37 operator-tier mutates. Total: 88.
+// 37 operator-tier mutates; sty_004f3d3a added 9 reviewer/role/skill
+// read wrappers. Total: 97.
 var expectedRoutes = []string{
 	// Order:07a anchor (21).
 	"POST /api/v1/satellites/info",
@@ -109,15 +110,25 @@ var expectedRoutes = []string{
 	"POST /api/v1/skill/create",
 	"POST /api/v1/skill/update",
 	"POST /api/v1/skill/delete",
+	// sty_004f3d3a reviewer/role/skill read wrappers (9).
+	"POST /api/v1/reviewer/get",
+	"POST /api/v1/reviewer/list",
+	"POST /api/v1/reviewer/search",
+	"POST /api/v1/role/get",
+	"POST /api/v1/role/list",
+	"POST /api/v1/role/search",
+	"POST /api/v1/skill/get",
+	"POST /api/v1/skill/list",
+	"POST /api/v1/skill/search",
 }
 
-// TestAPI_RoutesRegistered asserts the registrar attaches all 88
+// TestAPI_RoutesRegistered asserts the registrar attaches all 97
 // verb routes to the supplied mux. Routes that respond 404 indicate
 // missing registration; any other status (400/500/200) proves the
 // handler was hit.
 func TestAPI_RoutesRegistered(t *testing.T) {
-	if got := len(expectedRoutes); got != 88 {
-		t.Fatalf("expected 88 routes, got %d (update the slice as the verb set grows)", got)
+	if got := len(expectedRoutes); got != 97 {
+		t.Fatalf("expected 97 routes, got %d (update the slice as the verb set grows)", got)
 	}
 
 	reg := NewAPIRegistrar(client.New(client.Deps{StartedAt: time.Now().UTC()}))

@@ -74,6 +74,19 @@ func (a *APIRegistrar) registerOperatorRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/principle/get", a.handlePrincipleGet)
 	mux.HandleFunc("POST /api/v1/principle/search", a.handlePrincipleSearch)
 
+	// Reviewer / role / skill — type-pinned wrappers of document_get/list/search.
+	// Added in sty_004f3d3a (read-tier gap-fill) — the mutate wrappers shipped in
+	// sty_f38bd573, the read wrappers were missed in sty_ef248ab2.
+	mux.HandleFunc("POST /api/v1/reviewer/get", a.handleReviewerGet)
+	mux.HandleFunc("POST /api/v1/reviewer/list", a.handleReviewerList)
+	mux.HandleFunc("POST /api/v1/reviewer/search", a.handleReviewerSearch)
+	mux.HandleFunc("POST /api/v1/role/get", a.handleRoleGet)
+	mux.HandleFunc("POST /api/v1/role/list", a.handleRoleList)
+	mux.HandleFunc("POST /api/v1/role/search", a.handleRoleSearch)
+	mux.HandleFunc("POST /api/v1/skill/get", a.handleSkillGet)
+	mux.HandleFunc("POST /api/v1/skill/list", a.handleSkillList)
+	mux.HandleFunc("POST /api/v1/skill/search", a.handleSkillSearch)
+
 	// kv
 	mux.HandleFunc("POST /api/v1/kv/get", a.handleKVGet)
 	mux.HandleFunc("POST /api/v1/kv/list", a.handleKVList)
@@ -497,6 +510,70 @@ func (a *APIRegistrar) handlePrincipleGet(w http.ResponseWriter, r *http.Request
 
 func (a *APIRegistrar) handlePrincipleSearch(w http.ResponseWriter, r *http.Request) {
 	a.runDocumentSearch(w, r, document.TypePrinciple)
+}
+
+// runDocumentGet handles /document/get + the type-pinned wrappers
+// (reviewer_get / role_get / skill_get / principle_get). Mirrors
+// runDocumentList / runDocumentSearch.
+func (a *APIRegistrar) runDocumentGet(w http.ResponseWriter, r *http.Request, pinnedType string) {
+	var req struct {
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		Type      string `json:"type"`
+		ProjectID string `json:"project_id"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeAPIError(w, err)
+		return
+	}
+	if pinnedType != "" {
+		req.Type = pinnedType
+	}
+	cc := a.clientCaller(r)
+	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
+	resolvedProj, _ := a.client.ResolveProjectID(r.Context(), req.ProjectID, "", cc, cc.Memberships)
+	wsID := a.client.ResolveProjectWorkspaceID(r.Context(), resolvedProj)
+	out, err := a.client.DocumentGet(r.Context(), cc, client.DocumentGetInput{
+		ID:                req.ID,
+		Name:              req.Name,
+		Type:              req.Type,
+		WorkspaceID:       wsID,
+		ResolvedProjectID: resolvedProj,
+		Memberships:       cc.Memberships,
+	})
+	if err != nil {
+		writeAPIError(w, err)
+		return
+	}
+	writeAPIJSON(w, out)
+}
+
+func (a *APIRegistrar) handleReviewerGet(w http.ResponseWriter, r *http.Request) {
+	a.runDocumentGet(w, r, document.TypeReviewer)
+}
+func (a *APIRegistrar) handleReviewerList(w http.ResponseWriter, r *http.Request) {
+	a.runDocumentList(w, r, document.TypeReviewer)
+}
+func (a *APIRegistrar) handleReviewerSearch(w http.ResponseWriter, r *http.Request) {
+	a.runDocumentSearch(w, r, document.TypeReviewer)
+}
+func (a *APIRegistrar) handleRoleGet(w http.ResponseWriter, r *http.Request) {
+	a.runDocumentGet(w, r, document.TypeRole)
+}
+func (a *APIRegistrar) handleRoleList(w http.ResponseWriter, r *http.Request) {
+	a.runDocumentList(w, r, document.TypeRole)
+}
+func (a *APIRegistrar) handleRoleSearch(w http.ResponseWriter, r *http.Request) {
+	a.runDocumentSearch(w, r, document.TypeRole)
+}
+func (a *APIRegistrar) handleSkillGet(w http.ResponseWriter, r *http.Request) {
+	a.runDocumentGet(w, r, document.TypeSkill)
+}
+func (a *APIRegistrar) handleSkillList(w http.ResponseWriter, r *http.Request) {
+	a.runDocumentList(w, r, document.TypeSkill)
+}
+func (a *APIRegistrar) handleSkillSearch(w http.ResponseWriter, r *http.Request) {
+	a.runDocumentSearch(w, r, document.TypeSkill)
 }
 
 // agent_ephemeral_summary aggregates active ephemeral agents per project.

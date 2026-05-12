@@ -77,18 +77,18 @@ func TestPersistentFlagsRecognised(t *testing.T) {
 
 func TestStubReturnsServerExitCode(t *testing.T) {
 	// Only verbs that remain stubs after order:04 + sty_ef248ab2 +
-	// sty_f38bd573 Tier A. The remaining stubs are Tier B (agent
-	// compose, agent apikey-*, project seed-run, system seed-run,
-	// portal replicate, document ingest-file) plus a few read-tier
-	// gap-fills (document get/list, reviewer/role/skill get/list/search,
-	// ledger recall) deferred to a follow-up.
+	// sty_f38bd573 Tier A + sty_004f3d3a. The remaining stubs are
+	// Tier B verbs (sty_0b419d98): agent_compose, agent_apikey_*,
+	// project_seed_run, system_seed_run, portal_replicate,
+	// document_ingest_file.
 	verbs := [][]string{
 		{"agent", "compose"},
 		{"agent", "apikey-create"},
+		{"agent", "apikey-list"},
+		{"agent", "apikey-delete"},
 		{"system", "seed-run"},
 		{"portal", "replicate"},
 		{"document", "ingest-file"},
-		{"ledger", "recall"},
 	}
 	for _, args := range verbs {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {

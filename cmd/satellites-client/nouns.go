@@ -86,11 +86,11 @@ func registerTaskNoun(root *cobra.Command) {
 func registerLedgerNoun(root *cobra.Command) {
 	noun := nounStub("ledger", "Ledger — append-only audit log.")
 	noun.AddCommand(
-		newLedgerAppendCmd(), // order:05
-		newLedgerGetCmd(),    // order:04
-		newLedgerListCmd(),   // order:04
-		newLedgerSearchCmd(), // order:04
-		verbStub("recall", "ledger recall", "Walk the dereferenced-row chain."),
+		newLedgerAppendCmd(),      // order:05
+		newLedgerGetCmd(),         // order:04
+		newLedgerListCmd(),        // order:04
+		newLedgerSearchCmd(),      // order:04
+		newLedgerRecallCmd(),      // sty_004f3d3a
 		newLedgerDereferenceCmd(), // sty_f38bd573
 	)
 	root.AddCommand(noun)
@@ -199,8 +199,8 @@ func registerDocumentNoun(root *cobra.Command) {
 	noun := nounStub("document", "Documents — generic typed markdown.")
 	noun.AddCommand(
 		newDocumentCreateCmd(), // sty_f38bd573
-		verbStub("get", "document get", "Get a document."),
-		verbStub("list", "document list", "List documents."),
+		newDocumentGetCmd(),    // sty_004f3d3a
+		newDocumentListCmd(),   // sty_004f3d3a
 		newDocumentUpdateCmd(), // sty_f38bd573
 		newDocumentDeleteCmd(), // sty_f38bd573
 		newDocumentSearchCmd(), // sty_ef248ab2
@@ -213,11 +213,11 @@ func registerReviewerNoun(root *cobra.Command) {
 	noun := nounStub("reviewer", "Reviewers — judgment-shape agent identities.")
 	noun.AddCommand(
 		newReviewerCreateCmd(), // sty_f38bd573
-		verbStub("get", "reviewer get", "Get a reviewer doc."),
-		verbStub("list", "reviewer list", "List reviewers."),
+		newReviewerGetCmd(),    // sty_004f3d3a
+		newReviewerListCmd(),   // sty_004f3d3a
 		newReviewerUpdateCmd(), // sty_f38bd573
 		newReviewerDeleteCmd(), // sty_f38bd573
-		verbStub("search", "reviewer search", "Search reviewers."),
+		newReviewerSearchCmd(), // sty_004f3d3a
 	)
 	root.AddCommand(noun)
 }
@@ -226,11 +226,11 @@ func registerRoleNoun(root *cobra.Command) {
 	noun := nounStub("role", "Roles — workspace permission grants.")
 	noun.AddCommand(
 		newRoleCreateCmd(), // sty_f38bd573
-		verbStub("get", "role get", "Get a role doc."),
-		verbStub("list", "role list", "List roles."),
+		newRoleGetCmd(),    // sty_004f3d3a
+		newRoleListCmd(),   // sty_004f3d3a
 		newRoleUpdateCmd(), // sty_f38bd573
 		newRoleDeleteCmd(), // sty_f38bd573
-		verbStub("search", "role search", "Search roles."),
+		newRoleSearchCmd(), // sty_004f3d3a
 	)
 	root.AddCommand(noun)
 }
@@ -239,11 +239,11 @@ func registerSkillNoun(root *cobra.Command) {
 	noun := nounStub("skill", "Skills — agent capability bundles.")
 	noun.AddCommand(
 		newSkillCreateCmd(), // sty_f38bd573
-		verbStub("get", "skill get", "Get a skill doc."),
-		verbStub("list", "skill list", "List skills."),
+		newSkillGetCmd(),    // sty_004f3d3a
+		newSkillListCmd(),   // sty_004f3d3a
 		newSkillUpdateCmd(), // sty_f38bd573
 		newSkillDeleteCmd(), // sty_f38bd573
-		verbStub("search", "skill search", "Search skills."),
+		newSkillSearchCmd(), // sty_004f3d3a
 	)
 	root.AddCommand(noun)
 }

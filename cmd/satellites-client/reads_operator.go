@@ -405,6 +405,135 @@ func newPrincipleSearchCmd() *cobra.Command {
 	return c
 }
 
+// ----- document/ledger/reviewer/role/skill reads (sty_004f3d3a gap-fill) -----
+
+// documentGetArgs builds the shared get-shape args. Per-noun wrappers
+// (reviewer_get / role_get / skill_get) pin type at the server-route
+// layer; this builder accepts a --type flag for the generic document_get.
+func documentGetArgs(cmd *cobra.Command, args []string) (any, error) {
+	id, _ := cmd.Flags().GetString("id")
+	name, _ := cmd.Flags().GetString("name")
+	if id == "" && name == "" {
+		return nil, cliexit.Newf(cliexit.Usage, "get: --id or --name is required")
+	}
+	out := map[string]any{}
+	if id != "" {
+		out["id"] = id
+	}
+	if name != "" {
+		out["name"] = name
+	}
+	if v, _ := cmd.Flags().GetString("type"); v != "" {
+		out["type"] = v
+	}
+	if v, _ := cmd.Flags().GetString("project-id"); v != "" {
+		out["project_id"] = v
+	}
+	return out, nil
+}
+
+func addDocumentGetFlags(c *cobra.Command, withType bool) {
+	c.Flags().String("id", "", "Document id (preferred).")
+	c.Flags().String("name", "", "Document name (used when id is omitted).")
+	if withType {
+		c.Flags().String("type", "", "Document type.")
+	}
+	c.Flags().String("project-id", "", "Project scope for name-keyed lookups.")
+}
+
+func newDocumentGetCmd() *cobra.Command {
+	c := &cobra.Command{Use: "get", Short: "Get a document by id (preferred) or name.", RunE: readHandler("document_get", documentGetArgs)}
+	addDocumentGetFlags(c, true)
+	return c
+}
+func newDocumentListCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use: "list", Short: "List documents.",
+		RunE: readHandler("document_list", func(cmd *cobra.Command, args []string) (any, error) {
+			out, err := documentListArgs(cmd, args)
+			if err != nil {
+				return nil, err
+			}
+			m := out.(map[string]any)
+			if v, _ := cmd.Flags().GetString("type"); v != "" {
+				m["type"] = v
+			}
+			return m, nil
+		}),
+	}
+	addDocumentListFlags(c)
+	c.Flags().String("type", "", "Filter by document type.")
+	return c
+}
+
+func newReviewerGetCmd() *cobra.Command {
+	c := &cobra.Command{Use: "get", Short: "Get a reviewer doc by id (preferred) or name.", RunE: readHandler("reviewer_get", documentGetArgs)}
+	addDocumentGetFlags(c, false)
+	return c
+}
+func newReviewerListCmd() *cobra.Command {
+	c := &cobra.Command{Use: "list", Short: "List reviewers.", RunE: readHandler("reviewer_list", documentListArgs)}
+	addDocumentListFlags(c)
+	return c
+}
+func newReviewerSearchCmd() *cobra.Command {
+	c := &cobra.Command{Use: "search", Short: "Search reviewers.", RunE: readHandler("reviewer_search", documentSearchArgs)}
+	addDocumentSearchFlags(c)
+	return c
+}
+func newRoleGetCmd() *cobra.Command {
+	c := &cobra.Command{Use: "get", Short: "Get a role doc by id (preferred) or name.", RunE: readHandler("role_get", documentGetArgs)}
+	addDocumentGetFlags(c, false)
+	return c
+}
+func newRoleListCmd() *cobra.Command {
+	c := &cobra.Command{Use: "list", Short: "List roles.", RunE: readHandler("role_list", documentListArgs)}
+	addDocumentListFlags(c)
+	return c
+}
+func newRoleSearchCmd() *cobra.Command {
+	c := &cobra.Command{Use: "search", Short: "Search roles.", RunE: readHandler("role_search", documentSearchArgs)}
+	addDocumentSearchFlags(c)
+	return c
+}
+func newSkillGetCmd() *cobra.Command {
+	c := &cobra.Command{Use: "get", Short: "Get a skill doc by id (preferred) or name.", RunE: readHandler("skill_get", documentGetArgs)}
+	addDocumentGetFlags(c, false)
+	return c
+}
+func newSkillListCmd() *cobra.Command {
+	c := &cobra.Command{Use: "list", Short: "List skills.", RunE: readHandler("skill_list", documentListArgs)}
+	addDocumentListFlags(c)
+	return c
+}
+func newSkillSearchCmd() *cobra.Command {
+	c := &cobra.Command{Use: "search", Short: "Search skills.", RunE: readHandler("skill_search", documentSearchArgs)}
+	addDocumentSearchFlags(c)
+	return c
+}
+
+func newLedgerRecallCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "recall",
+		Short: "Walk the dereferenced-row chain.",
+		RunE: readHandler("ledger_recall", func(cmd *cobra.Command, args []string) (any, error) {
+			rootID, _ := cmd.Flags().GetString("root-id")
+			if rootID == "" {
+				return nil, cliexit.Newf(cliexit.Usage, "ledger recall: --root-id is required")
+			}
+			out := map[string]any{"root_id": rootID}
+			if v, _ := cmd.Flags().GetInt("limit"); v > 0 {
+				out["limit"] = v
+			}
+			return out, nil
+		}),
+	}
+	c.Flags().String("root-id", "", "Root ledger row id (required).")
+	c.Flags().Int("limit", 0, "Max rows.")
+	_ = c.MarkFlagRequired("root-id")
+	return c
+}
+
 // ----- kv -----
 
 func newKVGetCmd() *cobra.Command {

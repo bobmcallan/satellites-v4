@@ -90,13 +90,6 @@ var legacyAllowlist = map[string]map[string]struct{}{
 	"catalogue.go": {
 		"github.com/bobmcallan/satellites/internal/document": {},
 	},
-	// kv_handlers.go — KV verbs (kv_set/get/list/delete); reaches
-	// workspace + ledger directly. TODO(sty_4db0e025): converge onto
-	// client.KV* methods.
-	"kv_handlers.go": {
-		"github.com/bobmcallan/satellites/internal/ledger":    {},
-		"github.com/bobmcallan/satellites/internal/workspace": {},
-	},
 	// mcp.go — server struct + boot-time wiring; holds typed store
 	// pointers for the legacy handlers below. TODO(sty_4db0e025):
 	// the struct narrows to *client.Client only once every legacy

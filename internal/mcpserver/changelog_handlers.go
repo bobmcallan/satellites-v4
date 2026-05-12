@@ -1,77 +1,38 @@
-// Changelog MCP handlers — V3 parity port (sty_12af0bdc). The five
-// verbs are gated at registration on s.changelog != nil; the handlers
-// themselves assume the store is non-nil because the registration site
-// is the only path that wires them.
+// Changelog MCP handlers — slice 9 of sty_f3f7bf9b. The business
+// logic for all five verbs (add/get/list/update/delete) lives on
+// *client.Client under internal/client/changelog.go; the handlers
+// in this file are thin parse/marshal adapters. The verbs remain
+// gated at registration on s.changelog != nil.
 package mcpserver
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"github.com/bobmcallan/satellites/internal/auth"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/bobmcallan/satellites/internal/changelog"
+	"github.com/bobmcallan/satellites/internal/auth"
+	"github.com/bobmcallan/satellites/internal/client"
 )
-
-// parseChangelogEffectiveDate reads `effective_date` as RFC3339 when
-// present, otherwise leaves the zero value (callers default to now).
-// Returns a structured error on malformed input.
-func parseChangelogEffectiveDate(req mcpgo.CallToolRequest) (time.Time, error) {
-	args := req.GetArguments()
-	v, ok := args["effective_date"]
-	if !ok {
-		return time.Time{}, nil
-	}
-	s, _ := v.(string)
-	if s == "" {
-		return time.Time{}, nil
-	}
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("effective_date: parse RFC3339: %w", err)
-	}
-	return t, nil
-}
 
 func (s *Server) handleChangelogAdd(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	projectID, err := s.resolveProjectID(ctx, req.GetString("project_id", ""), caller, memberships)
+	eff, err := client.ParseChangelogEffectiveDate(req.GetString("effective_date", ""))
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	service, err := req.RequireString("service")
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	content, err := req.RequireString("content")
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	eff, err := parseChangelogEffectiveDate(req)
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	now := time.Now().UTC()
-	if eff.IsZero() {
-		eff = now
-	}
-	wsID := s.resolveProjectWorkspaceID(ctx, projectID)
-	row := changelog.Changelog{
-		WorkspaceID:   wsID,
-		ProjectID:     projectID,
-		Service:       service,
+	out, err := s.cli().ChangelogAdd(ctx, toClientCaller(caller), client.ChangelogAddInput{
+		ProjectID:     req.GetString("project_id", ""),
+		Service:       req.GetString("service", ""),
 		VersionFrom:   req.GetString("version_from", ""),
 		VersionTo:     req.GetString("version_to", ""),
-		Content:       content,
+		Content:       req.GetString("content", ""),
 		EffectiveDate: eff,
-		CreatedBy:     caller.UserID,
-	}
-	out, err := s.changelog.Create(ctx, row, now)
+		Memberships:   memberships,
+	})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -83,20 +44,16 @@ func (s *Server) handleChangelogAdd(ctx context.Context, req mcpgo.CallToolReque
 func (s *Server) handleChangelogGet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
-	id, err := req.RequireString("id")
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	row, err := s.cli().ChangelogGet(ctx, toClientCaller(caller), client.ChangelogGetInput{
+		ID:          req.GetString("id", ""),
+		Memberships: memberships,
+	})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	memberships := s.resolveCallerMemberships(ctx, caller)
-	row, err := s.changelog.GetByID(ctx, id, memberships)
-	if err != nil {
-		return mcpgo.NewToolResultError("changelog not found"), nil
-	}
-	if _, err := s.resolveProjectID(ctx, row.ProjectID, caller, memberships); err != nil {
-		return mcpgo.NewToolResultError("changelog not found"), nil
-	}
 	body, _ := json.Marshal(row)
-	s.logger.Info().Str("method", "tools/call").Str("tool", "changelog_get").Str("id", id).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "changelog_get").Str("id", row.ID).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
@@ -104,87 +61,77 @@ func (s *Server) handleChangelogList(ctx context.Context, req mcpgo.CallToolRequ
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	projectID, err := s.resolveProjectID(ctx, req.GetString("project_id", ""), caller, memberships)
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	rows, err := s.changelog.List(ctx, changelog.ListOptions{
-		ProjectID: projectID,
-		Service:   req.GetString("service", ""),
-		Limit:     int(req.GetFloat("limit", 0)),
-	}, memberships)
+	rows, err := s.cli().ChangelogList(ctx, toClientCaller(caller), client.ChangelogListInput{
+		ProjectID:   req.GetString("project_id", ""),
+		Service:     req.GetString("service", ""),
+		Limit:       int(req.GetFloat("limit", 0)),
+		Memberships: memberships,
+	})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	body, _ := json.Marshal(rows)
-	s.logger.Info().Str("method", "tools/call").Str("tool", "changelog_list").Str("project_id", projectID).Int("count", len(rows)).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "changelog_list").Int("count", len(rows)).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
 func (s *Server) handleChangelogUpdate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
-	id, err := req.RequireString("id")
+	in, err := buildChangelogUpdateInput(req, s.resolveCallerMemberships(ctx, caller))
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	memberships := s.resolveCallerMemberships(ctx, caller)
-	current, err := s.changelog.GetByID(ctx, id, memberships)
-	if err != nil {
-		return mcpgo.NewToolResultError("changelog not found"), nil
-	}
-	if _, err := s.resolveProjectID(ctx, current.ProjectID, caller, memberships); err != nil {
-		return mcpgo.NewToolResultError("changelog not found"), nil
-	}
-	args := req.GetArguments()
-	fields := changelog.UpdateFields{}
-	if _, ok := args["version_from"]; ok {
-		v := req.GetString("version_from", "")
-		fields.VersionFrom = &v
-	}
-	if _, ok := args["version_to"]; ok {
-		v := req.GetString("version_to", "")
-		fields.VersionTo = &v
-	}
-	if _, ok := args["content"]; ok {
-		v := req.GetString("content", "")
-		fields.Content = &v
-	}
-	if _, ok := args["effective_date"]; ok {
-		eff, err := parseChangelogEffectiveDate(req)
-		if err != nil {
-			return mcpgo.NewToolResultError(err.Error()), nil
-		}
-		fields.EffectiveDate = &eff
-	}
-	out, err := s.changelog.Update(ctx, id, fields, time.Now().UTC(), memberships)
+	out, err := s.cli().ChangelogUpdate(ctx, toClientCaller(caller), in)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	body, _ := json.Marshal(out)
-	s.logger.Info().Str("method", "tools/call").Str("tool", "changelog_update").Str("id", id).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "changelog_update").Str("id", in.ID).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+// buildChangelogUpdateInput translates the wire's "field present" arg
+// semantics into the pointer-typed client.ChangelogUpdateInput. Pure
+// helper — no side effects, no Server state.
+func buildChangelogUpdateInput(req mcpgo.CallToolRequest, memberships []string) (client.ChangelogUpdateInput, error) {
+	in := client.ChangelogUpdateInput{ID: req.GetString("id", ""), Memberships: memberships}
+	args := req.GetArguments()
+	if _, ok := args["version_from"]; ok {
+		v := req.GetString("version_from", "")
+		in.VersionFrom = &v
+	}
+	if _, ok := args["version_to"]; ok {
+		v := req.GetString("version_to", "")
+		in.VersionTo = &v
+	}
+	if _, ok := args["content"]; ok {
+		v := req.GetString("content", "")
+		in.Content = &v
+	}
+	if _, ok := args["effective_date"]; ok {
+		eff, err := client.ParseChangelogEffectiveDate(req.GetString("effective_date", ""))
+		if err != nil {
+			return client.ChangelogUpdateInput{}, err
+		}
+		in.EffectiveDate = &eff
+	}
+	return in, nil
 }
 
 func (s *Server) handleChangelogDelete(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
-	id, err := req.RequireString("id")
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	current, err := s.changelog.GetByID(ctx, id, memberships)
+	out, err := s.cli().ChangelogDelete(ctx, toClientCaller(caller), client.ChangelogDeleteInput{
+		ID:          req.GetString("id", ""),
+		Memberships: memberships,
+	})
 	if err != nil {
-		return mcpgo.NewToolResultError("changelog not found"), nil
-	}
-	if _, err := s.resolveProjectID(ctx, current.ProjectID, caller, memberships); err != nil {
-		return mcpgo.NewToolResultError("changelog not found"), nil
-	}
-	if err := s.changelog.Delete(ctx, id, memberships); err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	body, _ := json.Marshal(map[string]any{"id": id, "deleted": true})
-	s.logger.Info().Str("method", "tools/call").Str("tool", "changelog_delete").Str("id", id).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+	body, _ := json.Marshal(out)
+	s.logger.Info().Str("method", "tools/call").Str("tool", "changelog_delete").Str("id", out.ID).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
+

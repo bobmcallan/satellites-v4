@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/bobmcallan/satellites/internal/changelog"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/project"
@@ -188,55 +187,9 @@ func (c *Client) ProjectList(ctx context.Context, caller Caller, memberships []s
 // (slice 8 of sty_f3f7bf9b).
 
 // ----- changelog -----
-
-// ChangelogGetInput names a changelog row lookup.
-type ChangelogGetInput struct {
-	ID          string
-	Memberships []string
-}
-
-// ChangelogGet returns a changelog row when the caller has access to its
-// project.
-func (c *Client) ChangelogGet(ctx context.Context, caller Caller, in ChangelogGetInput) (changelog.Changelog, error) {
-	if c.deps.Changelog == nil {
-		return changelog.Changelog{}, errors.New("changelog store not configured")
-	}
-	if in.ID == "" {
-		return changelog.Changelog{}, errors.New("id required")
-	}
-	row, err := c.deps.Changelog.GetByID(ctx, in.ID, in.Memberships)
-	if err != nil {
-		return changelog.Changelog{}, errors.New("changelog not found")
-	}
-	if _, err := c.ResolveProjectID(ctx, row.ProjectID, "", caller, in.Memberships); err != nil {
-		return changelog.Changelog{}, errors.New("changelog not found")
-	}
-	return row, nil
-}
-
-// ChangelogListInput captures the filter set for changelog_list.
-type ChangelogListInput struct {
-	ProjectID   string
-	Service     string
-	Limit       int
-	Memberships []string
-}
-
-// ChangelogList returns changelog rows newest-first.
-func (c *Client) ChangelogList(ctx context.Context, caller Caller, in ChangelogListInput) ([]changelog.Changelog, error) {
-	if c.deps.Changelog == nil {
-		return nil, errors.New("changelog store not configured")
-	}
-	projectID, err := c.ResolveProjectID(ctx, in.ProjectID, "", caller, in.Memberships)
-	if err != nil {
-		return nil, err
-	}
-	return c.deps.Changelog.List(ctx, changelog.ListOptions{
-		ProjectID: projectID,
-		Service:   in.Service,
-		Limit:     in.Limit,
-	}, in.Memberships)
-}
+// ChangelogGet, ChangelogList, and the new ChangelogAdd /
+// ChangelogUpdate / ChangelogDelete mutators moved to
+// internal/client/changelog.go (slice 9 of sty_f3f7bf9b).
 
 // ----- document family (search) -----
 

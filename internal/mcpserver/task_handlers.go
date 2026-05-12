@@ -124,4 +124,3 @@ func (s *Server) handleTaskClaim(ctx context.Context, req mcpgo.CallToolRequest)
 	}
 	return jsonResult(t)
 }
-

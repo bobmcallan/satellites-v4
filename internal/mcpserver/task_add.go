@@ -104,4 +104,3 @@ func (s *Server) resolveStoryProjectID(ctx context.Context, storyID string, memb
 	}
 	return st.ProjectID
 }
-

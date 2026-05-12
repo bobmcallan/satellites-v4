@@ -23,9 +23,9 @@ type SurrealLiveSource struct {
 	members Membership
 	logger  arbor.ILogger
 
-	mu        sync.Mutex
-	subs      map[string]*subEntry          // subID → entry
-	byTopic   map[string]map[string]*subEntry // topic → subID → entry
+	mu      sync.Mutex
+	subs    map[string]*subEntry            // subID → entry
+	byTopic map[string]map[string]*subEntry // topic → subID → entry
 }
 
 type subEntry struct {

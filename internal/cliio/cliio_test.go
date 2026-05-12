@@ -51,7 +51,7 @@ func TestPrintError_Format(t *testing.T) {
 	// PrintError writes to os.Stderr; the test simply asserts it
 	// does not panic on nil and on a non-empty error path.
 	cliio.PrintError("story get", nil) // no-op
-	cliio.PrintError("", nil)           // no-op
+	cliio.PrintError("", nil)          // no-op
 }
 
 func TestModeIsJSON(t *testing.T) {

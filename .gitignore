@@ -16,8 +16,12 @@ scripts/satellites.toml
 /satellites
 /satellites-server
 /satellites-agent
+/satellites-agents
 /satellites-client
+/satellites-clients
 /bin/
+/logs
+**/logs
 *.exe
 *.test
 *.out

@@ -5,25 +5,25 @@
 //
 // # Architectural contract
 //
-// 1. No mcpgo imports. The package MUST NOT depend on
-//    github.com/mark3labs/mcp-go. Any wire-format concern (JSON-RPC,
-//    CallToolRequest, CallToolResult) lives in the caller. This is
-//    enforced by code review; CI may add a grep gate.
+//  1. No mcpgo imports. The package MUST NOT depend on
+//     github.com/mark3labs/mcp-go. Any wire-format concern (JSON-RPC,
+//     CallToolRequest, CallToolResult) lives in the caller. This is
+//     enforced by code review; CI may add a grep gate.
 //
-// 2. No HTTP, no JSON-RPC. Each method takes typed Go inputs and
-//    returns typed Go outputs. Errors are Go errors, not wire
-//    envelopes — the caller maps them to its preferred shape.
+//  2. No HTTP, no JSON-RPC. Each method takes typed Go inputs and
+//     returns typed Go outputs. Errors are Go errors, not wire
+//     envelopes — the caller maps them to its preferred shape.
 //
-// 3. Per-method shape: func (c *Client) <Verb>(ctx context.Context,
-//    caller Caller, in <Verb>Input) (<Verb>Output, error). The
-//    Caller carries the user identity + workspace memberships; the
-//    Input carries the verb's positional/optional arguments.
+//  3. Per-method shape: func (c *Client) <Verb>(ctx context.Context,
+//     caller Caller, in <Verb>Input) (<Verb>Output, error). The
+//     Caller carries the user identity + workspace memberships; the
+//     Input carries the verb's positional/optional arguments.
 //
-// 4. Tenancy resolution at the wire boundary. Membership lookup,
-//    bearer parsing, and session resolution stay in the caller (which
-//    knows about request headers); the typed methods receive a
-//    fully-populated Caller and apply membership-driven filtering
-//    inside the typed methods.
+//  4. Tenancy resolution at the wire boundary. Membership lookup,
+//     bearer parsing, and session resolution stay in the caller (which
+//     knows about request headers); the typed methods receive a
+//     fully-populated Caller and apply membership-driven filtering
+//     inside the typed methods.
 //
 // # Migration sequence (cli-primary order:02)
 //

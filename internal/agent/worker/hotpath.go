@@ -468,19 +468,19 @@ type storyRaw struct {
 }
 
 type storyRawStory struct {
-	ID         string         `json:"id"`
-	Title      string         `json:"title"`
-	Status     string         `json:"status"`
-	Category   string         `json:"category"`
-	Fields     map[string]any `json:"fields,omitempty"`
-	Tags       []string       `json:"tags,omitempty"`
-	WorkspaceID string        `json:"workspace_id,omitempty"`
-	ProjectID  string         `json:"project_id,omitempty"`
+	ID          string         `json:"id"`
+	Title       string         `json:"title"`
+	Status      string         `json:"status"`
+	Category    string         `json:"category"`
+	Fields      map[string]any `json:"fields,omitempty"`
+	Tags        []string       `json:"tags,omitempty"`
+	WorkspaceID string         `json:"workspace_id,omitempty"`
+	ProjectID   string         `json:"project_id,omitempty"`
 }
 
 type storyTemplate struct {
-	Category string                 `json:"category"`
-	Fields   []storyTemplateField   `json:"fields"`
+	Category string                  `json:"category"`
+	Fields   []storyTemplateField    `json:"fields"`
 	Hooks    map[string]storyHookSet `json:"hooks,omitempty"`
 }
 

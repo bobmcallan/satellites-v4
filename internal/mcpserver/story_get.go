@@ -31,12 +31,12 @@ import (
 // / ledger / docs store degrades a single section instead of failing
 // the whole call.
 type storyView struct {
-	Story          story.Story          `json:"story"`
-	Project        *project.Project     `json:"project,omitempty"`
-	RecentEvidence []ledger.LedgerEntry `json:"recent_evidence,omitempty"`
-	AgentProcess   string               `json:"agent_process,omitempty"`
-	Template       *story.Template      `json:"template,omitempty"`
-	IntentBody     string               `json:"intent_body,omitempty"`
+	Story          story.Story             `json:"story"`
+	Project        *project.Project        `json:"project,omitempty"`
+	RecentEvidence []ledger.LedgerEntry    `json:"recent_evidence,omitempty"`
+	AgentProcess   string                  `json:"agent_process,omitempty"`
+	Template       *story.Template         `json:"template,omitempty"`
+	IntentBody     string                  `json:"intent_body,omitempty"`
 	Principles     []client.PrincipleEntry `json:"principles,omitempty"`
 }
 

@@ -34,10 +34,10 @@ type ProjectSetInput struct {
 // the zero value when Status="no_project_for_remote"; the canonical
 // repo URL is always returned so the wire layer can echo it.
 type ProjectSetOutput struct {
-	Status            string            `json:"status"`
-	ResolvedProject   project.Project   `json:"project,omitempty"`
-	RepoURLCanonical  string            `json:"repo_url_canonical"`
-	Orientation       OrientationFields `json:"orientation,omitempty"`
+	Status           string            `json:"status"`
+	ResolvedProject  project.Project   `json:"project,omitempty"`
+	RepoURLCanonical string            `json:"repo_url_canonical"`
+	Orientation      OrientationFields `json:"orientation,omitempty"`
 }
 
 const (
@@ -126,4 +126,3 @@ func (c *Client) resolveProjectByRemote(ctx context.Context, workspaceID, canoni
 	}
 	return p, true
 }
-

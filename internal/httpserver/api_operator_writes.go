@@ -29,8 +29,8 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satellites/internal/auth"
-	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/changelog"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/project"

@@ -1573,6 +1573,7 @@ func (s *Server) handleProjectGet(ctx context.Context, req mcpgo.CallToolRequest
 //
 //	{"project_id":"proj_…","status":"resolved","mcp_url":"…","repo_url_canonical":"…"}
 //	{"status":"no_project_for_remote","repo_url_canonical":"…"}
+//
 // handleProjectSet implements `project_set`. Thin forwarder per
 // cli-primary order:07a-layer-2 (sty_df1cb227 Slice C): resolves
 // workspace + session-id from request context, delegates resolution +

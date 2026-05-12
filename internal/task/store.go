@@ -7,7 +7,6 @@ import (
 	"sort"
 	"sync"
 	"time"
-
 )
 
 // ErrNotFound is returned when a task lookup misses.

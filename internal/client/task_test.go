@@ -57,12 +57,12 @@ func newTaskFixture(t *testing.T) *taskFixture {
 		Delivers:           []string{task.ContractAction("develop")},
 	})
 	devDoc, err := docStore.Create(ctx, document.Document{
-		Type:        document.TypeAgent,
-		Scope:       document.ScopeSystem,
-		Name:        "developer_agent",
-		Body:        "agent body",
-		Status:      document.StatusActive,
-		Structured:  settings,
+		Type:       document.TypeAgent,
+		Scope:      document.ScopeSystem,
+		Name:       "developer_agent",
+		Body:       "agent body",
+		Status:     document.StatusActive,
+		Structured: settings,
 	}, now)
 	require.NoError(t, err)
 

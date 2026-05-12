@@ -35,7 +35,7 @@ func TestComposePrompt_ThinPointerShape(t *testing.T) {
 				Agent:    agentInfo{Name: "developer_agent"},
 				Contract: contractInfo{Name: "develop"},
 				Story:    storyInfo{ID: "sty_aaa"},
-				WorkDir: "/repo/.satellites-agents/task_001",
+				WorkDir:  "/repo/.satellites-agents/task_001",
 			},
 			want: []string{
 				`satellites-client task get task_001`,
@@ -60,7 +60,7 @@ func TestComposePrompt_ThinPointerShape(t *testing.T) {
 				Agent:    agentInfo{Name: "planner_agent"},
 				Contract: contractInfo{Name: "plan"},
 				Story:    storyInfo{ID: "sty_p"},
-				WorkDir: "/repo/.satellites-agents/task_p",
+				WorkDir:  "/repo/.satellites-agents/task_p",
 			},
 			want: []string{
 				`satellites-client task get task_p`,
@@ -80,7 +80,7 @@ func TestComposePrompt_ThinPointerShape(t *testing.T) {
 				Agent:    agentInfo{Name: "adhoc_agent"},
 				Contract: contractInfo{Name: "ad-hoc-task"},
 				Story:    storyInfo{ID: "sty_f"},
-				WorkDir: "/repo/.satellites-agents/task_f",
+				WorkDir:  "/repo/.satellites-agents/task_f",
 			},
 			want: []string{
 				"Action:    ad-hoc-task",

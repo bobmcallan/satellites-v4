@@ -306,15 +306,15 @@ func (c *Client) TaskUpdate(ctx context.Context, caller Caller, in TaskUpdateInp
 // TaskAdd against the supplied stores; the caller is responsible for
 // presenting auth + URL-scoping context via TaskAddResolveDeps.
 type TaskAddInput struct {
-	AgentID      string
-	Prompt       string
-	StoryID      string
-	Kind         string
-	Action       string
-	Priority     string
-	Memberships  []string
-	Resolve      TaskAddResolveDeps
-	Now          time.Time
+	AgentID     string
+	Prompt      string
+	StoryID     string
+	Kind        string
+	Action      string
+	Priority    string
+	Memberships []string
+	Resolve     TaskAddResolveDeps
+	Now         time.Time
 }
 
 // TaskAddResolveDeps wires the project/workspace resolution callbacks
@@ -323,10 +323,10 @@ type TaskAddInput struct {
 // transport-free contract intact while still letting the wire layer
 // inject its session + URL context.
 type TaskAddResolveDeps struct {
-	CallerActiveProjectID    func(ctx context.Context, caller Caller) string
-	ResolveStoryProjectID    func(ctx context.Context, storyID string, memberships []string) string
+	CallerActiveProjectID     func(ctx context.Context, caller Caller) string
+	ResolveStoryProjectID     func(ctx context.Context, storyID string, memberships []string) string
 	ResolveProjectWorkspaceID func(ctx context.Context, projectID string) string
-	DefaultProjectID         string
+	DefaultProjectID          string
 }
 
 // TaskAddOutput mirrors the wire payload of task_add.

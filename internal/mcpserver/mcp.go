@@ -1103,9 +1103,8 @@ func (s *Server) handleDocumentIngestFile(ctx context.Context, req mcpgo.CallToo
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	projectID := req.GetString("project_id", "")
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	resolvedID, err := s.resolveProjectID(ctx, projectID, caller, memberships)
+	resolvedID, err := s.resolveProjectID(ctx, req.GetString("project_id", ""), caller, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -1113,26 +1112,14 @@ func (s *Server) handleDocumentIngestFile(ctx context.Context, req mcpgo.CallToo
 	if wsID == "" {
 		wsID = s.resolveCallerWorkspaceID(ctx, caller)
 	}
-	res, err := document.IngestFile(ctx, s.docs, s.logger, wsID, resolvedID, s.docsDir, path, time.Now().UTC())
+	out, err := s.cli().DocumentIngestFile(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.DocumentIngestFileInput{
+		Path: path, WorkspaceID: wsID, ResolvedProjectID: resolvedID,
+	})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	payload := map[string]any{
-		"id":         res.Document.ID,
-		"project_id": resolvedID,
-		"name":       res.Document.Name,
-		"version":    res.Document.Version,
-		"changed":    res.Changed,
-		"created":    res.Created,
-	}
-	body, _ := json.Marshal(payload)
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "document_ingest_file").
-		Str("project_id", resolvedID).
-		Str("name", res.Document.Name).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+	body, _ := json.Marshal(out)
+	s.logger.Info().Str("method", "tools/call").Str("tool", "document_ingest_file").Str("project_id", resolvedID).Str("name", out.Name).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
@@ -1185,90 +1172,70 @@ func (s *Server) handleDocumentGet(ctx context.Context, req mcpgo.CallToolReques
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
-// immutableUpdateFields are the document keys that document_update must
-// reject if the caller supplies them. The Store interface's UpdateFields
-// only carries the mutable subset, so the only place to enforce this is
-// the handler.
-var immutableUpdateFields = []string{"workspace_id", "project_id", "type", "scope", "name", "id"}
-
 func (s *Server) handleDocumentCreate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
-	if caller.UserID == "" {
-		return mcpgo.NewToolResultError("no caller identity"), nil
-	}
-	docType, err := req.RequireString("type")
+	in, err := s.buildDocumentCreateInput(ctx, caller, req)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	scope, err := req.RequireString("scope")
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	name, err := req.RequireString("name")
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	memberships := s.resolveCallerMemberships(ctx, caller)
-	wsID := s.resolveCallerWorkspaceID(ctx, caller)
-	requestedProject := req.GetString("project_id", "")
-
-	doc := document.Document{
-		WorkspaceID: wsID,
-		Type:        docType,
-		Scope:       scope,
-		Name:        name,
-		Body:        req.GetString("body", ""),
-		Tags:        req.GetStringSlice("tags", nil),
-		Status:      req.GetString("status", document.StatusActive),
-		CreatedBy:   caller.UserID,
-		UpdatedBy:   caller.UserID,
-	}
-
-	switch scope {
-	case document.ScopeProject:
-		resolvedID, err := s.resolveProjectID(ctx, requestedProject, caller, memberships)
-		if err != nil {
-			return mcpgo.NewToolResultError(err.Error()), nil
-		}
-		doc.ProjectID = document.StringPtr(resolvedID)
-		if cascade := s.resolveProjectWorkspaceID(ctx, resolvedID); cascade != "" {
-			doc.WorkspaceID = cascade
-		}
-	case document.ScopeSystem:
-		if requestedProject != "" {
-			return mcpgo.NewToolResultError("scope=system does not accept project_id"), nil
-		}
-		// sty_e2512dbd: system tier is non-tenant. Drop the
-		// caller-stamped workspace; Validate() rejects non-empty
-		// workspace_id at scope=system.
-		doc.WorkspaceID = ""
-	}
-	if binding := req.GetString("contract_binding", ""); binding != "" {
-		doc.ContractBinding = document.StringPtr(binding)
-	}
-	if structured := req.GetString("structured", ""); structured != "" {
-		if !json.Valid([]byte(structured)) {
-			return mcpgo.NewToolResultError("structured must be valid JSON"), nil
-		}
-		doc.Structured = []byte(structured)
-	}
-
-	now := time.Now().UTC()
-	created, err := s.docs.Create(ctx, doc, now)
+	created, err := s.cli().DocumentCreate(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: in.Memberships}, in.Payload)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	body, _ := json.Marshal(created)
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "document_create").
-		Str("doc_id", created.ID).
-		Str("type", created.Type).
-		Str("scope", created.Scope).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "document_create").Str("doc_id", created.ID).Str("type", created.Type).Str("scope", created.Scope).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+// documentCreateRequest pairs the resolved memberships with the
+// payload the typed method consumes; lets handleDocumentCreate stay
+// inside the ≤25-line adapter budget.
+type documentCreateRequest struct {
+	Memberships []string
+	Payload     client.DocumentCreateInput
+}
+
+// buildDocumentCreateInput owns the wire-side argument parsing +
+// per-scope project/workspace resolution that handleDocumentCreate
+// previously inlined. The typed client method consumes the resolved
+// payload verbatim.
+func (s *Server) buildDocumentCreateInput(ctx context.Context, caller auth.CallerIdentity, req mcpgo.CallToolRequest) (documentCreateRequest, error) {
+	docType, err := req.RequireString("type")
+	if err != nil {
+		return documentCreateRequest{}, err
+	}
+	scope, err := req.RequireString("scope")
+	if err != nil {
+		return documentCreateRequest{}, err
+	}
+	name, err := req.RequireString("name")
+	if err != nil {
+		return documentCreateRequest{}, err
+	}
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	wsID := s.resolveCallerWorkspaceID(ctx, caller)
+	var resolvedID string
+	if scope == document.ScopeProject {
+		resolvedID, err = s.resolveProjectID(ctx, req.GetString("project_id", ""), caller, memberships)
+		if err != nil {
+			return documentCreateRequest{}, err
+		}
+		if cascade := s.resolveProjectWorkspaceID(ctx, resolvedID); cascade != "" {
+			wsID = cascade
+		}
+	} else if scope == document.ScopeSystem {
+		resolvedID = req.GetString("project_id", "")
+	}
+	return documentCreateRequest{
+		Memberships: memberships,
+		Payload: client.DocumentCreateInput{
+			Type: docType, Scope: scope, Name: name,
+			Body: req.GetString("body", ""), Tags: req.GetStringSlice("tags", nil),
+			Status: req.GetString("status", document.StatusActive), ContractBinding: req.GetString("contract_binding", ""),
+			Structured: req.GetString("structured", ""), WorkspaceID: wsID, ResolvedProjectID: resolvedID,
+		},
+	}, nil
 }
 
 func (s *Server) handleDocumentUpdate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -1279,25 +1246,31 @@ func (s *Server) handleDocumentUpdate(ctx context.Context, req mcpgo.CallToolReq
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	args := req.GetArguments()
-	for _, k := range immutableUpdateFields {
-		if k == "id" {
-			continue
-		}
-		if _, ok := args[k]; ok {
-			return mcpgo.NewToolResultError("immutable field rejected: " + k), nil
-		}
+	fields := documentUpdateFieldsFromArgs(req, args)
+	updated, err := s.cli().DocumentUpdate(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: s.resolveCallerMemberships(ctx, caller)}, client.DocumentUpdateInput{
+		ID: id, Fields: fields, RawArgs: args, Memberships: s.resolveCallerMemberships(ctx, caller),
+	})
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
 	}
+	body, _ := json.Marshal(updated)
+	s.logger.Info().Str("method", "tools/call").Str("tool", "document_update").Str("doc_id", id).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+// documentUpdateFieldsFromArgs translates the wire-layer argument map
+// into a typed document.UpdateFields. Pointer semantics distinguish
+// "absent" (nil) from "explicit empty" (pointer to ""), matching the
+// store's mutation contract.
+func documentUpdateFieldsFromArgs(req mcpgo.CallToolRequest, args map[string]any) document.UpdateFields {
 	fields := document.UpdateFields{}
 	if v, ok := args["body"]; ok {
-		s, _ := v.(string)
-		fields.Body = &s
+		sv, _ := v.(string)
+		fields.Body = &sv
 	}
 	if v, ok := args["structured"]; ok {
-		s, _ := v.(string)
-		if s != "" && !json.Valid([]byte(s)) {
-			return mcpgo.NewToolResultError("structured must be valid JSON"), nil
-		}
-		buf := []byte(s)
+		sv, _ := v.(string)
+		buf := []byte(sv)
 		fields.Structured = &buf
 	}
 	if _, ok := args["tags"]; ok {
@@ -1305,32 +1278,14 @@ func (s *Server) handleDocumentUpdate(ctx context.Context, req mcpgo.CallToolReq
 		fields.Tags = &tags
 	}
 	if v, ok := args["status"]; ok {
-		s, _ := v.(string)
-		fields.Status = &s
+		sv, _ := v.(string)
+		fields.Status = &sv
 	}
 	if v, ok := args["contract_binding"]; ok {
-		s, _ := v.(string)
-		fields.ContractBinding = &s
+		sv, _ := v.(string)
+		fields.ContractBinding = &sv
 	}
-	memberships := s.resolveCallerMemberships(ctx, caller)
-	// sty_e2512dbd: system tier rows have no workspace; membership-
-	// scoped writes would 404 them. Read the row workspace-blind to
-	// learn its scope, then drop memberships for system-scope writes.
-	if existing, gerr := s.docs.GetByID(ctx, id, nil); gerr == nil && existing.Scope == document.ScopeSystem {
-		memberships = nil
-	}
-	updated, err := s.docs.Update(ctx, id, fields, caller.UserID, time.Now().UTC(), memberships)
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	body, _ := json.Marshal(updated)
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "document_update").
-		Str("doc_id", id).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
-	return mcpgo.NewToolResultText(string(body)), nil
+	return fields
 }
 
 // handleDocumentList implements document_list. Thin forwarder per
@@ -1388,44 +1343,18 @@ func (s *Server) handleDocumentSearch(ctx context.Context, req mcpgo.CallToolReq
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	opts := document.SearchOptions{
-		ListOptions: document.ListOptions{
-			Type:            req.GetString("type", ""),
-			Scope:           req.GetString("scope", ""),
-			ContractBinding: req.GetString("contract_binding", ""),
-			ProjectID:       req.GetString("project_id", ""),
-			Tags:            req.GetStringSlice("tags", nil),
-		},
-		Query: req.GetString("query", ""),
-		TopK:  int(req.GetFloat("top_k", 0)),
+	in := client.DocumentSearchScopedInput{
+		Type: req.GetString("type", ""), Query: req.GetString("query", ""),
+		Scope: req.GetString("scope", ""), ProjectID: req.GetString("project_id", ""),
+		ContractBinding: req.GetString("contract_binding", ""), Tags: req.GetStringSlice("tags", nil),
+		TopK: int(req.GetFloat("top_k", 0)), Memberships: memberships,
 	}
-	// Route the non-empty-query branch to SearchSemantic (story_5abfe61c).
-	// On ErrSemanticUnavailable (deploy without an embedder configured)
-	// fall back to the structured-filter Search so callers don't error
-	// out — they just get a filter-only result instead of semantic
-	// ranking.
-	var rows []document.Document
-	var err error
-	if opts.Query != "" {
-		rows, err = searchSemanticScoped(ctx, s.docs, opts.Query, opts, memberships)
-		if errors.Is(err, document.ErrSemanticUnavailable) {
-			rows, err = searchScoped(ctx, s.docs, opts, memberships)
-		}
-	} else {
-		rows, err = searchScoped(ctx, s.docs, opts, memberships)
-	}
+	rows, err := s.cli().DocumentSearchScoped(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, in)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	body, _ := json.Marshal(rows)
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "document_search").
-		Str("query", opts.Query).
-		Str("type", opts.Type).
-		Int("count", len(rows)).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "document_search").Str("query", in.Query).Str("type", in.Type).Int("count", len(rows)).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
@@ -1438,24 +1367,14 @@ func (s *Server) handleDocumentDelete(ctx context.Context, req mcpgo.CallToolReq
 	}
 	mode := document.DeleteMode(req.GetString("mode", string(document.DeleteArchive)))
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	// sty_e2512dbd: system tier rows have no workspace; drop
-	// memberships when deleting one so the membership predicate
-	// doesn't 404 it.
-	if existing, gerr := s.docs.GetByID(ctx, id, nil); gerr == nil && existing.Scope == document.ScopeSystem {
-		memberships = nil
-	}
-
-	if err := s.docs.Delete(ctx, id, mode, memberships); err != nil {
+	out, err := s.cli().DocumentDelete(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.DocumentDeleteInput{
+		ID: id, Mode: mode, Memberships: memberships,
+	})
+	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	body, _ := json.Marshal(map[string]any{"id": id, "mode": string(mode), "deleted": true})
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "document_delete").
-		Str("doc_id", id).
-		Str("mode", string(mode)).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
+	body, _ := json.Marshal(out)
+	s.logger.Info().Str("method", "tools/call").Str("tool", "document_delete").Str("doc_id", id).Str("mode", string(mode)).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 

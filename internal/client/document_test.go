@@ -107,6 +107,118 @@ func TestDocumentGet_RejectsMissingIDAndName(t *testing.T) {
 	assert.Contains(t, err.Error(), "id or name")
 }
 
+func TestDocumentCreate_ProjectScopeStampsProjectID(t *testing.T) {
+	c, wsID, now := newDocClient(t)
+	got, err := c.DocumentCreate(context.Background(), Caller{UserID: "u_alice"}, DocumentCreateInput{
+		Type: document.TypeAgent, Scope: document.ScopeProject, Name: "alpha_agent",
+		Body: "tenant agent body", WorkspaceID: wsID, ResolvedProjectID: "proj_alpha", Now: now,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, document.ScopeProject, got.Scope)
+	require.NotNil(t, got.ProjectID)
+	assert.Equal(t, "proj_alpha", *got.ProjectID)
+	assert.Equal(t, wsID, got.WorkspaceID)
+}
+
+func TestDocumentCreate_SystemScopeRejectsProjectID(t *testing.T) {
+	c, _, now := newDocClient(t)
+	_, err := c.DocumentCreate(context.Background(), Caller{UserID: "u_alice"}, DocumentCreateInput{
+		Type: document.TypeContract, Scope: document.ScopeSystem, Name: "plan",
+		ResolvedProjectID: "proj_alpha", Now: now,
+	})
+	require.ErrorIs(t, err, ErrDocumentSystemRejectsProject)
+}
+
+func TestDocumentCreate_RequiresCallerIdentity(t *testing.T) {
+	c, wsID, now := newDocClient(t)
+	_, err := c.DocumentCreate(context.Background(), Caller{}, DocumentCreateInput{
+		Type: document.TypeAgent, Scope: document.ScopeProject, Name: "alpha_agent",
+		WorkspaceID: wsID, ResolvedProjectID: "proj_alpha", Now: now,
+	})
+	require.ErrorIs(t, err, ErrDocumentNoCallerIdentity)
+}
+
+func TestDocumentCreate_StructuredInvalidJSONRejected(t *testing.T) {
+	c, wsID, now := newDocClient(t)
+	_, err := c.DocumentCreate(context.Background(), Caller{UserID: "u_alice"}, DocumentCreateInput{
+		Type: document.TypeAgent, Scope: document.ScopeProject, Name: "alpha_agent",
+		WorkspaceID: wsID, ResolvedProjectID: "proj_alpha", Structured: "{not valid", Now: now,
+	})
+	require.ErrorIs(t, err, ErrDocumentStructuredInvalid)
+}
+
+func TestDocumentUpdate_RejectsImmutableFields(t *testing.T) {
+	c, wsID, now := newDocClient(t)
+	doc, err := c.DocumentCreate(context.Background(), Caller{UserID: "u_alice"}, DocumentCreateInput{
+		Type: document.TypeAgent, Scope: document.ScopeProject, Name: "alpha_agent",
+		WorkspaceID: wsID, ResolvedProjectID: "proj_alpha", Now: now,
+	})
+	require.NoError(t, err)
+	body := "new body"
+	_, err = c.DocumentUpdate(context.Background(), Caller{UserID: "u_alice"}, DocumentUpdateInput{
+		ID:          doc.ID,
+		Fields:      document.UpdateFields{Body: &body},
+		RawArgs:     map[string]any{"body": "new body", "type": document.TypeContract},
+		Memberships: []string{wsID},
+		Now:         now,
+	})
+	require.ErrorIs(t, err, ErrDocumentImmutableField)
+}
+
+func TestDocumentUpdate_SystemTierDropsMemberships(t *testing.T) {
+	c, _, now := newDocClient(t)
+	doc, err := c.DocumentCreate(context.Background(), Caller{UserID: "u_admin"}, DocumentCreateInput{
+		Type: document.TypeContract, Scope: document.ScopeSystem, Name: "plan",
+		Body: "system contract", Now: now,
+	})
+	require.NoError(t, err)
+	body := "patched body"
+	updated, err := c.DocumentUpdate(context.Background(), Caller{UserID: "u_outsider"}, DocumentUpdateInput{
+		ID: doc.ID, Fields: document.UpdateFields{Body: &body},
+		RawArgs: map[string]any{"body": "patched body"}, Memberships: []string{"wksp_other"}, Now: now,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "patched body", updated.Body)
+}
+
+func TestDocumentDelete_DefaultsToArchive(t *testing.T) {
+	c, wsID, now := newDocClient(t)
+	doc, err := c.DocumentCreate(context.Background(), Caller{UserID: "u_alice"}, DocumentCreateInput{
+		Type: document.TypeAgent, Scope: document.ScopeProject, Name: "alpha_agent",
+		WorkspaceID: wsID, ResolvedProjectID: "proj_alpha", Now: now,
+	})
+	require.NoError(t, err)
+	out, err := c.DocumentDelete(context.Background(), Caller{UserID: "u_alice"}, DocumentDeleteInput{
+		ID: doc.ID, Memberships: []string{wsID},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, doc.ID, out.ID)
+	assert.Equal(t, string(document.DeleteArchive), out.Mode)
+	assert.True(t, out.Deleted)
+}
+
+func TestDocumentSearchScoped_StructuredFilterReturnsRows(t *testing.T) {
+	c, wsID, now := newDocClient(t)
+	_, err := c.deps.Documents.Create(context.Background(), document.Document{
+		Type: document.TypeContract, Scope: document.ScopeSystem, Name: "plan", Status: document.StatusActive,
+	}, now)
+	require.NoError(t, err)
+	_, err = c.deps.Documents.Create(context.Background(), document.Document{
+		WorkspaceID: wsID, Type: document.TypeAgent, Scope: document.ScopeWorkspace, Name: "alpha_agent", Status: document.StatusActive,
+	}, now)
+	require.NoError(t, err)
+	rows, err := c.DocumentSearchScoped(context.Background(), Caller{UserID: "u_alice"}, DocumentSearchScopedInput{
+		Memberships: []string{wsID},
+	})
+	require.NoError(t, err)
+	names := make([]string, 0, len(rows))
+	for _, r := range rows {
+		names = append(names, r.Name)
+	}
+	assert.Contains(t, names, "plan")
+	assert.Contains(t, names, "alpha_agent")
+}
+
 func TestDocumentList_WalksTierLadder(t *testing.T) {
 	c, wsID, now := newDocClient(t)
 	// system-tier contract

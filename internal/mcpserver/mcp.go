@@ -1002,36 +1002,24 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.streamable.ServeHTTP(w, r)
 }
 
-// handleInfo is the satellites_info tool implementation. Thin
-// forwarder per cli-primary order:07a-layer-2 (sty_df1cb227): parses
-// no args, calls the typed surface, marshals the result.
+// handleInfo is the satellites_info tool adapter. Thin forwarder per
+// cli-primary order:07a-layer-2 (sty_df1cb227) + sty_f3f7bf9b slice 11:
+// resolve caller → call typed surface → marshal wire-shape payload.
+// Per-call logging is handled by the audit middleware; the audit row
+// covers the same fields without burdening each adapter.
 func (s *Server) handleInfo(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
-	out, err := s.cli().SatellitesInfo(ctx, client.Caller{
-		UserID:      caller.UserID,
-		Email:       caller.Email,
-		Memberships: s.resolveCallerMemberships(ctx, caller),
-	}, client.SatellitesInfoInput{})
+	out, err := s.cli().SatellitesInfo(ctx, toClientCaller(caller), client.SatellitesInfoInput{})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	body, err := json.Marshal(map[string]any{
+	body, _ := json.Marshal(map[string]any{
 		"version":    out.Version,
 		"build":      out.Build,
 		"commit":     out.Commit,
 		"user_email": out.UserEmail,
 		"started_at": out.StartedAt.Format(time.RFC3339),
 	})
-	if err != nil {
-		return nil, err
-	}
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "satellites_info").
-		Str("user_email", out.UserEmail).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 

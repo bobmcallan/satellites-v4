@@ -87,6 +87,8 @@ func (s *Server) cli() *client.Client {
 		APIKeys:          s.apiKeys,
 		Indexer:          s.indexer,
 		DocsDir:          s.docsDir,
+		ReplicateVocab:   s.replicateVocab,
+		ReplicateRunner:  s.replicateRunner,
 		StartedAt:        s.startedAt,
 		DefaultProjectID: s.defaultProjectID,
 		Logger:           s.logger,

@@ -75,6 +75,9 @@ func (a *APIRegistrar) Register(mux *http.ServeMux) {
 	a.registerOperatorRoutes(mux)
 	// Operator-tier write routes Tier A (sty_f38bd573).
 	a.registerOperatorWriteRoutes(mux)
+	// Operator-tier Tier B mutates (sty_0b419d98). portal_replicate
+	// remains deferred.
+	a.registerOperatorTierBRoutes(mux)
 }
 
 // clientCaller builds the typed client.Caller from the AuthMiddleware-

@@ -763,3 +763,171 @@ func newSkillDeleteCmd() *cobra.Command {
 	addDocumentDeleteFlags(c)
 	return c
 }
+
+// ----- sty_0b419d98 Tier B mutates -----
+
+func newAgentAPIKeyCreateCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "apikey-create",
+		Short: "Create an agent API key [admin].",
+		RunE: writeHandler("agent_apikey_create", func(cmd *cobra.Command, args []string) (any, error) {
+			name, _ := cmd.Flags().GetString("name")
+			if name == "" {
+				return nil, cliexit.Newf(cliexit.Usage, "agent apikey-create: --name is required")
+			}
+			out := map[string]any{"name": name}
+			if v, _ := cmd.Flags().GetString("project-id"); v != "" {
+				out["project_id"] = v
+			}
+			if v, _ := cmd.Flags().GetString("expires-at"); v != "" {
+				out["expires_at"] = v
+			}
+			return out, nil
+		}),
+	}
+	c.Flags().String("name", "", "Key name (required).")
+	c.Flags().String("project-id", "", "Optional project scope.")
+	c.Flags().String("expires-at", "", "Optional RFC3339 expiry.")
+	_ = c.MarkFlagRequired("name")
+	return c
+}
+
+func newAgentAPIKeyListCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "apikey-list",
+		Short: "List agent API keys [admin].",
+		RunE: writeHandler("agent_apikey_list", func(cmd *cobra.Command, args []string) (any, error) {
+			out := map[string]any{}
+			if v, _ := cmd.Flags().GetString("project-id"); v != "" {
+				out["project_id"] = v
+			}
+			if v, _ := cmd.Flags().GetBool("include-archived"); v {
+				out["include_archived"] = true
+			}
+			return out, nil
+		}),
+	}
+	c.Flags().String("project-id", "", "Filter by project.")
+	c.Flags().Bool("include-archived", false, "Include archived keys.")
+	return c
+}
+
+func newAgentAPIKeyDeleteCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "apikey-delete <id>",
+		Short: "Delete an agent API key [admin].",
+		Args:  cobra.ExactArgs(1),
+		RunE: writeHandler("agent_apikey_delete", func(cmd *cobra.Command, args []string) (any, error) {
+			return map[string]any{"id": args[0]}, nil
+		}),
+	}
+	return c
+}
+
+func newAgentComposeCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "compose",
+		Short: "Compose an ephemeral or canonical agent.",
+		RunE: writeHandler("agent_compose", func(cmd *cobra.Command, args []string) (any, error) {
+			name, _ := cmd.Flags().GetString("name")
+			if name == "" {
+				return nil, cliexit.Newf(cliexit.Usage, "agent compose: --name is required")
+			}
+			out := map[string]any{"name": name}
+			body, _ := cmd.Flags().GetString("body")
+			if pf.Stdin {
+				if body != "" {
+					return nil, cliexit.Newf(cliexit.Usage, "agent compose: --stdin and --body are mutually exclusive")
+				}
+				got, err := readBodyFromStdin()
+				if err != nil {
+					return nil, err
+				}
+				body = got
+			}
+			if body != "" {
+				out["body"] = body
+			}
+			if v, _ := cmd.Flags().GetString("project-id"); v != "" {
+				out["project_id"] = v
+			}
+			if v, _ := cmd.Flags().GetStringSlice("skill-refs"); len(v) > 0 {
+				out["skill_refs"] = v
+			}
+			if v, _ := cmd.Flags().GetStringSlice("permission-patterns"); len(v) > 0 {
+				out["permission_patterns"] = v
+			}
+			if v, _ := cmd.Flags().GetBool("ephemeral"); v {
+				out["ephemeral"] = true
+			}
+			if v, _ := cmd.Flags().GetString("story-id"); v != "" {
+				out["story_id"] = v
+			}
+			if v, _ := cmd.Flags().GetString("reason"); v != "" {
+				out["reason"] = v
+			}
+			if v, _ := cmd.Flags().GetStringSlice("tags"); len(v) > 0 {
+				out["tags"] = v
+			}
+			return out, nil
+		}),
+	}
+	c.Flags().String("name", "", "Agent name (required).")
+	c.Flags().String("body", "", "Markdown body (use --stdin to read from stdin).")
+	c.Flags().String("project-id", "", "Optional project scope (omit for scope=system).")
+	c.Flags().StringSlice("skill-refs", nil, "Skill document ids.")
+	c.Flags().StringSlice("permission-patterns", nil, "PreToolUse hook patterns.")
+	c.Flags().Bool("ephemeral", false, "Mark agent as ephemeral (requires --story-id).")
+	c.Flags().String("story-id", "", "Required when ephemeral=true.")
+	c.Flags().String("reason", "", "Free-form rationale.")
+	c.Flags().StringSlice("tags", nil, "Free-form tags.")
+	_ = c.MarkFlagRequired("name")
+	return c
+}
+
+func newProjectSeedRunCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "seed-run",
+		Short: "Re-run the project-tier configseed loader [admin].",
+		RunE: writeHandler("project_seed_run", func(cmd *cobra.Command, args []string) (any, error) {
+			projectID, _ := cmd.Flags().GetString("project-id")
+			if projectID == "" {
+				return nil, cliexit.Newf(cliexit.Usage, "project seed-run: --project-id is required")
+			}
+			return map[string]any{"project_id": projectID}, nil
+		}),
+	}
+	c.Flags().String("project-id", "", "Project id (required).")
+	_ = c.MarkFlagRequired("project-id")
+	return c
+}
+
+func newSystemSeedRunCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "seed-run",
+		Short: "Re-run the system-tier configseed loader [admin].",
+		RunE:  writeHandler("system_seed_run", func(cmd *cobra.Command, args []string) (any, error) { return map[string]any{}, nil }),
+	}
+}
+
+func newDocumentIngestFileCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "ingest-file",
+		Short: "Ingest a markdown file as a document.",
+		RunE: writeHandler("document_ingest_file", func(cmd *cobra.Command, args []string) (any, error) {
+			path, _ := cmd.Flags().GetString("path")
+			if path == "" {
+				return nil, cliexit.Newf(cliexit.Usage, "document ingest-file: --path is required")
+			}
+			out := map[string]any{"path": path}
+			if v, _ := cmd.Flags().GetString("project-id"); v != "" {
+				out["project_id"] = v
+			}
+			return out, nil
+		}),
+	}
+	c.Flags().String("path", "", "Path to markdown file (relative to docsDir; required).")
+	c.Flags().String("project-id", "", "Optional project scope.")
+	_ = c.MarkFlagRequired("path")
+	return c
+}

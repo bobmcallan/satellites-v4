@@ -104,8 +104,8 @@ func registerProjectNoun(root *cobra.Command) {
 		newProjectListCmd(),   // sty_ef248ab2
 		newProjectUpdateCmd(), // sty_f38bd573
 		newProjectDeleteCmd(), // sty_f38bd573
-		newProjectSetCmd(),    // order:05
-		verbStub("seed-run", "project seed-run", "Re-run the project-tier configseed loader."),
+		newProjectSetCmd(),     // order:05
+		newProjectSeedRunCmd(), // sty_0b419d98
 	)
 	root.AddCommand(noun)
 }
@@ -160,11 +160,11 @@ func registerAgentNoun(root *cobra.Command) {
 		newAgentUpdateCmd(), // sty_f38bd573
 		newAgentDeleteCmd(), // sty_f38bd573
 		newAgentSearchCmd(), // sty_ef248ab2
-		verbStub("compose", "agent compose", "Compose an ephemeral agent."),
+		newAgentComposeCmd(),          // sty_0b419d98
 		newAgentEphemeralSummaryCmd(), // sty_ef248ab2
-		verbStub("apikey-create", "agent apikey-create", "Create an agent API key [admin]."),
-		verbStub("apikey-list", "agent apikey-list", "List agent API keys [admin]."),
-		verbStub("apikey-delete", "agent apikey-delete", "Delete an agent API key [admin]."),
+		newAgentAPIKeyCreateCmd(),     // sty_0b419d98
+		newAgentAPIKeyListCmd(),       // sty_0b419d98
+		newAgentAPIKeyDeleteCmd(),     // sty_0b419d98
 	)
 	root.AddCommand(noun)
 }
@@ -203,8 +203,8 @@ func registerDocumentNoun(root *cobra.Command) {
 		newDocumentListCmd(),   // sty_004f3d3a
 		newDocumentUpdateCmd(), // sty_f38bd573
 		newDocumentDeleteCmd(), // sty_f38bd573
-		newDocumentSearchCmd(), // sty_ef248ab2
-		verbStub("ingest-file", "document ingest-file", "Ingest a markdown file as a document."),
+		newDocumentSearchCmd(),     // sty_ef248ab2
+		newDocumentIngestFileCmd(), // sty_0b419d98
 	)
 	root.AddCommand(noun)
 }
@@ -272,7 +272,7 @@ func registerSessionNoun(root *cobra.Command) {
 func registerSystemNoun(root *cobra.Command) {
 	noun := nounStub("system", "System — admin-tier verbs.")
 	noun.AddCommand(
-		verbStub("seed-run", "system seed-run", "Re-run the system-tier configseed loader [admin]."),
+		newSystemSeedRunCmd(), // sty_0b419d98
 	)
 	root.AddCommand(noun)
 }

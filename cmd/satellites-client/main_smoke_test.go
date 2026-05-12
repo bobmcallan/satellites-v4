@@ -77,18 +77,11 @@ func TestPersistentFlagsRecognised(t *testing.T) {
 
 func TestStubReturnsServerExitCode(t *testing.T) {
 	// Only verbs that remain stubs after order:04 + sty_ef248ab2 +
-	// sty_f38bd573 Tier A + sty_004f3d3a. The remaining stubs are
-	// Tier B verbs (sty_0b419d98): agent_compose, agent_apikey_*,
-	// project_seed_run, system_seed_run, portal_replicate,
-	// document_ingest_file.
+	// sty_f38bd573 + sty_004f3d3a + sty_0b419d98 (Tier B partial).
+	// portal_replicate is the lone remaining verbStub — deferred to
+	// a chromedp+vocabulary follow-up.
 	verbs := [][]string{
-		{"agent", "compose"},
-		{"agent", "apikey-create"},
-		{"agent", "apikey-list"},
-		{"agent", "apikey-delete"},
-		{"system", "seed-run"},
 		{"portal", "replicate"},
-		{"document", "ingest-file"},
 	}
 	for _, args := range verbs {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
@@ -116,6 +109,9 @@ func TestStubReturnsServerExitCode(t *testing.T) {
 
 func TestNounGroupsRegistered(t *testing.T) {
 	// AC4: every noun group + every verb appears under root.
+	// Note: noun verb counts include all CRUD + special verbs. The
+	// total grows as stubs are migrated; the value reflects the
+	// noun-group shape after sty_0b419d98 Tier B.
 	expected := map[string]int{
 		"story":     10, // sty_f38bd573 added story_delete
 		"task":      8,

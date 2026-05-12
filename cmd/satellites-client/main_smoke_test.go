@@ -76,17 +76,19 @@ func TestPersistentFlagsRecognised(t *testing.T) {
 }
 
 func TestStubReturnsServerExitCode(t *testing.T) {
-	// Only verbs that remain stubs after order:04 + sty_ef248ab2.
-	// Migrated reads + the operator-tier set from sty_ef248ab2
-	// (kv/project/workspace/agent/etc. read verbs) reach the remote
-	// and must be tested via integration paths instead.
+	// Only verbs that remain stubs after order:04 + sty_ef248ab2 +
+	// sty_f38bd573 Tier A. The remaining stubs are Tier B (agent
+	// compose, agent apikey-*, project seed-run, system seed-run,
+	// portal replicate, document ingest-file) plus a few read-tier
+	// gap-fills (document get/list, reviewer/role/skill get/list/search,
+	// ledger recall) deferred to a follow-up.
 	verbs := [][]string{
-		{"kv", "set"},
 		{"agent", "compose"},
-		{"project", "create"},
-		{"document", "create"},
-		{"contract", "create"},
-		{"reviewer", "create"},
+		{"agent", "apikey-create"},
+		{"system", "seed-run"},
+		{"portal", "replicate"},
+		{"document", "ingest-file"},
+		{"ledger", "recall"},
 	}
 	for _, args := range verbs {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
@@ -115,7 +117,7 @@ func TestStubReturnsServerExitCode(t *testing.T) {
 func TestNounGroupsRegistered(t *testing.T) {
 	// AC4: every noun group + every verb appears under root.
 	expected := map[string]int{
-		"story":     9,
+		"story":     10, // sty_f38bd573 added story_delete
 		"task":      8,
 		"ledger":    6,
 		"project":   7,

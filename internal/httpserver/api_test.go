@@ -15,7 +15,8 @@ import (
 
 // expectedRoutes lists the verb routes the HTTP API surface exposes.
 // sty_068a6c46 shipped 20; sty_73207fc8 added /api/v1/story/get;
-// sty_ef248ab2 added 30 operator-tier read verbs. Total: 51.
+// sty_ef248ab2 added 30 operator-tier reads; sty_f38bd573 Tier A added
+// 37 operator-tier mutates. Total: 88.
 var expectedRoutes = []string{
 	// Order:07a anchor (21).
 	"POST /api/v1/satellites/info",
@@ -70,15 +71,53 @@ var expectedRoutes = []string{
 	"POST /api/v1/repo/get-symbol-source",
 	"POST /api/v1/repo/get-file",
 	"POST /api/v1/repo/get-outline",
+	// sty_f38bd573 Tier A operator-tier mutates (37).
+	"POST /api/v1/story/create",
+	"POST /api/v1/story/update",
+	"POST /api/v1/story/delete",
+	"POST /api/v1/project/create",
+	"POST /api/v1/project/update",
+	"POST /api/v1/project/delete",
+	"POST /api/v1/workspace/create",
+	"POST /api/v1/workspace/member-add",
+	"POST /api/v1/workspace/member-update-role",
+	"POST /api/v1/workspace/member-remove",
+	"POST /api/v1/kv/set",
+	"POST /api/v1/kv/delete",
+	"POST /api/v1/changelog/add",
+	"POST /api/v1/changelog/update",
+	"POST /api/v1/changelog/delete",
+	"POST /api/v1/repo/add",
+	"POST /api/v1/document/create",
+	"POST /api/v1/document/update",
+	"POST /api/v1/document/delete",
+	"POST /api/v1/agent/create",
+	"POST /api/v1/agent/update",
+	"POST /api/v1/agent/delete",
+	"POST /api/v1/contract/create",
+	"POST /api/v1/contract/update",
+	"POST /api/v1/contract/delete",
+	"POST /api/v1/principle/create",
+	"POST /api/v1/principle/update",
+	"POST /api/v1/principle/delete",
+	"POST /api/v1/reviewer/create",
+	"POST /api/v1/reviewer/update",
+	"POST /api/v1/reviewer/delete",
+	"POST /api/v1/role/create",
+	"POST /api/v1/role/update",
+	"POST /api/v1/role/delete",
+	"POST /api/v1/skill/create",
+	"POST /api/v1/skill/update",
+	"POST /api/v1/skill/delete",
 }
 
-// TestAPI_RoutesRegistered asserts the registrar attaches all 51
+// TestAPI_RoutesRegistered asserts the registrar attaches all 88
 // verb routes to the supplied mux. Routes that respond 404 indicate
 // missing registration; any other status (400/500/200) proves the
 // handler was hit.
 func TestAPI_RoutesRegistered(t *testing.T) {
-	if got := len(expectedRoutes); got != 51 {
-		t.Fatalf("expected 51 routes, got %d (update the slice as the verb set grows)", got)
+	if got := len(expectedRoutes); got != 88 {
+		t.Fatalf("expected 88 routes, got %d (update the slice as the verb set grows)", got)
 	}
 
 	reg := NewAPIRegistrar(client.New(client.Deps{StartedAt: time.Now().UTC()}))

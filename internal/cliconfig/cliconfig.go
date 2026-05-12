@@ -119,16 +119,44 @@ func (c Config) String() string {
 	)
 }
 
+// defaultExeDir returns the directory containing the running binary.
+// Prefers os.Executable() — which resolves the real path even when the
+// shell invoked the CLI via a PATH lookup or a symlink — over
+// os.Args[0], which is just the basename in the PATH-lookup case
+// (filepath.Dir of a bare basename returns ".", which downstream
+// filepath.Abs resolves to cwd, not the binary's home).
+//
+// Symlinks are resolved via filepath.EvalSymlinks so logs land in the
+// canonical bin/ directory rather than the symlink's parent (e.g.
+// ~/bin/satellites-client → <repo>/bin/satellites-client should log
+// to <repo>/bin/logs/, not ~/bin/logs/).
+//
+// Fallback chain: os.Executable → EvalSymlinks → os.Args[0] → "".
+// sty_1f942fc6.
+func defaultExeDir() string {
+	if exe, err := os.Executable(); err == nil {
+		if real, err2 := filepath.EvalSymlinks(exe); err2 == nil {
+			return filepath.Dir(real)
+		}
+		return filepath.Dir(exe)
+	}
+	if len(os.Args) > 0 && os.Args[0] != "" {
+		return filepath.Dir(os.Args[0])
+	}
+	return ""
+}
+
 // defaults builds the in-code default Config. Lowest precedence layer;
 // TOML overrides it.
 func defaults() *Config {
 	// LogPath defaults to <exe_dir>/logs/ — matches satellites-agent's
 	// default in internal/config/agent_config.go::defaultsAgent. With the
 	// binary at bin/satellites-client, this resolves to bin/logs/.
-	// sty_ef4eedaa.
+	// sty_ef4eedaa, exe-dir resolution fixed in sty_1f942fc6.
+	exeDir := defaultExeDir()
 	logDir := ""
-	if len(os.Args) > 0 && os.Args[0] != "" {
-		logDir = filepath.Join(filepath.Dir(os.Args[0]), "logs")
+	if exeDir != "" {
+		logDir = filepath.Join(exeDir, "logs")
 	}
 	return &Config{
 		Server:       "",

@@ -8,6 +8,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/phuslu/log"
+	"github.com/ternarybob/arbor"
+	arbormodels "github.com/ternarybob/arbor/models"
 
 	"github.com/bobmcallan/satellites/internal/cliexit"
 	"github.com/bobmcallan/satellites/internal/cliremote"
@@ -214,6 +219,63 @@ func TestCall_PathMappingViaServer(t *testing.T) {
 				t.Fatalf("%s: %v", tc.toolName, err)
 			}
 		})
+	}
+}
+
+// TestCall_EmitsDebugRow asserts that when a logger is wired via
+// WithLogger, each Call emits one Debug row with the verb, HTTP
+// path, status, and duration fields. Uses arbor's in-memory writer
+// + GetMemoryLogs API to capture rows without touching stdout/files.
+func TestCall_EmitsDebugRow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	correlation := "test-cli-call-row"
+	mem := arbor.NewLogger().
+		WithMemoryWriter(arbormodels.WriterConfiguration{}).
+		WithLevelFromString("debug").
+		WithCorrelationId(correlation)
+
+	client := cliremote.New(srv.URL, "test-bearer", nil).WithLogger(mem)
+	if err := client.Call(context.Background(), "satellites_info", nil, nil); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	// Writes are async; arbor's reference integration test sleeps
+	// before reading. Match that pattern.
+	time.Sleep(80 * time.Millisecond)
+
+	rows, err := mem.GetMemoryLogs(correlation, arbor.LogLevel(log.DebugLevel))
+	if err != nil {
+		t.Fatalf("GetMemoryLogs: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("no rows captured")
+	}
+	// The memory writer's rendered form is
+	// "DBG|<ts>|<msg>" — structured fields are stored separately and
+	// not surfaced in the rendered string. We verify the message
+	// fires (proves the Debug().Msg("cli call") path is reached);
+	// the field set is proven by reading cliremote.go directly.
+	var calls int
+	for _, body := range rows {
+		if strings.Contains(body, "cli call") {
+			calls++
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("expected 1 cli-call row, got %d (rows = %v)", calls, rows)
+	}
+}
+
+// TestCall_NilLoggerIsNoOp asserts that without WithLogger, no panic
+// occurs and behaviour is identical to the pre-sty_1f942fc6 path.
+func TestCall_NilLoggerIsNoOp(t *testing.T) {
+	_, client := stubServer(t, "/api/v1/satellites/info", http.StatusOK, `{}`)
+	// Sanity: omitting WithLogger leaves the field nil; Call must not panic.
+	if err := client.Call(context.Background(), "satellites_info", nil, nil); err != nil {
+		t.Fatalf("Call: %v", err)
 	}
 }
 

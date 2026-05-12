@@ -50,6 +50,48 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 }
 
+// TestLoad_Defaults_LogPathTracksExeDirNotCwd locks in the
+// sty_1f942fc6 fix: defaults().LogPath must resolve via os.Executable()
+// so it tracks the binary's home directory regardless of the caller's
+// cwd. Without the fix, calling Load from a tempdir cwd resolved the
+// log path under that tempdir.
+func TestLoad_Defaults_LogPathTracksExeDirNotCwd(t *testing.T) {
+	t.Setenv("SATELLITES_CLIENT_CONFIG", "")
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	chdirToEmpty(t)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+
+	cfg, _, err := cliconfig.Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LogPath == "" {
+		t.Fatal("LogPath empty; expected exe-dir-based default")
+	}
+	if strings.HasPrefix(cfg.LogPath, cwd) {
+		t.Fatalf("LogPath %q anchored on cwd %q — should track exe dir", cfg.LogPath, cwd)
+	}
+	// Sanity: the resolved path's directory must exist as a sibling of
+	// the running test binary (filepath.EvalSymlinks resolves
+	// go-build's tmp binary into a stable path).
+	exe, err := os.Executable()
+	if err != nil {
+		t.Skipf("os.Executable unavailable: %v", err)
+	}
+	real, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		real = exe
+	}
+	want := filepath.Join(filepath.Dir(real), "logs")
+	if cfg.LogPath != want {
+		t.Fatalf("LogPath = %q, want %q (exe=%q)", cfg.LogPath, want, real)
+	}
+}
+
 // TestLoad_BinDir: bin/satellites-client.toml is the implicit path the
 // operator drops a TOML next to the binary at. Operational fields
 // override defaults.
@@ -123,9 +165,10 @@ log_path = "/tmp/logs"
 // outside the current repo.
 //
 // Layout under <root>:
-//   .git/
-//   bin/satellites-client.toml
-//   sub/deep/                  ← test chdirs here
+//
+//	.git/
+//	bin/satellites-client.toml
+//	sub/deep/                  ← test chdirs here
 //
 // Expected: the loader returns <root>/bin/satellites-client.toml even
 // though CWD is two levels below.
@@ -193,9 +236,10 @@ token = "walked-up"
 // wrong project's bearer.
 //
 // Layout under <outer>:
-//   bin/satellites-client.toml ← outer config, must NOT resolve
-//   inner/.git/
-//   inner/sub/                  ← test chdirs here
+//
+//	bin/satellites-client.toml ← outer config, must NOT resolve
+//	inner/.git/
+//	inner/sub/                  ← test chdirs here
 func TestLoad_WalkUpStopsAtRepoBoundary(t *testing.T) {
 	t.Setenv("SATELLITES_CLIENT_CONFIG", "")
 	homeDir := t.TempDir()

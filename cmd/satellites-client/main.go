@@ -256,7 +256,9 @@ func effectiveServer() string {
 
 // ensureRemote constructs the cliremote.Client on first use. Verbs
 // that need the remote call this; verbs that don't (locally-resolved
-// like the future `auth login`) skip it.
+// like `auth login`) skip it. Wires the resolved arbor logger so
+// cliremote emits one Debug row per HTTP call carrying the verb,
+// path, status, and duration (sty_1f942fc6).
 func ensureRemote() (*cliremote.Client, error) {
 	if remote != nil {
 		return remote, nil
@@ -265,6 +267,6 @@ func ensureRemote() (*cliremote.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	remote = cliremote.New(effectiveServer(), tok, nil)
+	remote = cliremote.New(effectiveServer(), tok, nil).WithLogger(resolvedLogger)
 	return remote, nil
 }

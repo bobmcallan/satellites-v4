@@ -39,6 +39,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ternarybob/arbor"
+
 	"github.com/bobmcallan/satellites/internal/cliexit"
 )
 
@@ -47,6 +49,7 @@ type Client struct {
 	server string
 	bearer string
 	http   *http.Client
+	logger arbor.ILogger
 }
 
 // New constructs a Client bound to the given server base URL + bearer.
@@ -64,14 +67,49 @@ func New(server, bearer string, httpClient *http.Client) *Client {
 	}
 }
 
+// WithLogger attaches an arbor logger to the client; subsequent Call
+// invocations will emit a single Debug row per call carrying
+// {verb, method, path, status, duration_ms, error}. Returns the same
+// client for fluent wiring at construction. nil-safe — a nil receiver
+// is a no-op.
+func (c *Client) WithLogger(logger arbor.ILogger) *Client {
+	if c == nil {
+		return nil
+	}
+	c.logger = logger
+	return c
+}
+
 // Call invokes the named verb against /api/v1/<noun>/<verb> with the
 // supplied args as the JSON request body. On HTTP 200 the response
 // body is decoded into dst (if non-nil). On non-2xx responses the
 // returned error carries a typed cliexit.Code.
-func (c *Client) Call(ctx context.Context, toolName string, args any, dst any) error {
+//
+// When a logger is wired (see WithLogger), each invocation emits one
+// Debug row at end-of-call with {verb, method, path, status,
+// duration_ms, error}. Request body / args are NOT logged — verbs
+// like ledger_append and task_add carry operator-pastable text that
+// often includes sensitive content.
+func (c *Client) Call(ctx context.Context, toolName string, args any, dst any) (rerr error) {
 	if c == nil {
 		return cliexit.Newf(cliexit.Server, "cliremote: client not configured")
 	}
+	start := time.Now()
+	path := "/api/v1" + ToolNameToPath(toolName)
+	status := 0
+	defer func() {
+		if c.logger == nil {
+			return
+		}
+		c.logger.Debug().
+			Str("verb", toolName).
+			Str("method", "POST").
+			Str("path", path).
+			Int("status", status).
+			Int64("duration_ms", time.Since(start).Milliseconds()).
+			Bool("error", rerr != nil).
+			Msg("cli call")
+	}()
 	if args == nil {
 		args = map[string]any{}
 	}
@@ -79,7 +117,7 @@ func (c *Client) Call(ctx context.Context, toolName string, args any, dst any) e
 	if err != nil {
 		return cliexit.Wrap(cliexit.Server, fmt.Errorf("marshal args: %w", err))
 	}
-	url := strings.TrimRight(c.server, "/") + "/api/v1" + ToolNameToPath(toolName)
+	url := strings.TrimRight(c.server, "/") + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return cliexit.Wrap(cliexit.Server, err)
@@ -94,6 +132,7 @@ func (c *Client) Call(ctx context.Context, toolName string, args any, dst any) e
 		return cliexit.Wrap(cliexit.Server, fmt.Errorf("http %s: %w", url, err))
 	}
 	defer resp.Body.Close()
+	status = resp.StatusCode
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {

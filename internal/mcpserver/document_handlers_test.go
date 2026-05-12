@@ -11,6 +11,7 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/workspace"
@@ -24,8 +25,10 @@ func newDocumentTestServer(t *testing.T) *Server {
 	wsStore := workspace.NewMemoryStore()
 	docStore := document.NewMemoryStore()
 	return New(cfg, satarbor.New("info"), time.Now(), Deps{
-		DocStore:       docStore,
-		WorkspaceStore: wsStore,
+		Client: client.Deps{
+			Documents:       docStore,
+			Workspaces: wsStore,
+		},
 	})
 }
 
@@ -51,7 +54,7 @@ func TestHandleDocumentUpdate_RejectsImmutable(t *testing.T) {
 	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_a", Source: "session"})
 
 	// Seed a row to update.
-	doc, err := s.docs.Create(ctx, document.Document{
+	doc, err := s.deps.Documents.Create(ctx, document.Document{
 		Type:  document.TypePrinciple,
 		Scope: document.ScopeSystem,
 		Name:  "p",
@@ -92,15 +95,15 @@ func TestHandleDocumentList_WorkspaceIsolation(t *testing.T) {
 	s := newDocumentTestServer(t)
 	ctx := context.Background()
 
-	wsA, err := s.workspaces.Create(ctx, "user_alice", "alpha", time.Now().UTC())
+	wsA, err := s.deps.Workspaces.Create(ctx, "user_alice", "alpha", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("ws A: %v", err)
 	}
-	wsB, err := s.workspaces.Create(ctx, "user_bob", "beta", time.Now().UTC())
+	wsB, err := s.deps.Workspaces.Create(ctx, "user_bob", "beta", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("ws B: %v", err)
 	}
-	if _, err := s.docs.Create(ctx, document.Document{
+	if _, err := s.deps.Documents.Create(ctx, document.Document{
 		WorkspaceID: wsA.ID,
 		Type:        document.TypeRole,
 		Scope:       document.ScopeWorkspace,
@@ -108,7 +111,7 @@ func TestHandleDocumentList_WorkspaceIsolation(t *testing.T) {
 	}, time.Now().UTC()); err != nil {
 		t.Fatalf("alice role: %v", err)
 	}
-	if _, err := s.docs.Create(ctx, document.Document{
+	if _, err := s.deps.Documents.Create(ctx, document.Document{
 		WorkspaceID: wsB.ID,
 		Type:        document.TypeRole,
 		Scope:       document.ScopeWorkspace,
@@ -194,7 +197,7 @@ func TestTaskAddSystemAgent_PlacesTaskInCallerProject(t *testing.T) {
 	f := newOrchestratorFixture(t)
 	devID := agentDocID(t, f.server, "developer_agent")
 
-	doc, err := f.server.docs.GetByID(context.Background(), devID, nil)
+	doc, err := f.server.deps.Documents.GetByID(context.Background(), devID, nil)
 	if err != nil {
 		t.Fatalf("agent get: %v", err)
 	}
@@ -242,12 +245,12 @@ func TestHandleDocumentList_SystemScopeWorkspaceBlind(t *testing.T) {
 	s := newDocumentTestServer(t)
 	ctx := context.Background()
 
-	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
+	if _, err := s.deps.Workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
 		t.Fatalf("other ws: %v", err)
 	}
 
 	// sty_e2512dbd: scope=system rows are non-tenant — no workspace_id.
-	if _, err := s.docs.Create(ctx, document.Document{
+	if _, err := s.deps.Documents.Create(ctx, document.Document{
 		Type:  document.TypePrinciple,
 		Scope: document.ScopeSystem,
 		Name:  "global-principle",
@@ -280,11 +283,11 @@ func TestHandleDocumentList_MixedScopeUnion(t *testing.T) {
 	s := newDocumentTestServer(t)
 	ctx := context.Background()
 
-	wsAlice, err := s.workspaces.Create(ctx, "user_alice", "alice-tier", time.Now().UTC())
+	wsAlice, err := s.deps.Workspaces.Create(ctx, "user_alice", "alice-tier", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("alice ws: %v", err)
 	}
-	wsBob, err := s.workspaces.Create(ctx, "user_bob", "bob-tier", time.Now().UTC())
+	wsBob, err := s.deps.Workspaces.Create(ctx, "user_bob", "bob-tier", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("bob ws: %v", err)
 	}
@@ -300,7 +303,7 @@ func TestHandleDocumentList_MixedScopeUnion(t *testing.T) {
 		if scope != document.ScopeSystem {
 			doc.WorkspaceID = wsID
 		}
-		if _, err := s.docs.Create(ctx, doc, time.Now().UTC()); err != nil {
+		if _, err := s.deps.Documents.Create(ctx, doc, time.Now().UTC()); err != nil {
 			t.Fatalf("seed %q: %v", name, err)
 		}
 	}
@@ -339,16 +342,16 @@ func TestHandleDocumentList_ProjectScopeTenantIsolation(t *testing.T) {
 	s := newDocumentTestServer(t)
 	ctx := context.Background()
 
-	wsAlice, err := s.workspaces.Create(ctx, "user_alice", "alice-tier", time.Now().UTC())
+	wsAlice, err := s.deps.Workspaces.Create(ctx, "user_alice", "alice-tier", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("alice ws: %v", err)
 	}
-	if _, err := s.workspaces.Create(ctx, "user_bob", "bob-tier", time.Now().UTC()); err != nil {
+	if _, err := s.deps.Workspaces.Create(ctx, "user_bob", "bob-tier", time.Now().UTC()); err != nil {
 		t.Fatalf("bob ws: %v", err)
 	}
 
 	aliceProj := "proj_alice"
-	if _, err := s.docs.Create(ctx, document.Document{
+	if _, err := s.deps.Documents.Create(ctx, document.Document{
 		WorkspaceID: wsAlice.ID,
 		Type:        document.TypePrinciple,
 		Scope:       document.ScopeProject,
@@ -377,11 +380,11 @@ func TestHandleDocumentGet_SystemScopeByID(t *testing.T) {
 	s := newDocumentTestServer(t)
 	ctx := context.Background()
 
-	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
+	if _, err := s.deps.Workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
 		t.Fatalf("other ws: %v", err)
 	}
 
-	doc, err := s.docs.Create(ctx, document.Document{
+	doc, err := s.deps.Documents.Create(ctx, document.Document{
 		Type:  document.TypeAgent,
 		Scope: document.ScopeSystem,
 		Name:  "developer_agent",
@@ -411,15 +414,15 @@ func TestHandleDocumentGet_TenantIsolatedByID(t *testing.T) {
 	s := newDocumentTestServer(t)
 	ctx := context.Background()
 
-	wsAlice, err := s.workspaces.Create(ctx, "user_alice", "alice-tier", time.Now().UTC())
+	wsAlice, err := s.deps.Workspaces.Create(ctx, "user_alice", "alice-tier", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("alice ws: %v", err)
 	}
-	if _, err := s.workspaces.Create(ctx, "user_bob", "bob-tier", time.Now().UTC()); err != nil {
+	if _, err := s.deps.Workspaces.Create(ctx, "user_bob", "bob-tier", time.Now().UTC()); err != nil {
 		t.Fatalf("bob ws: %v", err)
 	}
 
-	doc, err := s.docs.Create(ctx, document.Document{
+	doc, err := s.deps.Documents.Create(ctx, document.Document{
 		WorkspaceID: wsAlice.ID,
 		Type:        document.TypeRole,
 		Scope:       document.ScopeWorkspace,
@@ -447,10 +450,10 @@ func TestHandleDocumentGet_SystemScopeByName(t *testing.T) {
 	s := newDocumentTestServer(t)
 	ctx := context.Background()
 
-	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
+	if _, err := s.deps.Workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
 		t.Fatalf("other ws: %v", err)
 	}
-	if _, err := s.docs.Create(ctx, document.Document{
+	if _, err := s.deps.Documents.Create(ctx, document.Document{
 		Type:  document.TypeAgent,
 		Scope: document.ScopeSystem,
 		Name:  "developer_agent",
@@ -480,12 +483,12 @@ func TestHandleDocumentGet_WorkspaceTierByName(t *testing.T) {
 	s := newDocumentTestServer(t)
 	ctx := context.Background()
 
-	ws, err := s.workspaces.Create(ctx, "user_alice", "alice-tier", time.Now().UTC())
+	ws, err := s.deps.Workspaces.Create(ctx, "user_alice", "alice-tier", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("alice ws: %v", err)
 	}
 
-	wsRow, err := s.docs.Create(ctx, document.Document{
+	wsRow, err := s.deps.Documents.Create(ctx, document.Document{
 		WorkspaceID: ws.ID,
 		Type:        document.TypeRole,
 		Scope:       document.ScopeWorkspace,
@@ -521,7 +524,7 @@ func TestAgentGetWrapper_TypeFilter(t *testing.T) {
 	s.registerDocumentWrappers()
 	ctx := context.Background()
 
-	contractRow, err := s.docs.Create(ctx, document.Document{
+	contractRow, err := s.deps.Documents.Create(ctx, document.Document{
 		Type:       document.TypeContract,
 		Scope:      document.ScopeSystem,
 		Name:       "develop",
@@ -530,7 +533,7 @@ func TestAgentGetWrapper_TypeFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed contract: %v", err)
 	}
-	agentRow, err := s.docs.Create(ctx, document.Document{
+	agentRow, err := s.deps.Documents.Create(ctx, document.Document{
 		Type:  document.TypeAgent,
 		Scope: document.ScopeSystem,
 		Name:  "develop",
@@ -539,7 +542,7 @@ func TestAgentGetWrapper_TypeFilter(t *testing.T) {
 		t.Fatalf("seed agent: %v", err)
 	}
 
-	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
+	if _, err := s.deps.Workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
 		t.Fatalf("other ws: %v", err)
 	}
 	otherCtx := withCaller(ctx, auth.CallerIdentity{UserID: "user_other", Source: "session"})
@@ -570,7 +573,7 @@ func TestAgentGetWrapper_TypeFilterByID(t *testing.T) {
 	s.registerDocumentWrappers()
 	ctx := context.Background()
 
-	contractRow, err := s.docs.Create(ctx, document.Document{
+	contractRow, err := s.deps.Documents.Create(ctx, document.Document{
 		Type:       document.TypeContract,
 		Scope:      document.ScopeSystem,
 		Name:       "contract_only",
@@ -579,7 +582,7 @@ func TestAgentGetWrapper_TypeFilterByID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed contract: %v", err)
 	}
-	agentRow, err := s.docs.Create(ctx, document.Document{
+	agentRow, err := s.deps.Documents.Create(ctx, document.Document{
 		Type:  document.TypeAgent,
 		Scope: document.ScopeSystem,
 		Name:  "agent_only",
@@ -588,7 +591,7 @@ func TestAgentGetWrapper_TypeFilterByID(t *testing.T) {
 		t.Fatalf("seed agent: %v", err)
 	}
 
-	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
+	if _, err := s.deps.Workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
 		t.Fatalf("other ws: %v", err)
 	}
 	otherCtx := withCaller(ctx, auth.CallerIdentity{UserID: "user_other", Source: "session"})
@@ -626,11 +629,11 @@ func TestAgentListWrapper_SystemScopeWorkspaceBlind(t *testing.T) {
 	s.registerDocumentWrappers()
 	ctx := context.Background()
 
-	if _, err := s.workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
+	if _, err := s.deps.Workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
 		t.Fatalf("other ws: %v", err)
 	}
 	for _, name := range []string{"developer_agent", "releaser_agent", "story_close_agent"} {
-		if _, err := s.docs.Create(ctx, document.Document{
+		if _, err := s.deps.Documents.Create(ctx, document.Document{
 			Type:  document.TypeAgent,
 			Scope: document.ScopeSystem,
 			Name:  name,
@@ -663,12 +666,12 @@ func TestContractListWrapper_HierarchicalTiers(t *testing.T) {
 	s.registerDocumentWrappers()
 	ctx := context.Background()
 
-	wsRow, err := s.workspaces.Create(ctx, "user_alice", "alice-tier", time.Now().UTC())
+	wsRow, err := s.deps.Workspaces.Create(ctx, "user_alice", "alice-tier", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("alice ws: %v", err)
 	}
 
-	wkspContract, err := s.docs.Create(ctx, document.Document{
+	wkspContract, err := s.deps.Documents.Create(ctx, document.Document{
 		WorkspaceID: wsRow.ID,
 		Type:        document.TypeContract,
 		Scope:       document.ScopeWorkspace,

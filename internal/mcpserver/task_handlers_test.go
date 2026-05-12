@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/task"
@@ -19,9 +20,11 @@ import (
 func taskTestServer(t *testing.T) *Server {
 	t.Helper()
 	return &Server{
-		cfg:    &config.Config{},
-		tasks:  task.NewMemoryStore(),
-		ledger: ledger.NewMemoryStore(),
+		cfg: &config.Config{},
+		deps: client.Deps{
+			Tasks:  task.NewMemoryStore(),
+			Ledger: ledger.NewMemoryStore(),
+		},
 	}
 }
 
@@ -49,7 +52,7 @@ func seedTask(t *testing.T, s *Server, seed task.Task) string {
 	if seed.Origin == "" {
 		seed.Origin = task.OriginScheduled
 	}
-	row, err := s.tasks.Enqueue(context.Background(), seed, time.Now().UTC())
+	row, err := s.deps.Tasks.Enqueue(context.Background(), seed, time.Now().UTC())
 	require.NoError(t, err)
 	return row.ID
 }
@@ -102,7 +105,7 @@ func TestTaskGet_WorkspaceIsolation(t *testing.T) {
 	})
 
 	// Get with a different workspace_id must reject.
-	row, err := s.tasks.GetByID(context.Background(), taskID, []string{"wksp_b"})
+	row, err := s.deps.Tasks.GetByID(context.Background(), taskID, []string{"wksp_b"})
 	assert.ErrorIs(t, err, task.ErrNotFound)
 	assert.Empty(t, row.ID)
 }

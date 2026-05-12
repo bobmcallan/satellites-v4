@@ -128,7 +128,7 @@ func TestWrapper_ListPinsType(t *testing.T) {
 	// assertion is that the request that reaches handleDocumentList has
 	// type=principle. Confirm by re-invoking via the dispatcher with a
 	// seeded contract row that should NOT appear in the principle list.
-	if _, err := s.docs.Create(ctx, mustDoc(t, "contract", "system", "c1", ""), time.Now()); err != nil {
+	if _, err := s.deps.Documents.Create(ctx, mustDoc(t, "contract", "system", "c1", ""), time.Now()); err != nil {
 		t.Fatalf("seed contract: %v", err)
 	}
 	res2, _ := s.wrapperList("principle")(ctx, newCallToolReq("principle_list", map[string]any{

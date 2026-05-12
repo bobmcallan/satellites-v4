@@ -32,7 +32,7 @@ import (
 // (client.KnownDocumentKinds) so this transport file no longer imports
 // internal/document directly — see pr_mcp_cli_shared_path.
 func (s *Server) registerDocumentWrappers() {
-	if s.docs == nil {
+	if s.deps.Documents == nil {
 		return
 	}
 	for _, kind := range client.KnownDocumentKinds() {

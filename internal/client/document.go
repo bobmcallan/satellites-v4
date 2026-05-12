@@ -133,6 +133,41 @@ func (c *Client) DocumentList(ctx context.Context, caller Caller, in DocumentLis
 	return c.deps.Documents.ResolveList(ctx, in.Options, in.WorkspaceID, in.Memberships)
 }
 
+// DocumentListArgs is the flat-field equivalent of DocumentListInput.
+// Lets the MCP wire layer call DocumentListByArgs without naming
+// document.ListOptions in source (sty_4db0e025 slice A11).
+type DocumentListArgs struct {
+	Type            string
+	Scope           string
+	ContractBinding string
+	ProjectID       string
+	Tags            []string
+	Limit           int
+	WorkspaceID     string
+	Memberships     []string
+}
+
+// DocumentListByArgs is the wire-friendly equivalent of DocumentList.
+// Caps Limit at 500. Mirrors the prior wire-layer opts construction.
+func (c *Client) DocumentListByArgs(ctx context.Context, caller Caller, in DocumentListArgs) ([]document.Document, error) {
+	if c.deps.Documents == nil {
+		return nil, ErrDocumentStoreNotConfigured
+	}
+	limit := in.Limit
+	if limit > 500 {
+		limit = 500
+	}
+	opts := document.ListOptions{
+		Type:            in.Type,
+		Scope:           in.Scope,
+		ContractBinding: in.ContractBinding,
+		ProjectID:       in.ProjectID,
+		Tags:            in.Tags,
+		Limit:           limit,
+	}
+	return c.deps.Documents.ResolveList(ctx, opts, in.WorkspaceID, in.Memberships)
+}
+
 // inDocMemberships mirrors mcpserver/scope_read.go:workspaceInMemberships.
 // Nil memberships grants visibility (no scoping); an empty (non-nil)
 // slice denies. Inlined here so the typed surface has no wire-layer
@@ -278,6 +313,58 @@ type DocumentUpdateInput struct {
 	Now         time.Time
 }
 
+// DocumentUpdateFieldsFromArgs translates a wire-layer argument map
+// into a typed document.UpdateFields. Pointer semantics distinguish
+// "absent" (nil) from "explicit empty" (pointer to ""), matching the
+// store's mutation contract. Lives on the client so the wire layer
+// (mcpserver, httpserver) no longer references document.UpdateFields
+// directly (pr_mcp_cli_shared_path).
+//
+// tags is the resolved tag slice the wire layer would have read via
+// its CallToolRequest.GetStringSlice helper; the args map carries the
+// presence-bit for every other key.
+func (c *Client) DocumentUpdateFieldsFromArgs(args map[string]any, tags []string) document.UpdateFields {
+	fields := document.UpdateFields{}
+	if v, ok := args["body"]; ok {
+		sv, _ := v.(string)
+		fields.Body = &sv
+	}
+	if v, ok := args["structured"]; ok {
+		sv, _ := v.(string)
+		buf := []byte(sv)
+		fields.Structured = &buf
+	}
+	if _, ok := args["tags"]; ok {
+		t := tags
+		fields.Tags = &t
+	}
+	if v, ok := args["status"]; ok {
+		sv, _ := v.(string)
+		fields.Status = &sv
+	}
+	if v, ok := args["contract_binding"]; ok {
+		sv, _ := v.(string)
+		fields.ContractBinding = &sv
+	}
+	return fields
+}
+
+// DocumentUpdateByArgs is the wire-friendly equivalent of
+// DocumentUpdate. The wire layer hands its argument map + tag slice
+// to the client, which assembles the typed UpdateFields internally
+// (sty_4db0e025 slice A11 — keeps document.UpdateFields out of the
+// transport file).
+func (c *Client) DocumentUpdateByArgs(ctx context.Context, caller Caller, id string, args map[string]any, tags []string, memberships []string, now time.Time) (document.Document, error) {
+	fields := c.DocumentUpdateFieldsFromArgs(args, tags)
+	return c.DocumentUpdate(ctx, caller, DocumentUpdateInput{
+		ID:          id,
+		Fields:      fields,
+		RawArgs:     args,
+		Memberships: memberships,
+		Now:         now,
+	})
+}
+
 // DocumentUpdate applies a partial mutation to a document. Rejects
 // immutable keys, validates structured JSON, and drops memberships
 // for system-tier rows (sty_e2512dbd).
@@ -325,6 +412,18 @@ type DocumentDeleteOutput struct {
 	ID      string `json:"id"`
 	Mode    string `json:"mode"`
 	Deleted bool   `json:"deleted"`
+}
+
+// DocumentDeleteByArgs is the wire-friendly equivalent of
+// DocumentDelete. modeArg is the raw mode string (empty => archive).
+// Sty_4db0e025 slice A11 — keeps document.DeleteMode out of the
+// transport file.
+func (c *Client) DocumentDeleteByArgs(ctx context.Context, caller Caller, id, modeArg string, memberships []string) (DocumentDeleteOutput, error) {
+	mode := document.DeleteMode(modeArg)
+	if mode == "" {
+		mode = document.DeleteArchive
+	}
+	return c.DocumentDelete(ctx, caller, DocumentDeleteInput{ID: id, Mode: mode, Memberships: memberships})
 }
 
 // DocumentDelete archives (default) or hard-deletes a document.

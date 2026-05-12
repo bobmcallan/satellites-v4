@@ -137,7 +137,7 @@ func paramsFromSchema(properties map[string]any, required []string) []CatalogueP
 // and hand the bytes to client.Client.CatalogueUpsert. The typed
 // surface owns the workspace lookup + document-store call.
 func (s *Server) MaterialiseCatalogue(ctx context.Context) error {
-	if s == nil || s.docs == nil || s.mcp == nil {
+	if s == nil || s.deps.Documents == nil || s.mcp == nil {
 		return nil
 	}
 	now := s.nowUTC()

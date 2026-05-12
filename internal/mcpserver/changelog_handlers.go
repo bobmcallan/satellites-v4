@@ -2,7 +2,7 @@
 // logic for all five verbs (add/get/list/update/delete) lives on
 // *client.Client under internal/client/changelog.go; the handlers
 // in this file are thin parse/marshal adapters. The verbs remain
-// gated at registration on s.changelog != nil.
+// gated at registration on s.deps.Changelog != nil.
 package mcpserver
 
 import (

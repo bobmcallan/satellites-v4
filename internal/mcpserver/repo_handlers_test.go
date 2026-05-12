@@ -11,6 +11,7 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/codeindex"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/ledger"
@@ -56,11 +57,13 @@ func newRepoFixture(t *testing.T) *repoFixture {
 	}
 
 	server := New(cfg, satarbor.New("info"), now, Deps{
-		LedgerStore:    ledStore,
-		ProjectStore:   projStore,
-		WorkspaceStore: wsStore,
-		RepoStore:      repoStore,
-		TaskStore:      taskStore,
+		Client: client.Deps{
+			Ledger:    ledStore,
+			Projects:   projStore,
+			Workspaces: wsStore,
+			Repos:      repoStore,
+			Tasks:      taskStore,
+		},
 	})
 
 	return &repoFixture{
@@ -288,7 +291,7 @@ func TestRepoSearch_ProxyKeyIsGitRemote(t *testing.T) {
 	repoID := decodeMap(t, add)["repo_id"].(string)
 
 	rec := &recordingIndexer{}
-	f.server.indexer = rec
+	f.server.deps.Indexer = rec
 	_, _ = f.server.handleRepoSearch(f.callerCtx(), newCallToolReq("repo_search", map[string]any{
 		"repo_id": repoID,
 		"query":   "x",

@@ -101,6 +101,93 @@ type LedgerListInput struct {
 	Memberships       []string
 }
 
+// LedgerListArgs is the flat-field equivalent of LedgerListInput +
+// Options. The MCP wire layer hands the parsed argument map fields in
+// directly so it never names ledger.ListOptions in source
+// (sty_4db0e025 slice A11).
+type LedgerListArgs struct {
+	ResolvedProjectID    string
+	Memberships          []string
+	Type                 string
+	StoryID              string
+	Tags                 []string
+	Durability           string
+	SourceType           string
+	Status               string
+	IncludeDereferenced  bool
+	Limit                int
+	Sensitive            *bool
+}
+
+// LedgerListByArgs is the wire-friendly equivalent of LedgerList.
+func (c *Client) LedgerListByArgs(ctx context.Context, caller Caller, in LedgerListArgs) ([]ledger.LedgerEntry, error) {
+	return c.LedgerList(ctx, caller, LedgerListInput{
+		ResolvedProjectID: in.ResolvedProjectID,
+		Options:           buildLedgerListOptionsFromArgs(in),
+		Memberships:       in.Memberships,
+	})
+}
+
+// LedgerSearchArgs combines LedgerSearchInput + ledger.SearchOptions
+// in a wire-friendly flat shape so the MCP transport never references
+// ledger.SearchOptions in source.
+type LedgerSearchArgs struct {
+	ResolvedProjectID    string
+	Memberships          []string
+	Query                string
+	TopK                 int
+	Type                 string
+	StoryID              string
+	Tags                 []string
+	Durability           string
+	SourceType           string
+	Status               string
+	IncludeDereferenced  bool
+	Limit                int
+	Sensitive            *bool
+}
+
+// LedgerSearchByArgs is the wire-friendly equivalent of LedgerSearch.
+func (c *Client) LedgerSearchByArgs(ctx context.Context, caller Caller, in LedgerSearchArgs) ([]ledger.LedgerEntry, error) {
+	opts := ledger.SearchOptions{
+		ListOptions: buildLedgerListOptionsFromArgs(LedgerListArgs{
+			Type:                in.Type,
+			StoryID:             in.StoryID,
+			Tags:                in.Tags,
+			Durability:          in.Durability,
+			SourceType:          in.SourceType,
+			Status:              in.Status,
+			IncludeDereferenced: in.IncludeDereferenced,
+			Limit:               in.Limit,
+			Sensitive:           in.Sensitive,
+		}),
+		Query: in.Query,
+		TopK:  in.TopK,
+	}
+	return c.LedgerSearch(ctx, caller, LedgerSearchInput{
+		ResolvedProjectID: in.ResolvedProjectID,
+		Memberships:       in.Memberships,
+		Options:           opts,
+	})
+}
+
+func buildLedgerListOptionsFromArgs(in LedgerListArgs) ledger.ListOptions {
+	opts := ledger.ListOptions{
+		Type:          in.Type,
+		StoryID:       in.StoryID,
+		Tags:          in.Tags,
+		Durability:    in.Durability,
+		SourceType:    in.SourceType,
+		Status:        in.Status,
+		IncludeDerefd: in.IncludeDereferenced,
+		Limit:         in.Limit,
+	}
+	if in.Sensitive != nil {
+		opts.Sensitive = in.Sensitive
+	}
+	return opts
+}
+
 // LedgerList returns rows scoped to the resolved project, applying
 // the supplied list options (type / story_id / tags / durability /
 // source_type / status / sensitive / include_dereferenced / limit).

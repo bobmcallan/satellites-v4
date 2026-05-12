@@ -2,6 +2,11 @@
 // be sourced from the seeded agent-process artifact when available,
 // falling back to HandshakeFallbackInstructions when the resolver
 // returns empty. These tests pin both branches.
+//
+// sty_4db0e025 slice A11: the resolver moved onto the typed client
+// surface (*client.Client.ResolveHandshakeInstructions); the tests
+// now construct a *client.Client directly so they remain wire-shape
+// agnostic.
 package mcpserver
 
 import (
@@ -11,19 +16,24 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satellites/internal/agentprocess"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/configseed"
 	"github.com/bobmcallan/satellites/internal/document"
 )
 
+func handshakeClient(docs document.Store) *client.Client {
+	return client.New(client.Deps{Documents: docs})
+}
+
 func TestResolveHandshakeInstructions_FallsBackWhenEmpty(t *testing.T) {
 	t.Parallel()
-	got := resolveHandshakeInstructions(nil)
+	got := handshakeClient(nil).ResolveHandshakeInstructions(context.Background(), HandshakeFallbackInstructions)
 	if got != HandshakeFallbackInstructions {
 		t.Errorf("nil docs handshake = %q, want fallback %q", got, HandshakeFallbackInstructions)
 	}
 
 	emptyStore := document.NewMemoryStore()
-	got = resolveHandshakeInstructions(emptyStore)
+	got = handshakeClient(emptyStore).ResolveHandshakeInstructions(context.Background(), HandshakeFallbackInstructions)
 	if got != HandshakeFallbackInstructions {
 		t.Errorf("empty store handshake = %q, want fallback %q", got, HandshakeFallbackInstructions)
 	}
@@ -39,7 +49,7 @@ func TestResolveHandshakeInstructions_ServesSeededBody(t *testing.T) {
 	if _, err := configseed.Run(context.Background(), store, seedDir, "wksp_a", "system", time.Now().UTC()); err != nil {
 		t.Fatalf("configseed Run: %v", err)
 	}
-	got := resolveHandshakeInstructions(store)
+	got := handshakeClient(store).ResolveHandshakeInstructions(context.Background(), HandshakeFallbackInstructions)
 	if got == HandshakeFallbackInstructions {
 		t.Errorf("seeded handshake fell through to fallback")
 	}

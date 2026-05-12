@@ -146,6 +146,46 @@ func (c *Client) PortalReplicate(ctx context.Context, caller Caller, in PortalRe
 	return PortalReplicateOutput{Summary: summary, Results: results}, nil
 }
 
+// ReplicateVocab returns the vocabulary the Client is currently
+// configured with. The wire layer (mcpserver.Server, main.go) reads
+// this after boot-time vocabulary loading so the /api/v1 portal client
+// can share the same vocab the MCP verb consumes.
+func (c *Client) ReplicateVocab() *portalreplicate.Vocabulary {
+	return c.deps.ReplicateVocab
+}
+
+// NewReplicateVocabDefault returns a canonical-only Vocabulary. Used
+// by the wire layer at boot to install a fallback vocab before
+// LoadReplicateVocabularyFromDoc swaps in the configseed-loaded alias
+// map. Mirrors portalreplicate.NewVocabulary; the type lives on the
+// client so the wire layer can call this without importing
+// internal/portalreplicate directly.
+func (c *Client) NewReplicateVocabDefault() *portalreplicate.Vocabulary {
+	return portalreplicate.NewVocabulary()
+}
+
+// SetReplicateVocab installs a new vocabulary on the Client's Deps.
+// Boot-time wiring path (sty_088f6d5c) — called from main.go after
+// configseed loads the replicate_vocabulary document. Tests that need
+// a deterministic vocabulary call this directly.
+func (c *Client) SetReplicateVocab(v *portalreplicate.Vocabulary) {
+	c.deps.ReplicateVocab = v
+}
+
+// ReplicateRunner returns the currently-installed runner override.
+// Nil means callers fall back to portalreplicate.Run (the default
+// chromedp-driven runner). Sty_088f6d5c.
+func (c *Client) ReplicateRunner() func(ctx context.Context, opts portalreplicate.RunOptions, actions []portalreplicate.Action) ([]portalreplicate.Result, portalreplicate.Summary, error) {
+	return c.deps.ReplicateRunner
+}
+
+// SetReplicateRunner overrides the chromedp-driven runner with a
+// custom function. Tests inject a stub that returns deterministic
+// Results.
+func (c *Client) SetReplicateRunner(fn func(ctx context.Context, opts portalreplicate.RunOptions, actions []portalreplicate.Action) ([]portalreplicate.Result, portalreplicate.Summary, error)) {
+	c.deps.ReplicateRunner = fn
+}
+
 // LoadReplicateVocabularyFromDoc reads the configured
 // replicate_vocabulary document via the Client's doc store and
 // returns the resulting Vocabulary. Falls back to the canonical-only

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/session"
 )
@@ -21,8 +22,8 @@ import (
 func resumeTestServer(t *testing.T) *Server {
 	t.Helper()
 	return &Server{
-		cfg:      &config.Config{GrantsEnforced: false},
-		sessions: session.NewMemoryStore(),
+		cfg:  &config.Config{GrantsEnforced: false},
+		deps: client.Deps{Sessions: session.NewMemoryStore()},
 	}
 }
 
@@ -94,9 +95,9 @@ func TestSessionRegister_Resume_StaleSessionMintsFresh(t *testing.T) {
 	// Plant a stale session manually so we don't have to wait the
 	// staleness window in tests.
 	stale := time.Now().UTC().Add(-2 * session.StalenessDefault)
-	_, err := s.sessions.Register(context.Background(), "u1", "sess_stale", session.SourceSessionStart, stale)
+	_, err := s.deps.Sessions.Register(context.Background(), "u1", "sess_stale", session.SourceSessionStart, stale)
 	require.NoError(t, err)
-	_, err = s.sessions.SetActiveProject(context.Background(), "u1", "sess_stale", "proj_x", stale)
+	_, err = s.deps.Sessions.SetActiveProject(context.Background(), "u1", "sess_stale", "proj_x", stale)
 	require.NoError(t, err)
 
 	out := registerWithProject(t, s, "u1", "", "proj_x")

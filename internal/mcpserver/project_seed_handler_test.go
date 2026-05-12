@@ -11,6 +11,7 @@ import (
 	"time"
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/configseed"
 	"github.com/bobmcallan/satellites/internal/document"
@@ -50,12 +51,14 @@ func newProjectSeedFixture(t *testing.T) (*Server, string, string) {
 	}
 
 	server := New(cfg, satarbor.New("info"), now, Deps{
-		DocStore:       docs,
-		ProjectStore:   projects,
-		LedgerStore:    led,
-		StoryStore:     stories,
-		WorkspaceStore: ws,
-		SessionStore:   sessions,
+		Client: client.Deps{
+			Documents:       docs,
+			Projects:   projects,
+			Ledger:    led,
+			Stories:     stories,
+			Workspaces: ws,
+			Sessions:   sessions,
+		},
 	})
 
 	dir := t.TempDir()
@@ -131,7 +134,7 @@ func TestProjectSeedRun_AdminSucceedsAndWritesLedger(t *testing.T) {
 	if summary.Loaded != 1 || summary.Created != 1 {
 		t.Errorf("loaded=%d created=%d, want 1/1", summary.Loaded, summary.Created)
 	}
-	rows, err := server.ledger.List(context.Background(), pid, ledger.ListOptions{
+	rows, err := server.deps.Ledger.List(context.Background(), pid, ledger.ListOptions{
 		Type: ledger.TypeDecision,
 		Tags: []string{"kind:project-seed-run"},
 	}, nil)
@@ -150,7 +153,7 @@ func TestProjectSeedRun_AdminSucceedsAndWritesLedger(t *testing.T) {
 
 	// Sanity: the seeded artifact is project-scoped, attached to the
 	// resolved project_id.
-	doc, err := server.docs.GetByName(context.Background(), pid, "project_intent", nil)
+	doc, err := server.deps.Documents.GetByName(context.Background(), pid, "project_intent", nil)
 	if err != nil {
 		t.Fatalf("GetByName: %v", err)
 	}

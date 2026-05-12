@@ -75,36 +75,12 @@ var forbiddenSubstrateImports = []string{
 // file is permitted to retain until its noun is converged onto
 // *client.Client.
 //
-// Cadence: each TODO(sty_4db0e025) entry is removed by the
-// per-noun convergence PR in order:07d. Removing the entry in the
-// same diff as the import-deletion is the explicit exit criterion
-// — the stale-entry check below makes a forgotten removal a hard
-// failure.
-//
-// Snapshot taken 2026-05-12 against c321e6a (post-sty_f3f7bf9b
-// slice 12). 11 files; one-line characterisation per entry below.
-var legacyAllowlist = map[string]map[string]struct{}{
-	// mcp.go — server struct + boot-time wiring; holds typed store
-	// pointers for the legacy handlers below. TODO(sty_4db0e025):
-	// the struct narrows to *client.Client only once every legacy
-	// handler is migrated. Slice A8 parked the portal_replicate
-	// boot-time accessors here (the substrate types appear in their
-	// signatures); the substrate-import surface this file imports
-	// did not grow.
-	"mcp.go": {
-		"github.com/bobmcallan/satellites/internal/agentprocess":    {},
-		"github.com/bobmcallan/satellites/internal/changelog":       {},
-		"github.com/bobmcallan/satellites/internal/document":        {},
-		"github.com/bobmcallan/satellites/internal/ledger":          {},
-		"github.com/bobmcallan/satellites/internal/portalreplicate": {},
-		"github.com/bobmcallan/satellites/internal/project":         {},
-		"github.com/bobmcallan/satellites/internal/repo":            {},
-		"github.com/bobmcallan/satellites/internal/session":         {},
-		"github.com/bobmcallan/satellites/internal/story":           {},
-		"github.com/bobmcallan/satellites/internal/task":            {},
-		"github.com/bobmcallan/satellites/internal/workspace":       {},
-	},
-}
+// Sty_4db0e025 slice A11 cleared the final entry (mcp.go), so the
+// allowlist is now empty. Every transport file in internal/mcpserver/
+// must route substrate operations through *client.Client per
+// pr_mcp_cli_shared_path; a forbidden import here surfaces as a hard
+// build-time failure with no escape hatch.
+var legacyAllowlist = map[string]map[string]struct{}{}
 
 // TestTransportLayering enforces pr_mcp_cli_shared_path.
 func TestTransportLayering(t *testing.T) {

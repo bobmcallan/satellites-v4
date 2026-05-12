@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -16,48 +15,32 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/ternarybob/arbor"
 
-	"github.com/bobmcallan/satellites/internal/agentprocess"
 	"github.com/bobmcallan/satellites/internal/auth"
-	"github.com/bobmcallan/satellites/internal/changelog"
 	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/codeindex"
 	"github.com/bobmcallan/satellites/internal/config"
-	"github.com/bobmcallan/satellites/internal/document"
-	"github.com/bobmcallan/satellites/internal/ledger"
-	"github.com/bobmcallan/satellites/internal/portalreplicate"
-	"github.com/bobmcallan/satellites/internal/project"
-	"github.com/bobmcallan/satellites/internal/repo"
-	"github.com/bobmcallan/satellites/internal/session"
-	"github.com/bobmcallan/satellites/internal/story"
-	"github.com/bobmcallan/satellites/internal/task"
-	"github.com/bobmcallan/satellites/internal/workspace"
 )
 
 // Server bundles the mcp-go MCPServer + StreamableHTTPServer with the
-// satellites-specific dependencies needed by the tools.
+// satellites-specific dependencies needed by the tools. Sty_4db0e025
+// slice A11 converged the substrate-typed field set onto a single
+// `deps` of type client.Deps so this file holds no direct
+// substrate-package imports — the only allowed delegation surface is
+// internal/client per pr_mcp_cli_shared_path.
 type Server struct {
-	cfg              *config.Config
-	logger           arbor.ILogger
-	startedAt        time.Time
-	mcp              *mcpserver.MCPServer
-	streamable       *mcpserver.StreamableHTTPServer
-	docs             document.Store
-	docsDir          string
-	projects         project.Store
-	defaultProjectID string
-	ledger           ledger.Store
-	stories          story.Store
-	workspaces       workspace.Store
-	sessions         session.Store
-	tasks            task.Store
-	repos            repo.Store
-	changelog        changelog.Store
-	apiKeys          auth.APIKeyStore
-	indexer          codeindex.Indexer
-	replicateVocab   *portalreplicate.Vocabulary
-	replicateRunner  func(ctx context.Context, opts portalreplicate.RunOptions, actions []portalreplicate.Action) ([]portalreplicate.Result, portalreplicate.Summary, error)
-	nowFunc          func() time.Time
-	audit            *auditLogger
+	cfg        *config.Config
+	logger     arbor.ILogger
+	startedAt  time.Time
+	mcp        *mcpserver.MCPServer
+	streamable *mcpserver.StreamableHTTPServer
+	// deps carries every substrate-typed dependency through one typed
+	// surface. cli() rebuilds the *client.Client on every call so test
+	// fixtures that mutate fields after New() still see the freshest
+	// snapshot (the orchestratorFixture pattern that sets
+	// f.server.deps.Tasks late).
+	deps    client.Deps
+	nowFunc func() time.Time
+	audit   *auditLogger
 }
 
 // HandshakeFallbackInstructions is the literal MCP server-instructions
@@ -69,30 +52,16 @@ type Server struct {
 const HandshakeFallbackInstructions = "Satellites v4 — walking skeleton."
 
 // cli returns the typed business surface used by handlers extracted
-// under cli-primary order:02. Rebuilds Deps on every call so test
-// fixtures that mutate Server store fields *after* New() (the
-// orchestratorFixture pattern that sets f.server.tasks late) reach
-// typed methods with a fresh snapshot. story_66c02002 + sty_df1cb227.
+// under cli-primary order:02. Rebuilds the *client.Client on every
+// call so test fixtures that mutate Server.deps after New() (the
+// orchestratorFixture pattern that sets f.server.deps.Tasks late)
+// reach typed methods with a fresh snapshot. story_66c02002 +
+// sty_df1cb227.
 func (s *Server) cli() *client.Client {
-	return client.New(client.Deps{
-		Documents:        s.docs,
-		Projects:         s.projects,
-		Ledger:           s.ledger,
-		Stories:          s.stories,
-		Workspaces:       s.workspaces,
-		Sessions:         s.sessions,
-		Tasks:            s.tasks,
-		Repos:            s.repos,
-		Changelog:        s.changelog,
-		APIKeys:          s.apiKeys,
-		Indexer:          s.indexer,
-		DocsDir:          s.docsDir,
-		ReplicateVocab:   s.replicateVocab,
-		ReplicateRunner:  s.replicateRunner,
-		StartedAt:        s.startedAt,
-		DefaultProjectID: s.defaultProjectID,
-		Logger:           s.logger,
-	})
+	d := s.deps
+	d.StartedAt = s.startedAt
+	d.Logger = s.logger
+	return client.New(d)
 }
 
 // toClientCaller converts the wire-layer CallerIdentity (resolved by
@@ -110,57 +79,23 @@ func toClientCaller(c auth.CallerIdentity) client.Caller {
 	}
 }
 
-// resolveHandshakeInstructions returns the MCP server-instructions
-// string emitted at handshake. Sourced from the agent-process
-// resolver chain (sty_e1ab884d): project-scope override (not yet
-// wired here — needs URL-scoped project context), then system-scope
-// `default_agent_process`, then HandshakeFallbackInstructions.
-//
-// docs may be nil during early-boot tests; the helper returns the
-// fallback in that case so the server stays bootable.
-func resolveHandshakeInstructions(docs document.Store) string {
-	if body := agentprocess.Resolve(context.Background(), docs, "", nil); body != "" {
-		return body
-	}
-	return HandshakeFallbackInstructions
-}
-
 // Deps bundles the optional per-tool dependencies passed through to
-// handlers. A nil store field disables the associated verbs.
+// handlers. Sty_4db0e025 slice A11: the substrate-typed dependency
+// bundle now lives on client.Deps. mcpserver.Deps wraps it plus the
+// MCP-only knobs (AuditReadTTL + NowFunc); main.go constructs both
+// halves and passes them to mcpserver.New.
 type Deps struct {
+	// Client carries every substrate-typed store the handlers reach
+	// through (Documents/Projects/Ledger/Stories/Workspaces/Sessions/
+	// Tasks/Repos/Changelog/APIKeys/Indexer/DocsDir/DefaultProjectID/
+	// ReplicateVocab/ReplicateRunner). A zero-value client.Deps boots
+	// a no-store server; the handlers that need a store gate on
+	// `s.deps.<Field> != nil` at registration time.
+	Client client.Deps
 	// AuditReadTTL is the durability TTL applied to read-classified
 	// audit rows. Zero falls back to 720h (30 days). Mutations land
 	// durable and ignore this knob. Sty_1493c077.
-	AuditReadTTL     time.Duration
-	DocStore         document.Store
-	DocsDir          string
-	ProjectStore     project.Store
-	DefaultProjectID string
-	LedgerStore      ledger.Store
-	StoryStore       story.Store
-	WorkspaceStore   workspace.Store
-	SessionStore     session.Store
-	// TaskStore is optional; nil disables the task_* MCP verbs.
-	// Story_a8fee0cc.
-	TaskStore task.Store
-	// RepoStore is optional; nil disables the repo_* MCP verbs.
-	// Story_970ddfa1.
-	RepoStore repo.Store
-	// ChangelogStore is optional; nil disables the changelog_* MCP verbs
-	// and the project-page changelog panel renders empty (sty_12af0bdc).
-	ChangelogStore changelog.Store
-	// APIKeyStore is optional; nil disables the agent_apikey_* MCP
-	// verbs and the AuthMiddleware store-backed Bearer fall-through.
-	// story_3191fbfc.
-	APIKeyStore auth.APIKeyStore
-	// Indexer is the satellites-native code indexer used by repo_*
-	// search/get verbs and the reindex worker. Nil falls back to
-	// codeindex.NewStub() which returns a structured
-	// "code_index_unavailable" error for every call — useful for unit
-	// tests. Production wires codeindex.NewLocalIndexer(workdir).
-	// Story_75a371c7 replaced the prior jcodemunch proxy with this
-	// satellites-internal package.
-	Indexer codeindex.Indexer
+	AuditReadTTL time.Duration
 	// NowFunc is the optional clock source for handlers. Tests inject a
 	// frozen clock so session-staleness fixtures stay deterministic
 	// (story_3ae6621b). Production callers leave it nil and the server
@@ -173,40 +108,28 @@ type Deps struct {
 // between machines (see memory note project_mcp_stateless).
 func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Deps) *Server {
 	s := &Server{
-		cfg:              cfg,
-		logger:           logger,
-		startedAt:        startedAt,
-		docs:             deps.DocStore,
-		docsDir:          deps.DocsDir,
-		projects:         deps.ProjectStore,
-		defaultProjectID: deps.DefaultProjectID,
-		ledger:           deps.LedgerStore,
-		stories:          deps.StoryStore,
-		workspaces:       deps.WorkspaceStore,
-		sessions:         deps.SessionStore,
-		tasks:            deps.TaskStore,
-		repos:            deps.RepoStore,
-		changelog:        deps.ChangelogStore,
-		apiKeys:          deps.APIKeyStore,
-		indexer:          deps.Indexer,
-		nowFunc:          deps.NowFunc,
+		cfg:       cfg,
+		logger:    logger,
+		startedAt: startedAt,
+		deps:      deps.Client,
+		nowFunc:   deps.NowFunc,
 	}
-	if s.indexer == nil {
-		s.indexer = codeindex.NewStub()
+	if s.deps.Indexer == nil {
+		s.deps.Indexer = codeindex.NewStub()
 	}
 	// sty_66c02002 + sty_df1cb227: typed business surface. cli() builds
-	// the per-call client.Deps snapshot — no eager init here, so test
+	// the per-call client.Client snapshot — no eager init here, so test
 	// fixtures that wire stores after New() (the orchestratorFixture
-	// pattern that sets f.server.tasks late) see them at typed-method
-	// dispatch.
+	// pattern that sets f.server.deps.Tasks late) see them at
+	// typed-method dispatch.
 
 	// sty_1493c077: per-call audit logger. Wraps every tool handler via
 	// mcp-go's middleware seam; writes one ledger row per call tagged
 	// kind:mcp-call. Reads land ephemeral, mutations durable. Disabled
 	// when no ledger store is wired (early-test fixtures).
-	if s.ledger != nil {
+	if s.deps.Ledger != nil {
 		s.audit = newAuditLogger(s.cli, s.logger,
-			deps.AuditReadTTL, s.defaultProjectID, s.nowFunc)
+			deps.AuditReadTTL, s.deps.DefaultProjectID, s.nowFunc)
 	}
 
 	// sty_e1ab884d: handshake instructions are sourced from the
@@ -216,9 +139,11 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	// agentprocess.SeedSystemDefault). The literal "walking skeleton"
 	// tagline is the back-compat fallback for boots where the seed
 	// hasn't run (early-test fixtures) or the doc store is unwired.
+	// Sty_4db0e025 slice A11: agentprocess.Resolve lives behind the
+	// client typed surface (ResolveHandshakeInstructions).
 	serverOpts := []mcpserver.ServerOption{
 		mcpserver.WithToolCapabilities(true),
-		mcpserver.WithInstructions(resolveHandshakeInstructions(s.docs)),
+		mcpserver.WithInstructions(s.cli().ResolveHandshakeInstructions(context.Background(), HandshakeFallbackInstructions)),
 	}
 	if s.audit != nil {
 		serverOpts = append(serverOpts, mcpserver.WithToolHandlerMiddleware(s.audit.middleware))
@@ -252,7 +177,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	)
 	s.mcp.AddTool(execTool, s.handleSatellitesExec)
 
-	if s.docs != nil {
+	if s.deps.Documents != nil {
 		ingestTool := mcpgo.NewTool("document_ingest_file",
 			mcpgo.WithDescription("Ingest a file from the server's docs volume (SATELLITES_DOCS_DIR) into the document store. Path is repo-relative; server reads the file and upserts by (project_id, name). If project_id is omitted, defaults to the caller's first owned project or the system default."),
 			mcpgo.WithString("path",
@@ -294,7 +219,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		s.registerDocumentWrappers()
 	}
 
-	if s.projects != nil {
+	if s.deps.Projects != nil {
 		createTool := mcpgo.NewTool("project_create",
 			mcpgo.WithDescription("Create a new project owned by the caller. Code-backed projects: follow with repo_add to register the git remote on the resulting project. The (workspace, git_remote) binding lives on the per-project repo row, not on the project itself."),
 			mcpgo.WithString("name",
@@ -349,7 +274,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		s.mcp.AddTool(setProjTool, s.handleProjectSet)
 	}
 
-	if s.ledger != nil {
+	if s.deps.Ledger != nil {
 		appendTool := mcpgo.NewTool("ledger_append",
 			mcpgo.WithDescription("Append an event row to the project's ledger. Caller must own the project."),
 			mcpgo.WithString("project_id", mcpgo.Required(), mcpgo.Description("Project scope.")),
@@ -415,7 +340,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		s.mcp.AddTool(dereferenceLedgerTool, s.handleLedgerDereference)
 	}
 
-	if s.stories != nil {
+	if s.deps.Stories != nil {
 		createStoryTool := mcpgo.NewTool("story_create",
 			mcpgo.WithDescription("Create a new story in a project the caller owns."),
 			mcpgo.WithString("project_id", mcpgo.Required(), mcpgo.Description("Project scope.")),
@@ -485,7 +410,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		s.mcp.AddTool(templateListTool, s.handleStoryTemplateList)
 	}
 
-	if s.stories != nil && s.ledger != nil && s.docs != nil && s.projects != nil {
+	if s.deps.Stories != nil && s.deps.Ledger != nil && s.deps.Documents != nil && s.deps.Projects != nil {
 		// project_workflow_spec_get / _set were removed by
 		// epic:configuration-over-code-mandate (story_af79cf95). The
 		// substrate no longer enforces a per-project workflow shape; the
@@ -554,7 +479,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		// methods on *client.Client continue to back the HTTP routes
 		// and CLI verbs.
 
-		if s.sessions != nil {
+		if s.deps.Sessions != nil {
 			// task_add (sty_a427368d): mint one task at status=published
 			// for the given agent. Auto-mints a thin ad-hoc story when
 			// story_id is omitted. Mints exactly one task — review
@@ -600,7 +525,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		}
 	}
 
-	if s.workspaces != nil {
+	if s.deps.Workspaces != nil {
 		createWsTool := mcpgo.NewTool("workspace_create",
 			mcpgo.WithDescription("Create a new workspace and add the caller as admin. The caller must be authenticated."),
 			mcpgo.WithString("name", mcpgo.Required(), mcpgo.Description("Workspace display name.")),
@@ -674,7 +599,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	// tune dispatch by editing config/seed/system/artifacts/default_agent_process.md
 	// or config/seed/system/agents/*.md, then call system_seed_run.
 
-	if s.tasks != nil {
+	if s.deps.Tasks != nil {
 		// task_plan is the only remaining bare task-creation MCP verb
 		// (sty_c6d76a5b checkpoint 12 retired task_enqueue + task_publish).
 		// task_plan stages a bare draft at status=planned; task_add is
@@ -745,7 +670,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 
 	}
 
-	if s.repos != nil {
+	if s.deps.Repos != nil {
 		addRepoTool := mcpgo.NewTool("repo_add",
 			mcpgo.WithDescription("Register a git remote on the caller's project. Dedups on (workspace, git_remote); enqueues a reindex task. Returns {repo_id, task_id, deduplicated}. Story_970ddfa1."),
 			mcpgo.WithString("git_remote", mcpgo.Required(), mcpgo.Description("Git remote URL (e.g. git@github.com:owner/repo.git).")),
@@ -810,7 +735,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	// the `?project_id=` URL scope; cross-project access returns
 	// not-found. Service is a free-form discriminator (satellites,
 	// satellites-agent, plus future binaries).
-	if s.changelog != nil {
+	if s.deps.Changelog != nil {
 		addChangelogTool := mcpgo.NewTool("changelog_add",
 			mcpgo.WithDescription("Append a changelog row for one binary in a project. Newest-first ordering on List. Service is free-form; conventions: satellites, satellites-agent, plus future binaries."),
 			mcpgo.WithString("project_id", mcpgo.Description("Project scope. Defaults to caller's first owned project.")),
@@ -860,7 +785,11 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	// post-boot phase can swap in a richer alias map without
 	// re-registering the tool.
 	if err := s.requireReplicatePrereqs(); err == nil {
-		s.replicateVocab = portalreplicate.NewVocabulary()
+		// Canonical-only fallback vocab so the verb is callable for
+		// built-in action types even before main.go runs
+		// LoadReplicateVocabularyFromDoc to install the configseed-
+		// loaded alias map.
+		s.deps.ReplicateVocab = s.cli().NewReplicateVocabDefault()
 		s.registerPortalReplicate()
 	}
 
@@ -901,54 +830,27 @@ func (t *tolerantSessionIDManager) Terminate(sessionID string) (bool, error) {
 	return t.inner.Terminate(sessionID)
 }
 
-// --- portal_replicate boot-time wiring (sty_088f6d5c, relocated under
-// sty_4db0e025 slice A8). The accessor methods reference
-// internal/portalreplicate types in their signatures; parking them on
-// mcp.go (the only remaining legacy-allowlisted transport file) keeps
-// the substrate-import out of internal/mcpserver/portal_replicate.go,
-// which now imports only internal/client + the MCP-go SDK + stdlib.
-
-// SetReplicateVocabulary installs the action-alias map the
-// portal_replicate handler consults to translate caller-friendly
-// action names (e.g. "tap", "go-to") into canonical types. Wired
-// from main.go after configseed loads the replicate_vocabulary
-// document. nil keeps the default canonical-only vocabulary.
-// Sty_088f6d5c.
-func (s *Server) SetReplicateVocabulary(v *portalreplicate.Vocabulary) {
-	s.replicateVocab = v
-}
-
-// ReplicateVocabulary returns the currently-loaded action vocabulary.
-// Exposed so the /api/v1 layer (sty_e68ce6fb) can read the same vocab
-// the MCP handler uses without re-loading from the doc store.
-func (s *Server) ReplicateVocabulary() *portalreplicate.Vocabulary {
-	return s.replicateVocab
-}
-
-// ReplicateRunner returns the currently-installed runner override.
-// Returns nil when no SetReplicateRunner has been called — callers
-// fall back to portalreplicate.Run in that case.
-func (s *Server) ReplicateRunner() func(ctx context.Context, opts portalreplicate.RunOptions, actions []portalreplicate.Action) ([]portalreplicate.Result, portalreplicate.Summary, error) {
-	return s.replicateRunner
-}
-
-// SetReplicateRunner overrides the chromedp-driven runner with a
-// custom function. Tests inject a stub that returns deterministic
-// Results; production leaves it nil and the handler falls back to
-// portalreplicate.Run. Sty_088f6d5c.
-func (s *Server) SetReplicateRunner(fn func(ctx context.Context, opts portalreplicate.RunOptions, actions []portalreplicate.Action) ([]portalreplicate.Result, portalreplicate.Summary, error)) {
-	s.replicateRunner = fn
+// Client returns the typed *client.Client snapshot for callers that
+// need to consume the client surface directly (main.go boot wiring,
+// /api/v1 vocab handoff). Sty_4db0e025 slice A11: the former
+// portal_replicate vocab/runner accessor methods (whose signatures
+// pulled internal/portalreplicate into mcp.go) are replaced by a
+// single Client() accessor — main.go reaches the same getters via
+// *client.Client.ReplicateVocab / ReplicateRunner.
+func (s *Server) Client() *client.Client {
+	return s.cli()
 }
 
 // LoadReplicateVocabularyFromDoc reads the configured
 // replicate_vocabulary document via the typed client and stores the
-// result on the Server. Forwards to *client.Client.LoadReplicateVocabularyFromDoc;
-// failures fall back to the canonical-only vocabulary so the tool
-// stays callable with built-in action names. Called from main.go
-// after configseed.RunAll completes.
+// result on the Server's deps. Forwards to
+// *client.Client.LoadReplicateVocabularyFromDoc; failures fall back to
+// the canonical-only vocabulary so the tool stays callable with
+// built-in action names. Called from main.go after configseed.RunAll
+// completes.
 func (s *Server) LoadReplicateVocabularyFromDoc(ctx context.Context, name string) error {
 	v, err := s.cli().LoadReplicateVocabularyFromDoc(ctx, name)
-	s.replicateVocab = v
+	s.deps.ReplicateVocab = v
 	return err
 }
 
@@ -956,10 +858,10 @@ func (s *Server) LoadReplicateVocabularyFromDoc(ctx context.Context, name string
 // dependencies it needs (stories + ledger). Used by Server.New to
 // gate tool registration. Sty_088f6d5c.
 func (s *Server) requireReplicatePrereqs() error {
-	if s.stories == nil {
+	if s.deps.Stories == nil {
 		return errors.New("portal_replicate: stories store unavailable")
 	}
-	if s.ledger == nil {
+	if s.deps.Ledger == nil {
 		return errors.New("portal_replicate: ledger store unavailable")
 	}
 	return nil
@@ -1186,7 +1088,11 @@ func (s *Server) buildDocumentCreateInput(ctx context.Context, caller auth.Calle
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	wsID := s.resolveCallerWorkspaceID(ctx, caller)
 	var resolvedID string
-	if scope == document.ScopeProject {
+	// Scope strings mirror internal/document/document.go constants
+	// (ScopeProject="project", ScopeSystem="system"). Kept as literals
+	// here so the transport file stays clean of internal/document.
+	switch scope {
+	case "project":
 		resolvedID, err = s.resolveProjectID(ctx, req.GetString("project_id", ""), caller, memberships)
 		if err != nil {
 			return documentCreateRequest{}, err
@@ -1194,7 +1100,7 @@ func (s *Server) buildDocumentCreateInput(ctx context.Context, caller auth.Calle
 		if cascade := s.resolveProjectWorkspaceID(ctx, resolvedID); cascade != "" {
 			wsID = cascade
 		}
-	} else if scope == document.ScopeSystem {
+	case "system":
 		resolvedID = req.GetString("project_id", "")
 	}
 	return documentCreateRequest{
@@ -1202,7 +1108,7 @@ func (s *Server) buildDocumentCreateInput(ctx context.Context, caller auth.Calle
 		Payload: client.DocumentCreateInput{
 			Type: docType, Scope: scope, Name: name,
 			Body: req.GetString("body", ""), Tags: req.GetStringSlice("tags", nil),
-			Status: req.GetString("status", document.StatusActive), ContractBinding: req.GetString("contract_binding", ""),
+			Status: req.GetString("status", ""), ContractBinding: req.GetString("contract_binding", ""),
 			Structured: req.GetString("structured", ""), WorkspaceID: wsID, ResolvedProjectID: resolvedID,
 		},
 	}, nil
@@ -1216,46 +1122,15 @@ func (s *Server) handleDocumentUpdate(ctx context.Context, req mcpgo.CallToolReq
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	args := req.GetArguments()
-	fields := documentUpdateFieldsFromArgs(req, args)
-	updated, err := s.cli().DocumentUpdate(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: s.resolveCallerMemberships(ctx, caller)}, client.DocumentUpdateInput{
-		ID: id, Fields: fields, RawArgs: args, Memberships: s.resolveCallerMemberships(ctx, caller),
-	})
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	updated, err := s.cli().DocumentUpdateByArgs(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships},
+		id, args, req.GetStringSlice("tags", nil), memberships, s.nowUTC())
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	body, _ := json.Marshal(updated)
 	s.logger.Info().Str("method", "tools/call").Str("tool", "document_update").Str("doc_id", id).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
-}
-
-// documentUpdateFieldsFromArgs translates the wire-layer argument map
-// into a typed document.UpdateFields. Pointer semantics distinguish
-// "absent" (nil) from "explicit empty" (pointer to ""), matching the
-// store's mutation contract.
-func documentUpdateFieldsFromArgs(req mcpgo.CallToolRequest, args map[string]any) document.UpdateFields {
-	fields := document.UpdateFields{}
-	if v, ok := args["body"]; ok {
-		sv, _ := v.(string)
-		fields.Body = &sv
-	}
-	if v, ok := args["structured"]; ok {
-		sv, _ := v.(string)
-		buf := []byte(sv)
-		fields.Structured = &buf
-	}
-	if _, ok := args["tags"]; ok {
-		tags := req.GetStringSlice("tags", nil)
-		fields.Tags = &tags
-	}
-	if v, ok := args["status"]; ok {
-		sv, _ := v.(string)
-		fields.Status = &sv
-	}
-	if v, ok := args["contract_binding"]; ok {
-		sv, _ := v.(string)
-		fields.ContractBinding = &sv
-	}
-	return fields
 }
 
 // handleDocumentList implements document_list. Thin forwarder per
@@ -1276,22 +1151,17 @@ func (s *Server) handleDocumentList(ctx context.Context, req mcpgo.CallToolReque
 	if wsID == "" {
 		wsID = s.resolveCallerWorkspaceID(ctx, caller)
 	}
-	opts := document.ListOptions{
+	listArgs := client.DocumentListArgs{
 		Type:            req.GetString("type", ""),
 		Scope:           req.GetString("scope", ""),
 		ContractBinding: req.GetString("contract_binding", ""),
 		ProjectID:       resolvedID,
 		Tags:            req.GetStringSlice("tags", nil),
 		Limit:           int(req.GetFloat("limit", 0)),
+		WorkspaceID:     wsID,
+		Memberships:     memberships,
 	}
-	if opts.Limit > 500 {
-		opts.Limit = 500
-	}
-	rows, err := s.cli().DocumentList(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.DocumentListInput{
-		Options:     opts,
-		WorkspaceID: wsID,
-		Memberships: memberships,
-	})
+	rows, err := s.cli().DocumentListByArgs(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, listArgs)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -1299,8 +1169,8 @@ func (s *Server) handleDocumentList(ctx context.Context, req mcpgo.CallToolReque
 	s.logger.Info().
 		Str("method", "tools/call").
 		Str("tool", "document_list").
-		Str("type", opts.Type).
-		Str("scope", opts.Scope).
+		Str("type", listArgs.Type).
+		Str("scope", listArgs.Scope).
 		Str("project_id", resolvedID).
 		Str("workspace_id", wsID).
 		Int("count", len(rows)).
@@ -1335,42 +1205,30 @@ func (s *Server) handleDocumentDelete(ctx context.Context, req mcpgo.CallToolReq
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	mode := document.DeleteMode(req.GetString("mode", string(document.DeleteArchive)))
+	modeArg := req.GetString("mode", "")
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	out, err := s.cli().DocumentDelete(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.DocumentDeleteInput{
-		ID: id, Mode: mode, Memberships: memberships,
-	})
+	out, err := s.cli().DocumentDeleteByArgs(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, id, modeArg, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	body, _ := json.Marshal(out)
-	s.logger.Info().Str("method", "tools/call").Str("tool", "document_delete").Str("doc_id", id).Str("mode", string(mode)).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "document_delete").Str("doc_id", id).Str("mode", out.Mode).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
-// projectView is the JSON-marshalled response shape for project_create /
-// project_get / project_update. It embeds the durable project.Project row
-// and adds two computed fields — `mcp_url` and `mcp_config` — derived
-// from the configured public base URL. These let `.mcp.json` be written
-// directly from project_get's output without the operator constructing a
-// URL by hand. project_list intentionally returns plain Project rows so
-// listings stay lightweight.
-type projectView struct {
-	project.Project
-	MCPURL    string         `json:"mcp_url,omitempty"`
-	MCPConfig map[string]any `json:"mcp_config,omitempty"`
-}
-
-func (s *Server) buildProjectView(ctx context.Context, p project.Project) projectView {
-	pv := projectView{Project: p}
-	// Resolution chain (V3 parity):
-	//   1. p.MCPURL persisted on the row (explicit override).
-	//   2. Inbound request's base URL stashed by ServeHTTP — the host
-	//      the caller is already connected to.
-	//   3. cfg.PublicURL — admin override for deployments where the
-	//      external host differs from the one the request came in on.
-	//   4. cfg.OAuthRedirectBaseURL — back-compat for setups that pre-date
-	//      the PublicURL field.
+// resolveBaseURL composes the four-step resolution chain (V3 parity)
+// the project view composer threads into client.BuildProjectView:
+//
+//  1. Inbound request's base URL stashed by ServeHTTP — the host the
+//     caller is already connected to.
+//  2. cfg.PublicURL — admin override for deployments where the
+//     external host differs from the one the request came in on.
+//  3. cfg.OAuthRedirectBaseURL — back-compat for setups that pre-date
+//     the PublicURL field.
+//
+// The persisted project MCPURL (step 1 in V3 parity) is consulted
+// inside client.BuildProjectView itself.
+func (s *Server) resolveBaseURL(ctx context.Context) string {
 	base := requestBaseURLFrom(ctx)
 	if base == "" {
 		base = s.cfg.PublicURL
@@ -1378,20 +1236,7 @@ func (s *Server) buildProjectView(ctx context.Context, p project.Project) projec
 	if base == "" {
 		base = s.cfg.OAuthRedirectBaseURL
 	}
-	url := project.ResolveMCPURL(p, base)
-	if url == "" {
-		return pv
-	}
-	pv.MCPURL = url
-	pv.MCPConfig = map[string]any{
-		"mcpServers": map[string]any{
-			"satellites": map[string]any{
-				"type": "http",
-				"url":  url,
-			},
-		},
-	}
-	return pv
+	return base
 }
 
 func (s *Server) handleProjectCreate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -1401,13 +1246,13 @@ func (s *Server) handleProjectCreate(ctx context.Context, req mcpgo.CallToolRequ
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	p, err := s.cli().ProjectCreate(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email}, client.ProjectCreateInput{
+	view, p, err := s.cli().ProjectCreateView(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email}, client.ProjectCreateInput{
 		Name: name, WorkspaceID: s.resolveCallerWorkspaceID(ctx, caller), Now: s.nowUTC(),
-	})
+	}, s.resolveBaseURL(ctx))
 	if err != nil {
 		return mcpgo.NewToolResultError(projectErrMessage(err)), nil
 	}
-	body, _ := json.Marshal(s.buildProjectView(ctx, p))
+	body, _ := json.Marshal(view)
 	s.logger.Info().Str("method", "tools/call").Str("tool", "project_create").
 		Str("project_id", p.ID).Str("owner_user_id", p.OwnerUserID).
 		Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
@@ -1430,16 +1275,18 @@ func (s *Server) handleProjectGet(ctx context.Context, req mcpgo.CallToolRequest
 	if _, ok := enforceScopedProject(ctx, id); !ok {
 		return mcpgo.NewToolResultError("project id does not match the URL-scoped project_id"), nil
 	}
-	p, err := s.projects.GetByID(ctx, id, memberships)
-	if err != nil || p.OwnerUserID != caller.UserID {
-		return mcpgo.NewToolResultError("project not found"), nil
+	out, err := s.cli().ProjectGetView(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.ProjectGetViewInput{
+		ID:          id,
+		Memberships: memberships,
+		BaseURL:     s.resolveBaseURL(ctx),
+	})
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	view := s.buildProjectView(ctx, p)
-	bundle := s.cli().BuildOrientation(ctx, p)
 	body, _ := json.Marshal(map[string]any{
-		"project":     view,
-		"intent_body": bundle.IntentBody,
-		"principles":  bundle.Principles,
+		"project":     out.Project,
+		"intent_body": out.IntentBody,
+		"principles":  out.Principles,
 	})
 	s.logger.Info().
 		Str("method", "tools/call").
@@ -1501,7 +1348,7 @@ func (s *Server) handleProjectSet(ctx context.Context, req mcpgo.CallToolRequest
 			Msg("mcp tool call")
 		return mcpgo.NewToolResultText(string(body)), nil
 	}
-	view := s.buildProjectView(ctx, out.ResolvedProject)
+	view := s.cli().BuildProjectView(out.ResolvedProject, s.resolveBaseURL(ctx))
 	body, _ := json.Marshal(map[string]any{
 		"project_id":         out.ResolvedProject.ID,
 		"status":             "resolved",
@@ -1538,11 +1385,11 @@ func (s *Server) handleProjectUpdate(ctx context.Context, req mcpgo.CallToolRequ
 		mcpStr, _ := mcpURL.(string)
 		in.MCPURL = &mcpStr
 	}
-	updated, err := s.cli().ProjectUpdate(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email}, in)
+	view, _, err := s.cli().ProjectUpdateView(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email}, in, s.resolveBaseURL(ctx))
 	if err != nil {
 		return mcpgo.NewToolResultError(projectErrMessage(err)), nil
 	}
-	body, _ := json.Marshal(s.buildProjectView(ctx, updated))
+	body, _ := json.Marshal(view)
 	s.logger.Info().Str("method", "tools/call").Str("tool", "project_update").
 		Str("project_id", id).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
@@ -1592,16 +1439,15 @@ func (s *Server) handleProjectList(ctx context.Context, req mcpgo.CallToolReques
 		return mcpgo.NewToolResultError("no caller identity"), nil
 	}
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	list, err := s.projects.ListByOwner(ctx, caller.UserID, memberships)
+	body, count, err := s.cli().ProjectListJSON(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, memberships)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	body, _ := json.Marshal(list)
 	s.logger.Info().
 		Str("method", "tools/call").
 		Str("tool", "project_list").
 		Str("owner_user_id", caller.UserID).
-		Int("count", len(list)).
+		Int("count", count).
 		Int64("duration_ms", time.Since(start).Milliseconds()).
 		Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
@@ -1704,18 +1550,29 @@ func (s *Server) handleLedgerSearch(ctx context.Context, req mcpgo.CallToolReque
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	opts := ledger.SearchOptions{
-		ListOptions: buildLedgerListOptions(req),
-		Query:       req.GetString("query", ""),
-		TopK:        int(req.GetFloat("top_k", 0)),
+	args := buildLedgerListArgs(req)
+	query := req.GetString("query", "")
+	searchArgs := client.LedgerSearchArgs{
+		ResolvedProjectID:   resolvedID,
+		Memberships:         memberships,
+		Query:               query,
+		TopK:                int(req.GetFloat("top_k", 0)),
+		Type:                args.Type,
+		StoryID:             args.StoryID,
+		Tags:                args.Tags,
+		Durability:          args.Durability,
+		SourceType:          args.SourceType,
+		Status:              args.Status,
+		IncludeDereferenced: args.IncludeDereferenced,
+		Limit:               args.Limit,
+		Sensitive:           args.Sensitive,
 	}
-	rows, err := s.cli().LedgerSearch(ctx, client.Caller{UserID: caller.UserID, Memberships: memberships},
-		client.LedgerSearchInput{ResolvedProjectID: resolvedID, Memberships: memberships, Options: opts})
+	rows, err := s.cli().LedgerSearchByArgs(ctx, client.Caller{UserID: caller.UserID, Memberships: memberships}, searchArgs)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	body, _ := json.Marshal(rows)
-	s.logger.Info().Str("method", "tools/call").Str("tool", "ledger_search").Str("project_id", resolvedID).Str("query", opts.Query).Int("count", len(rows)).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "ledger_search").Str("project_id", resolvedID).Str("query", query).Int("count", len(rows)).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
@@ -1759,27 +1616,29 @@ func (s *Server) handleLedgerDereference(ctx context.Context, req mcpgo.CallTool
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
-// buildLedgerListOptions translates a CallToolRequest into ListOptions.
-// Shared by handleLedgerList and handleLedgerSearch so the filter
-// surface is identical.
-func buildLedgerListOptions(req mcpgo.CallToolRequest) ledger.ListOptions {
-	opts := ledger.ListOptions{
-		Type:          req.GetString("type", ""),
-		StoryID:       req.GetString("story_id", ""),
-		Tags:          req.GetStringSlice("tags", nil),
-		Durability:    req.GetString("durability", ""),
-		SourceType:    req.GetString("source_type", ""),
-		Status:        req.GetString("status", ""),
-		IncludeDerefd: req.GetBool("include_dereferenced", false),
-		Limit:         int(req.GetFloat("limit", 0)),
+// buildLedgerListArgs translates a CallToolRequest into the flat-field
+// LedgerListArgs the typed client surface consumes. Shared by
+// handleLedgerList and handleLedgerSearch so the filter surface is
+// identical. Sty_4db0e025 slice A11: returns client.LedgerListArgs so
+// the transport file does not reference internal/ledger types.
+func buildLedgerListArgs(req mcpgo.CallToolRequest) client.LedgerListArgs {
+	out := client.LedgerListArgs{
+		Type:                req.GetString("type", ""),
+		StoryID:             req.GetString("story_id", ""),
+		Tags:                req.GetStringSlice("tags", nil),
+		Durability:          req.GetString("durability", ""),
+		SourceType:          req.GetString("source_type", ""),
+		Status:              req.GetString("status", ""),
+		IncludeDereferenced: req.GetBool("include_dereferenced", false),
+		Limit:               int(req.GetFloat("limit", 0)),
 	}
 	args := req.GetArguments()
 	if v, ok := args["sensitive"]; ok {
 		if b, ok := v.(bool); ok {
-			opts.Sensitive = &b
+			out.Sensitive = &b
 		}
 	}
-	return opts
+	return out
 }
 
 // handleStoryCreate is the thin wire adapter for story_create. Resolves
@@ -1823,13 +1682,6 @@ func (s *Server) handleStoryUpdate(ctx context.Context, req mcpgo.CallToolReques
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	current, err := s.stories.GetByID(ctx, id, memberships)
-	if err != nil {
-		return mcpgo.NewToolResultError("story not found"), nil
-	}
-	if _, err := s.resolveProjectID(ctx, current.ProjectID, caller, memberships); err != nil {
-		return mcpgo.NewToolResultError("story not found"), nil
-	}
 	in := buildStoryUpdateInput(req, id, memberships, s.nowUTC())
 	updated, err := s.cli().StoryUpdate(ctx, toClientCaller(caller), in)
 	if err != nil {
@@ -1896,30 +1748,9 @@ func storyErrMessage(err error) string {
 	}
 }
 
-// loadStoryTemplate resolves a category → story.Template by reading the
-// system-scope document with type=story_template + name=category. Sets
-// the lookup is best-effort: missing or malformed templates return
-// (zero, false), which the caller treats as "no hooks for this
-// category". Sty_d2a03cea.
-func (s *Server) loadStoryTemplate(ctx context.Context, category string) (story.Template, bool) {
-	if s.docs == nil || category == "" {
-		return story.Template{}, false
-	}
-	// nil memberships → see system-scope rows regardless of caller's
-	// workspace. Templates are global by design.
-	doc, err := s.docs.GetByName(ctx, "", category, nil)
-	if err != nil {
-		return story.Template{}, false
-	}
-	if doc.Type != document.TypeStoryTemplate {
-		return story.Template{}, false
-	}
-	t, err := story.LoadTemplate(doc)
-	if err != nil {
-		return story.Template{}, false
-	}
-	return t, true
-}
+// (loadStoryTemplate removed sty_4db0e025 slice A11 — callers route
+// through *client.Client.StoryTemplateGet which holds the same lookup
+// logic behind a typed surface.)
 
 func (s *Server) handleStoryList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
@@ -1933,13 +1764,14 @@ func (s *Server) handleStoryList(ctx context.Context, req mcpgo.CallToolRequest)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	opts := story.ListOptions{
-		Status:   req.GetString("status", ""),
-		Priority: req.GetString("priority", ""),
-		Tag:      req.GetString("tag", ""),
-		Limit:    int(req.GetFloat("limit", 0)),
-	}
-	list, err := s.stories.List(ctx, resolvedID, opts, memberships)
+	list, err := s.cli().StoryList(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.StoryListInput{
+		ProjectID:   resolvedID,
+		Status:      req.GetString("status", ""),
+		Priority:    req.GetString("priority", ""),
+		Tag:         req.GetString("tag", ""),
+		Limit:       int(req.GetFloat("limit", 0)),
+		Memberships: memberships,
+	})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -1970,17 +1802,6 @@ func (s *Server) handleStoryUpdateStatus(ctx context.Context, req mcpgo.CallTool
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	// Pre-resolve project access. Existing-row lookup mirrors the
-	// typed method's so the wire layer can reject cross-tenant access
-	// with the same "story not found" envelope the typed method uses
-	// for membership-scoped misses.
-	existing, err := s.stories.GetByID(ctx, id, memberships)
-	if err != nil {
-		return mcpgo.NewToolResultError("story not found"), nil
-	}
-	if _, err := s.resolveProjectID(ctx, existing.ProjectID, caller, memberships); err != nil {
-		return mcpgo.NewToolResultError("story not found"), nil
-	}
 	updated, err := s.cli().StoryUpdateStatus(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.StoryUpdateStatusInput{
 		ID:          id,
 		Status:      status,
@@ -2019,13 +1840,6 @@ func (s *Server) handleStoryFieldSet(ctx context.Context, req mcpgo.CallToolRequ
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	existing, err := s.stories.GetByID(ctx, id, memberships)
-	if err != nil {
-		return mcpgo.NewToolResultError("story not found"), nil
-	}
-	if _, err := s.resolveProjectID(ctx, existing.ProjectID, caller, memberships); err != nil {
-		return mcpgo.NewToolResultError("story not found"), nil
-	}
 	updated, err := s.cli().StoryFieldSet(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.StoryFieldSetInput{
 		ID:          id,
 		Field:       field,
@@ -2052,13 +1866,14 @@ func (s *Server) handleStoryFieldSet(ctx context.Context, req mcpgo.CallToolRequ
 // type=story_template filter. Sty_d2a03cea.
 func (s *Server) handleStoryTemplateGet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
+	caller, _ := auth.UserFrom(ctx)
 	category, err := req.RequireString("category")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	t, ok := s.loadStoryTemplate(ctx, category)
-	if !ok {
-		return mcpgo.NewToolResultError(fmt.Sprintf("no story template registered for category %q", category)), nil
+	t, err := s.cli().StoryTemplateGet(ctx, toClientCaller(caller), client.StoryTemplateGetInput{Category: category})
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	body, _ := json.Marshal(t)
 	s.logger.Info().
@@ -2075,26 +1890,10 @@ func (s *Server) handleStoryTemplateGet(ctx context.Context, req mcpgo.CallToolR
 // with type=story_template filter. Sty_d2a03cea.
 func (s *Server) handleStoryTemplateList(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
-	if s.docs == nil {
-		body, _ := json.Marshal([]story.Template{})
-		return mcpgo.NewToolResultText(string(body)), nil
-	}
-	docs, err := s.docs.List(ctx, document.ListOptions{
-		Type:  document.TypeStoryTemplate,
-		Scope: document.ScopeSystem,
-		Limit: 100,
-	}, nil)
+	caller, _ := auth.UserFrom(ctx)
+	out, err := s.cli().StoryTemplateList(ctx, toClientCaller(caller))
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	out := make([]story.Template, 0, len(docs))
-	for _, d := range docs {
-		t, err := story.LoadTemplate(d)
-		if err != nil {
-			s.logger.Warn().Str("document_id", d.ID).Str("error", err.Error()).Msg("story_template parse failed; skipping")
-			continue
-		}
-		out = append(out, t)
 	}
 	body, _ := json.Marshal(out)
 	s.logger.Info().
@@ -2154,22 +1953,8 @@ func (s *Server) handleWorkspaceList(ctx context.Context, req mcpgo.CallToolRequ
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
-// classifyLedgerEvent maps a caller-supplied event-type string into the
-// §6 enum. When the caller's value is one of the lifecycle types
-// (plan/action_claim/etc.) it passes through. Otherwise the event is
-// recorded as a generic decision with the original event-type preserved
-// as a `kind:<value>` tag — keeping the §6 enum closed without
-// forcing scripts that emitted v3-style domain events to be rewritten.
-func classifyLedgerEvent(eventType string) (string, []string) {
-	switch eventType {
-	case ledger.TypePlan, ledger.TypeActionClaim, ledger.TypeArtifact,
-		ledger.TypeEvidence, ledger.TypeDecision, ledger.TypeCloseRequest,
-		ledger.TypeVerdict, ledger.TypeWorkflowClaim, ledger.TypeKV:
-		return eventType, nil
-	default:
-		return ledger.TypeDecision, []string{"kind:" + eventType}
-	}
-}
+// (classifyLedgerEvent removed sty_4db0e025 slice A11 — was dead code
+// referencing internal/ledger constants from the transport layer.)
 
 // handleWorkspaceMemberAdd parses the request, calls the typed
 // WorkspaceMemberAdd surface, and marshals the wire envelope.
@@ -2277,12 +2062,10 @@ func (s *Server) handleLedgerList(ctx context.Context, req mcpgo.CallToolRequest
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	opts := buildLedgerListOptions(req)
-	entries, err := s.cli().LedgerList(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.LedgerListInput{
-		ResolvedProjectID: resolvedID,
-		Options:           opts,
-		Memberships:       memberships,
-	})
+	args := buildLedgerListArgs(req)
+	args.ResolvedProjectID = resolvedID
+	args.Memberships = memberships
+	entries, err := s.cli().LedgerListByArgs(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, args)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
@@ -2291,7 +2074,7 @@ func (s *Server) handleLedgerList(ctx context.Context, req mcpgo.CallToolRequest
 		Str("method", "tools/call").
 		Str("tool", "ledger_list").
 		Str("project_id", resolvedID).
-		Str("type_filter", opts.Type).
+		Str("type_filter", args.Type).
 		Int("count", len(entries)).
 		Int64("duration_ms", time.Since(start).Milliseconds()).
 		Msg("mcp tool call")

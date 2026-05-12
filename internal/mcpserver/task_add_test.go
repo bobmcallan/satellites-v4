@@ -21,7 +21,7 @@ import (
 // are globally readable.
 func agentDocID(t *testing.T, srv *Server, name string) string {
 	t.Helper()
-	doc, err := srv.docs.GetByName(context.Background(), "", name, nil)
+	doc, err := srv.deps.Documents.GetByName(context.Background(), "", name, nil)
 	require.NoError(t, err, "lookup agent %q", name)
 	return doc.ID
 }
@@ -88,7 +88,7 @@ func TestTaskAdd_AutoMintsStoryWhenOmitted(t *testing.T) {
 	storyID := out["story_id"].(string)
 	require.NotEmpty(t, storyID)
 
-	st, err := f.server.stories.GetByID(context.Background(), storyID, []string{f.wsID})
+	st, err := f.server.deps.Stories.GetByID(context.Background(), storyID, []string{f.wsID})
 	require.NoError(t, err)
 	require.Equal(t, "First line of an ad-hoc prompt.", st.Title)
 	require.Equal(t, "see task body", st.AcceptanceCriteria)
@@ -172,7 +172,7 @@ func TestTaskAdd_MintsExactlyOneTask(t *testing.T) {
 	settings, _ := document.MarshalAgentSettings(document.AgentSettings{
 		Delivers: []string{task.ContractAction("develop")},
 	})
-	doc, err := f.server.docs.Create(context.Background(), document.Document{
+	doc, err := f.server.deps.Documents.Create(context.Background(), document.Document{
 		Type:       document.TypeAgent,
 		Scope:      document.ScopeSystem,
 		Name:       "extra_agent",
@@ -219,15 +219,15 @@ func TestTaskAdd_SeedAgentResolvesForOtherWorkspaceCaller(t *testing.T) {
 
 	// Mint a second user in their own workspace + project so they have
 	// a session but no membership in the seed workspace.
-	otherWS, err := f.server.workspaces.Create(context.Background(), "user_other", "other-tier", f.now)
+	otherWS, err := f.server.deps.Workspaces.Create(context.Background(), "user_other", "other-tier", f.now)
 	require.NoError(t, err)
-	require.NoError(t, f.server.workspaces.AddMember(context.Background(), otherWS.ID, "user_other", "admin", "system", f.now))
-	otherProj, err := f.server.projects.Create(context.Background(), "user_other", otherWS.ID, "other-proj", f.now)
+	require.NoError(t, f.server.deps.Workspaces.AddMember(context.Background(), otherWS.ID, "user_other", "admin", "system", f.now))
+	otherProj, err := f.server.deps.Projects.Create(context.Background(), "user_other", otherWS.ID, "other-proj", f.now)
 	require.NoError(t, err)
 
 	// Create a story in the other user's project so task_add doesn't
 	// try to auto-mint against the default workspace.
-	otherStory, err := f.server.stories.Create(context.Background(), story.Story{
+	otherStory, err := f.server.deps.Stories.Create(context.Background(), story.Story{
 		WorkspaceID: otherWS.ID,
 		ProjectID:   otherProj.ID,
 		Title:       "other-user story",
@@ -262,7 +262,7 @@ func TestTaskAdd_WorkspaceTier_SameWorkspace(t *testing.T) {
 	settings, _ := document.MarshalAgentSettings(document.AgentSettings{
 		Delivers: []string{task.ContractAction("develop")},
 	})
-	wsAgent, err := f.server.docs.Create(context.Background(), document.Document{
+	wsAgent, err := f.server.deps.Documents.Create(context.Background(), document.Document{
 		Type:        document.TypeAgent,
 		Scope:       document.ScopeWorkspace,
 		Name:        "ws_developer",
@@ -299,7 +299,7 @@ func TestTaskAdd_WorkspaceTier_CrossWorkspaceRejected(t *testing.T) {
 	settings, _ := document.MarshalAgentSettings(document.AgentSettings{
 		Delivers: []string{task.ContractAction("develop")},
 	})
-	wsAgent, err := f.server.docs.Create(context.Background(), document.Document{
+	wsAgent, err := f.server.deps.Documents.Create(context.Background(), document.Document{
 		Type:        document.TypeAgent,
 		Scope:       document.ScopeWorkspace,
 		Name:        "ws_developer_alpha",
@@ -312,12 +312,12 @@ func TestTaskAdd_WorkspaceTier_CrossWorkspaceRejected(t *testing.T) {
 
 	// A second user with a fresh workspace + project — no membership in
 	// the agent's workspace.
-	otherWS, err := f.server.workspaces.Create(context.Background(), "user_other", "beta", f.now)
+	otherWS, err := f.server.deps.Workspaces.Create(context.Background(), "user_other", "beta", f.now)
 	require.NoError(t, err)
-	require.NoError(t, f.server.workspaces.AddMember(context.Background(), otherWS.ID, "user_other", "admin", "system", f.now))
-	otherProj, err := f.server.projects.Create(context.Background(), "user_other", otherWS.ID, "other-proj", f.now)
+	require.NoError(t, f.server.deps.Workspaces.AddMember(context.Background(), otherWS.ID, "user_other", "admin", "system", f.now))
+	otherProj, err := f.server.deps.Projects.Create(context.Background(), "user_other", otherWS.ID, "other-proj", f.now)
 	require.NoError(t, err)
-	otherStory, err := f.server.stories.Create(context.Background(), story.Story{
+	otherStory, err := f.server.deps.Stories.Create(context.Background(), story.Story{
 		WorkspaceID: otherWS.ID,
 		ProjectID:   otherProj.ID,
 		Title:       "other story",
@@ -354,7 +354,7 @@ func TestTaskAdd_WorkspaceTier_CrossProjectInSameWorkspace(t *testing.T) {
 	settings, _ := document.MarshalAgentSettings(document.AgentSettings{
 		Delivers: []string{task.ContractAction("develop")},
 	})
-	wsAgent, err := f.server.docs.Create(ctx, document.Document{
+	wsAgent, err := f.server.deps.Documents.Create(ctx, document.Document{
 		Type:        document.TypeAgent,
 		Scope:       document.ScopeWorkspace,
 		Name:        "ws_developer_cross",
@@ -366,9 +366,9 @@ func TestTaskAdd_WorkspaceTier_CrossProjectInSameWorkspace(t *testing.T) {
 	require.NoError(t, err)
 
 	// Mint a SECOND project in the same workspace + a story scoped to it.
-	otherProj, err := f.server.projects.Create(ctx, "user_alice", f.wsID, "p2", f.now)
+	otherProj, err := f.server.deps.Projects.Create(ctx, "user_alice", f.wsID, "p2", f.now)
 	require.NoError(t, err)
-	otherStory, err := f.server.stories.Create(ctx, story.Story{
+	otherStory, err := f.server.deps.Stories.Create(ctx, story.Story{
 		WorkspaceID: f.wsID,
 		ProjectID:   otherProj.ID,
 		Title:       "cross-project story",
@@ -379,7 +379,7 @@ func TestTaskAdd_WorkspaceTier_CrossProjectInSameWorkspace(t *testing.T) {
 	// dispatch to fail: clear defaultProjectID and the session-bound
 	// active project so the only viable resolution route is the story
 	// supplied on the call.
-	f.server.defaultProjectID = ""
+	f.server.deps.DefaultProjectID = ""
 
 	res := callAddHandler(t, f, map[string]any{
 		"agent_id": wsAgent.ID,

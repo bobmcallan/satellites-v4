@@ -27,7 +27,7 @@ func TestStoryGet_HappyPath(t *testing.T) {
 	// Seed an agent_process system-default artifact so AgentProcess
 	// resolves to non-empty (the resolver walks project override → system
 	// default → "").
-	if _, err := s.docs.Create(ctx, document.Document{
+	if _, err := s.deps.Documents.Create(ctx, document.Document{
 		Type:   document.TypeArtifact,
 		Scope:  document.ScopeSystem,
 		Name:   agentprocess.SystemDefaultName,
@@ -41,7 +41,7 @@ func TestStoryGet_HappyPath(t *testing.T) {
 	// Seed a couple of ledger rows so RecentEvidence is populated.
 	storyRef := storyID
 	for i := 0; i < 3; i++ {
-		if _, err := s.ledger.Append(ctx, ledger.LedgerEntry{
+		if _, err := s.deps.Ledger.Append(ctx, ledger.LedgerEntry{
 			WorkspaceID: wsID,
 			ProjectID:   projectID,
 			StoryID:     &storyRef,

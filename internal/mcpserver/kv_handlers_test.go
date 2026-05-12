@@ -8,6 +8,7 @@ import (
 	"time"
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
@@ -32,12 +33,14 @@ func newKVTestServer(t *testing.T) *Server {
 	wsStore := workspace.NewMemoryStore()
 	sessionStore := session.NewMemoryStore()
 	return New(cfg, satarbor.New("info"), now, Deps{
-		DocStore:       docStore,
-		ProjectStore:   projStore,
-		LedgerStore:    ledStore,
-		StoryStore:     storyStore,
-		WorkspaceStore: wsStore,
-		SessionStore:   sessionStore,
+		Client: client.Deps{
+			Documents:       docStore,
+			Projects:   projStore,
+			Ledger:    ledStore,
+			Stories:     storyStore,
+			Workspaces: wsStore,
+			Sessions:   sessionStore,
+		},
 	})
 }
 
@@ -119,11 +122,11 @@ func TestKVHandlers_RoundTrip_Workspace(t *testing.T) {
 	now := time.Now().UTC()
 
 	// Seed a workspace + member so memberships resolve.
-	ws, err := s.workspaces.Create(ctx, "u_alice", "alpha", now)
+	ws, err := s.deps.Workspaces.Create(ctx, "u_alice", "alpha", now)
 	if err != nil {
 		t.Fatalf("seed workspace: %v", err)
 	}
-	if err := s.workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now); err != nil {
+	if err := s.deps.Workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now); err != nil {
 		t.Fatalf("seed member: %v", err)
 	}
 
@@ -158,8 +161,8 @@ func TestKVHandlers_RoundTrip_User(t *testing.T) {
 	s := newKVTestServer(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
-	ws, _ := s.workspaces.Create(ctx, "u_alice", "alpha", now)
-	_ = s.workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now)
+	ws, _ := s.deps.Workspaces.Create(ctx, "u_alice", "alpha", now)
+	_ = s.deps.Workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now)
 
 	alice := auth.CallerIdentity{UserID: "u_alice", Source: "session"}
 	ctx = withCaller(ctx, alice)
@@ -242,14 +245,14 @@ func TestKVHandlers_AuthMatrix(t *testing.T) {
 	now := time.Now().UTC()
 
 	// Two workspaces with different admins; a project owned by alice in ws1.
-	ws1, _ := s.workspaces.Create(ctx, "u_alice", "alpha", now)
-	_ = s.workspaces.AddMember(ctx, ws1.ID, "u_alice", workspace.RoleAdmin, "u_alice", now)
-	_ = s.workspaces.AddMember(ctx, ws1.ID, "u_bob", workspace.RoleMember, "u_alice", now)
+	ws1, _ := s.deps.Workspaces.Create(ctx, "u_alice", "alpha", now)
+	_ = s.deps.Workspaces.AddMember(ctx, ws1.ID, "u_alice", workspace.RoleAdmin, "u_alice", now)
+	_ = s.deps.Workspaces.AddMember(ctx, ws1.ID, "u_bob", workspace.RoleMember, "u_alice", now)
 
-	ws2, _ := s.workspaces.Create(ctx, "u_carol", "bravo", now)
-	_ = s.workspaces.AddMember(ctx, ws2.ID, "u_carol", workspace.RoleAdmin, "u_carol", now)
+	ws2, _ := s.deps.Workspaces.Create(ctx, "u_carol", "bravo", now)
+	_ = s.deps.Workspaces.AddMember(ctx, ws2.ID, "u_carol", workspace.RoleAdmin, "u_carol", now)
 
-	proj, _ := s.projects.Create(ctx, "u_alice", ws1.ID, "alpha-1", now)
+	proj, _ := s.deps.Projects.Create(ctx, "u_alice", ws1.ID, "alpha-1", now)
 
 	type tc struct {
 		name      string
@@ -299,9 +302,9 @@ func TestKVHandlers_GetResolved(t *testing.T) {
 	s := newKVTestServer(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
-	ws, _ := s.workspaces.Create(ctx, "u_alice", "alpha", now)
-	_ = s.workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now)
-	proj, _ := s.projects.Create(ctx, "u_alice", ws.ID, "alpha-1", now)
+	ws, _ := s.deps.Workspaces.Create(ctx, "u_alice", "alpha", now)
+	_ = s.deps.Workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now)
+	proj, _ := s.deps.Projects.Create(ctx, "u_alice", ws.ID, "alpha-1", now)
 
 	admin := auth.CallerIdentity{UserID: "u_admin", GlobalAdmin: true}
 	alice := auth.CallerIdentity{UserID: "u_alice"}
@@ -346,8 +349,8 @@ func TestKVHandlers_GetResolved_NotFound(t *testing.T) {
 	s := newKVTestServer(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
-	ws, _ := s.workspaces.Create(ctx, "u_alice", "alpha", now)
-	_ = s.workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now)
+	ws, _ := s.deps.Workspaces.Create(ctx, "u_alice", "alpha", now)
+	_ = s.deps.Workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now)
 
 	res, _ := s.handleKVGetResolved(withCaller(ctx, auth.CallerIdentity{UserID: "u_alice"}),
 		newCallToolReq("kv_get_resolved", map[string]any{
@@ -366,9 +369,9 @@ func TestKVHandlers_DeleteHonoursAuth(t *testing.T) {
 	s := newKVTestServer(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
-	ws, _ := s.workspaces.Create(ctx, "u_alice", "alpha", now)
-	_ = s.workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now)
-	_ = s.workspaces.AddMember(ctx, ws.ID, "u_bob", workspace.RoleMember, "u_alice", now)
+	ws, _ := s.deps.Workspaces.Create(ctx, "u_alice", "alpha", now)
+	_ = s.deps.Workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now)
+	_ = s.deps.Workspaces.AddMember(ctx, ws.ID, "u_bob", workspace.RoleMember, "u_alice", now)
 
 	// Workspace member (non-admin) cannot delete a workspace-scope key.
 	bobCtx := withCaller(ctx, auth.CallerIdentity{UserID: "u_bob"})

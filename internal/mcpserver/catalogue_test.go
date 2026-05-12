@@ -11,6 +11,7 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/configseed"
 	"github.com/bobmcallan/satellites/internal/document"
 )
@@ -98,7 +99,7 @@ func TestMaterialiseCatalogue_WritesArtifact(t *testing.T) {
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	s := &Server{
 		mcp:     stubMCPServerWithTools(),
-		docs:    docs,
+		deps:    client.Deps{Documents: docs},
 		logger:  satarbor.New("info"),
 		nowFunc: func() time.Time { return now },
 	}
@@ -143,7 +144,7 @@ func TestMaterialiseCatalogue_IdempotentOnSameTools(t *testing.T) {
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	s := &Server{
 		mcp:     stubMCPServerWithTools(),
-		docs:    docs,
+		deps:    client.Deps{Documents: docs},
 		logger:  satarbor.New("info"),
 		nowFunc: func() time.Time { return now },
 	}

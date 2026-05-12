@@ -45,32 +45,34 @@ func newOrientationFixture(t *testing.T) (*Server, project.Project, string) {
 	docs := document.NewMemoryStore()
 	led := ledger.NewMemoryStore()
 	s := New(cfg, satarbor.New("info"), time.Now(), Deps{
-		DocStore:       docs,
-		ProjectStore:   project.NewMemoryStore(),
-		RepoStore:      repo.NewMemoryStore(),
-		SessionStore:   session.NewMemoryStore(),
-		WorkspaceStore: workspace.NewMemoryStore(),
-		LedgerStore:    led,
-		StoryStore:     story.NewMemoryStore(led),
+		Client: client.Deps{
+			Documents:       docs,
+			Projects:   project.NewMemoryStore(),
+			Repos:      repo.NewMemoryStore(),
+			Sessions:   session.NewMemoryStore(),
+			Workspaces: workspace.NewMemoryStore(),
+			Ledger:    led,
+			Stories:     story.NewMemoryStore(led),
+		},
 	})
 	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 	now := time.Now().UTC()
 
-	ws, err := s.workspaces.Create(ctx, "u_alice", "alpha", now)
+	ws, err := s.deps.Workspaces.Create(ctx, "u_alice", "alpha", now)
 	if err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
-	if err := s.workspaces.AddMember(ctx, ws.ID, "u_alice", "admin", "u_alice", now); err != nil {
+	if err := s.deps.Workspaces.AddMember(ctx, ws.ID, "u_alice", "admin", "u_alice", now); err != nil {
 		t.Fatalf("member: %v", err)
 	}
-	p, err := s.projects.Create(ctx, "u_alice", ws.ID, "satellites", now)
+	p, err := s.deps.Projects.Create(ctx, "u_alice", ws.ID, "satellites", now)
 	if err != nil {
 		t.Fatalf("project: %v", err)
 	}
 	// sty_14dfd05b: the project↔remote binding lives on the repo row.
 	// project_set walks repos.GetByRemote(ws, canonical) → projectID, so
 	// the orientation fixture must seed a repo row for the project.
-	if _, err := s.repos.Create(ctx, repo.Repo{
+	if _, err := s.deps.Repos.Create(ctx, repo.Repo{
 		WorkspaceID: ws.ID,
 		ProjectID:   p.ID,
 		GitRemote:   "https://github.com/owner/repo",
@@ -150,7 +152,7 @@ func TestBuildOrientation_IncludesWorkspaceTier(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
-	if _, err := s.docs.Create(ctx, document.Document{
+	if _, err := s.deps.Documents.Create(ctx, document.Document{
 		WorkspaceID: wsID,
 		Type:        document.TypePrinciple,
 		Scope:       document.ScopeWorkspace,
@@ -160,11 +162,11 @@ func TestBuildOrientation_IncludesWorkspaceTier(t *testing.T) {
 	}, now); err != nil {
 		t.Fatalf("seed wksp principle: %v", err)
 	}
-	otherWS, err := s.workspaces.Create(ctx, "u_carol", "carol-tier", now)
+	otherWS, err := s.deps.Workspaces.Create(ctx, "u_carol", "carol-tier", now)
 	if err != nil {
 		t.Fatalf("carol ws: %v", err)
 	}
-	if _, err := s.docs.Create(ctx, document.Document{
+	if _, err := s.deps.Documents.Create(ctx, document.Document{
 		WorkspaceID: otherWS.ID,
 		Type:        document.TypePrinciple,
 		Scope:       document.ScopeWorkspace,
@@ -238,7 +240,7 @@ func TestProjectSet_AutoRegistersSessionWhenNotPresent(t *testing.T) {
 	})); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
-	got, err := s.sessions.Get(ctx, "u_alice", "sess_fresh")
+	got, err := s.deps.Sessions.Get(ctx, "u_alice", "sess_fresh")
 	if err != nil {
 		t.Fatalf("session lookup: %v — auto-register should have created the row", err)
 	}
@@ -307,7 +309,7 @@ func TestStoryGet_IncludesOrientationBundle(t *testing.T) {
 	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 	now := time.Now().UTC()
 
-	st, err := s.stories.Create(ctx, story.Story{
+	st, err := s.deps.Stories.Create(ctx, story.Story{
 		WorkspaceID:        wsID,
 		ProjectID:          p.ID,
 		Title:              "test-story",

@@ -17,7 +17,7 @@ import (
 func seedSkill(t *testing.T, f *contractFixture, name, contractID string) string {
 	t.Helper()
 	binding := contractID
-	d, err := f.server.docs.Create(context.Background(), document.Document{
+	d, err := f.server.deps.Documents.Create(context.Background(), document.Document{
 		Type:            document.TypeSkill,
 		Scope:           document.ScopeSystem,
 		Name:            name,
@@ -36,7 +36,7 @@ func seedSkill(t *testing.T, f *contractFixture, name, contractID string) string
 // story_close).
 func firstContractDocID(t *testing.T, f *contractFixture, name string) string {
 	t.Helper()
-	docs, err := f.server.docs.List(context.Background(), document.ListOptions{Type: document.TypeContract}, nil)
+	docs, err := f.server.deps.Documents.List(context.Background(), document.ListOptions{Type: document.TypeContract}, nil)
 	if err != nil {
 		t.Fatalf("list contract docs: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestAgentCompose_HappyPath_Ephemeral(t *testing.T) {
 	}
 
 	// Ledger row carries the structured payload.
-	rows, err := f.server.ledger.List(context.Background(), f.projectID, ledger.ListOptions{Type: ledger.TypeAgentCompose, Limit: 5}, nil)
+	rows, err := f.server.deps.Ledger.List(context.Background(), f.projectID, ledger.ListOptions{Type: ledger.TypeAgentCompose, Limit: 5}, nil)
 	if err != nil {
 		t.Fatalf("ledger list: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestArchiveEphemeralAgentsForStory(t *testing.T) {
 	}
 	// Walk the story to done via the legal transition chain.
 	for _, target := range []string{story.StatusReady, story.StatusInProgress, story.StatusDone} {
-		if _, err := f.server.stories.UpdateStatus(f.ctx, f.storyID, target, "test", f.now.Add(time.Second), nil); err != nil {
+		if _, err := f.server.deps.Stories.UpdateStatus(f.ctx, f.storyID, target, "test", f.now.Add(time.Second), nil); err != nil {
 			t.Fatalf("update status %q: %v", target, err)
 		}
 	}
@@ -243,7 +243,7 @@ func TestArchiveEphemeralAgentsForStory(t *testing.T) {
 		t.Errorf("second sweep archived %d, want 0", n2)
 	}
 	// Audit rows written.
-	rows, err := f.server.ledger.List(context.Background(), f.projectID, ledger.ListOptions{Type: ledger.TypeAgentArchive, Limit: 10}, nil)
+	rows, err := f.server.deps.Ledger.List(context.Background(), f.projectID, ledger.ListOptions{Type: ledger.TypeAgentArchive, Limit: 10}, nil)
 	if err != nil {
 		t.Fatalf("ledger list: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestAgentCompose_PrinciplesContextPopulated(t *testing.T) {
 		{"pr_test_active_b", "Active principle B description.", document.StatusActive},
 		{"pr_test_archived", "Archived principle description.", document.StatusArchived},
 	} {
-		_, err := f.server.docs.Create(context.Background(), document.Document{
+		_, err := f.server.deps.Documents.Create(context.Background(), document.Document{
 			Type:   document.TypePrinciple,
 			Scope:  document.ScopeSystem,
 			Name:   p.name,

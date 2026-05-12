@@ -13,6 +13,7 @@ import (
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
 	"github.com/bobmcallan/satellites/internal/auth"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/project"
@@ -33,10 +34,12 @@ func newAPIKeyTestServer(t *testing.T) *Server {
 	projects := project.NewMemoryStore()
 	keyStore := auth.NewMemoryAgentAPIKeyStore()
 	return New(cfg, satarbor.New("info"), now, Deps{
-		LedgerStore:    led,
-		WorkspaceStore: wss,
-		ProjectStore:   projects,
-		APIKeyStore:    keyStore,
+		Client: client.Deps{
+			Ledger:    led,
+			Workspaces: wss,
+			Projects:   projects,
+			APIKeys:    keyStore,
+		},
 		NowFunc:        func() time.Time { return now },
 	})
 }
@@ -82,7 +85,7 @@ func TestAgentAPIKeyCreate_HappyPath(t *testing.T) {
 		t.Errorf("cleartext len = %d, want >= 40", len(cleartext))
 	}
 
-	row, err := s.apiKeys.Get(context.Background(), id)
+	row, err := s.deps.APIKeys.Get(context.Background(), id)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -94,7 +97,7 @@ func TestAgentAPIKeyCreate_HappyPath(t *testing.T) {
 	}
 
 	// kind:agent-apikey-created ledger row was written.
-	rows, _ := s.ledger.List(context.Background(), "", ledger.ListOptions{Limit: 10}, nil)
+	rows, _ := s.deps.Ledger.List(context.Background(), "", ledger.ListOptions{Limit: 10}, nil)
 	found := false
 	for _, r := range rows {
 		for _, tag := range r.Tags {
@@ -119,7 +122,7 @@ func TestAgentAPIKeyCreate_HashAtRest(t *testing.T) {
 	id := resp["id"].(string)
 	cleartext := resp["key"].(string)
 
-	row, _ := s.apiKeys.Get(context.Background(), id)
+	row, _ := s.deps.APIKeys.Get(context.Background(), id)
 	saltBytes, err := hex.DecodeString(row.KeySalt)
 	if err != nil {
 		t.Fatalf("salt hex: %v", err)
@@ -206,7 +209,7 @@ func TestAgentAPIKeyDelete_HappyPath(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("delete isError: %+v", res.Content)
 	}
-	row, _ := s.apiKeys.Get(context.Background(), id)
+	row, _ := s.deps.APIKeys.Get(context.Background(), id)
 	if row.Status != auth.APIKeyStatusArchived {
 		t.Errorf("Status = %q, want archived", row.Status)
 	}
@@ -217,7 +220,7 @@ func TestAgentAPIKeyDelete_HappyPath(t *testing.T) {
 		t.Errorf("post-delete list still shows id %q: %s", id, listText)
 	}
 
-	rows, _ := s.ledger.List(context.Background(), "", ledger.ListOptions{Limit: 10}, nil)
+	rows, _ := s.deps.Ledger.List(context.Background(), "", ledger.ListOptions{Limit: 10}, nil)
 	found := false
 	for _, r := range rows {
 		for _, tag := range r.Tags {
@@ -246,7 +249,7 @@ func TestAgentAPIKeyDelete_CrossOwnerForbidden(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("expected forbidden, got success: %+v", res.Content)
 	}
-	row, _ := s.apiKeys.Get(context.Background(), id)
+	row, _ := s.deps.APIKeys.Get(context.Background(), id)
 	if row.Status != auth.APIKeyStatusActive {
 		t.Errorf("post-forbidden Status = %q, want active", row.Status)
 	}
@@ -266,7 +269,7 @@ func TestAgentAPIKeyDelete_GlobalAdminCanDeleteAny(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("admin delete isError: %+v", res.Content)
 	}
-	row, _ := s.apiKeys.Get(context.Background(), id)
+	row, _ := s.deps.APIKeys.Get(context.Background(), id)
 	if row.Status != auth.APIKeyStatusArchived {
 		t.Errorf("admin-deleted Status = %q, want archived", row.Status)
 	}

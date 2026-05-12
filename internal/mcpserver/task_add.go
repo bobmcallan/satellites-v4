@@ -73,7 +73,7 @@ func (s *Server) buildTaskAddInput(req mcpgo.CallToolRequest, memberships []stri
 			},
 			ResolveStoryProjectID:     s.resolveStoryProjectID,
 			ResolveProjectWorkspaceID: s.resolveProjectWorkspaceID,
-			DefaultProjectID:          s.defaultProjectID,
+			DefaultProjectID:          s.deps.DefaultProjectID,
 		},
 	}
 }
@@ -82,14 +82,14 @@ func (s *Server) buildTaskAddInput(req mcpgo.CallToolRequest, memberships []stri
 // session row (set by project_set / session_register), or "" when the
 // caller has no resolvable session.
 func (s *Server) callerActiveProjectID(ctx context.Context, caller auth.CallerIdentity) string {
-	if s.sessions == nil {
+	if s.deps.Sessions == nil {
 		return ""
 	}
 	sessionID := resolveSessionID(ctx, "")
 	if sessionID == "" {
 		return ""
 	}
-	sess, err := s.sessions.Get(ctx, caller.UserID, sessionID)
+	sess, err := s.deps.Sessions.Get(ctx, caller.UserID, sessionID)
 	if err != nil {
 		return ""
 	}
@@ -102,10 +102,10 @@ func (s *Server) callerActiveProjectID(ctx context.Context, caller auth.CallerId
 // scope=workspace agent path to prefer the story's project as the
 // task's tenancy when a story_id is supplied.
 func (s *Server) resolveStoryProjectID(ctx context.Context, storyID string, memberships []string) string {
-	if s.stories == nil || storyID == "" {
+	if s.deps.Stories == nil || storyID == "" {
 		return ""
 	}
-	st, err := s.stories.GetByID(ctx, storyID, memberships)
+	st, err := s.deps.Stories.GetByID(ctx, storyID, memberships)
 	if err != nil {
 		return ""
 	}

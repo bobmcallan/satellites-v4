@@ -541,20 +541,22 @@ func main() {
 	srv.SetLLMPinger(newGeminiPinger(cfg.GeminiAPIKey))
 
 	mcp := mcpserver.New(cfg, logger, startedAt, mcpserver.Deps{
-		DocStore:         docStore,
-		DocsDir:          cfg.DocsDir,
-		ProjectStore:     projStore,
-		DefaultProjectID: defaultProjectID,
-		LedgerStore:      ledgerStore,
-		StoryStore:       storyStore,
-		WorkspaceStore:   wsStore,
-		SessionStore:     sessionStore,
-		TaskStore:        taskStore,
-		RepoStore:        repoStore,
-		ChangelogStore:   changelogStore,
-		APIKeyStore:      apiKeyStore,
-		Indexer:          repoIndexer,
-		AuditReadTTL:     auditReadTTL(),
+		Client: client.Deps{
+			Documents:        docStore,
+			DocsDir:          cfg.DocsDir,
+			Projects:         projStore,
+			DefaultProjectID: defaultProjectID,
+			Ledger:           ledgerStore,
+			Stories:          storyStore,
+			Workspaces:       wsStore,
+			Sessions:         sessionStore,
+			Tasks:            taskStore,
+			Repos:            repoStore,
+			Changelog:        changelogStore,
+			APIKeys:          apiKeyStore,
+			Indexer:          repoIndexer,
+		},
+		AuditReadTTL: auditReadTTL(),
 	})
 	// Sty_088f6d5c: install the portal_replicate action vocabulary
 	// from the seeded replicate_vocabulary document. configseed has
@@ -568,8 +570,8 @@ func main() {
 	// /api/v1 client. The mcp server is the canonical loader; the
 	// api client shares the same vocab so /portal/replicate and the
 	// MCP verb resolve aliases identically.
-	replicateVocabForAPI := mcp.ReplicateVocabulary()
-	replicateRunnerForAPI := mcp.ReplicateRunner()
+	replicateVocabForAPI := mcp.Client().ReplicateVocab()
+	replicateRunnerForAPI := mcp.Client().ReplicateRunner()
 	// sty_cd8b89c6: snapshot the registered MCP tool catalogue into the
 	// document store so the portal /mcp page renders 1:1 what Claude
 	// sees through tools/list. Boot-time only; no runtime drift window.

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
@@ -33,12 +34,14 @@ func newStoryUpdateTestServer(t *testing.T) *Server {
 	wss := workspace.NewMemoryStore()
 	sessions := session.NewMemoryStore()
 	return New(cfg, satarbor.New("info"), now, Deps{
-		DocStore:       docs,
-		ProjectStore:   projects,
-		LedgerStore:    led,
-		StoryStore:     stories,
-		WorkspaceStore: wss,
-		SessionStore:   sessions,
+		Client: client.Deps{
+			Documents:       docs,
+			Projects:   projects,
+			Ledger:    led,
+			Stories:     stories,
+			Workspaces: wss,
+			Sessions:   sessions,
+		},
 	})
 }
 
@@ -50,18 +53,18 @@ func seedStoryAlice(t *testing.T, s *Server) (storyID, projectID, workspaceID st
 	ctx := context.Background()
 	now := time.Now().UTC()
 
-	ws, err := s.workspaces.Create(ctx, "u_alice", "alpha", now)
+	ws, err := s.deps.Workspaces.Create(ctx, "u_alice", "alpha", now)
 	if err != nil {
 		t.Fatalf("workspace create: %v", err)
 	}
-	if err := s.workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now); err != nil {
+	if err := s.deps.Workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now); err != nil {
 		t.Fatalf("workspace addmember: %v", err)
 	}
-	proj, err := s.projects.Create(ctx, "u_alice", ws.ID, "alpha-1", now)
+	proj, err := s.deps.Projects.Create(ctx, "u_alice", ws.ID, "alpha-1", now)
 	if err != nil {
 		t.Fatalf("project create: %v", err)
 	}
-	st, err := s.stories.Create(ctx, story.Story{
+	st, err := s.deps.Stories.Create(ctx, story.Story{
 		WorkspaceID:        ws.ID,
 		ProjectID:          proj.ID,
 		Title:              "original title",

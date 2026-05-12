@@ -8,6 +8,7 @@ import (
 	"time"
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
@@ -63,12 +64,14 @@ func newImpersonationFixture(t *testing.T, callerGlobalAdmin bool) *impersonatio
 	}
 
 	server := New(cfg, satarbor.New("info"), now, Deps{
-		DocStore:       docStore,
-		ProjectStore:   projStore,
-		LedgerStore:    ledStore,
-		StoryStore:     storyStore,
-		WorkspaceStore: wsStore,
-		SessionStore:   sessionStore,
+		Client: client.Deps{
+			Documents:       docStore,
+			Projects:   projStore,
+			Ledger:    ledStore,
+			Stories:     storyStore,
+			Workspaces: wsStore,
+			Sessions:   sessionStore,
+		},
 	})
 
 	caller := auth.CallerIdentity{
@@ -189,7 +192,7 @@ func TestLedgerAppend_CtxImpersonationCopiedToEntry(t *testing.T) {
 	f := newImpersonationFixture(t, false)
 
 	ctx := ledger.WithImpersonatingWorkspace(f.callerCtx(), f.foreignWS)
-	written, err := f.server.ledger.Append(ctx, ledger.LedgerEntry{
+	written, err := f.server.deps.Ledger.Append(ctx, ledger.LedgerEntry{
 		WorkspaceID: f.foreignWS,
 		ProjectID:   f.foreignProject,
 		Type:        ledger.TypeDecision,

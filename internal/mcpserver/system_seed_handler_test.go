@@ -11,6 +11,7 @@ import (
 	"time"
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/configseed"
 	"github.com/bobmcallan/satellites/internal/document"
@@ -44,12 +45,14 @@ func newSystemSeedFixture(t *testing.T) (*Server, string) {
 	sessions := session.NewMemoryStore()
 
 	server := New(cfg, satarbor.New("info"), now, Deps{
-		DocStore:       docs,
-		ProjectStore:   projects,
-		LedgerStore:    led,
-		StoryStore:     stories,
-		WorkspaceStore: ws,
-		SessionStore:   sessions,
+		Client: client.Deps{
+			Documents:       docs,
+			Projects:   projects,
+			Ledger:    led,
+			Stories:     stories,
+			Workspaces: ws,
+			Sessions:   sessions,
+		},
 	})
 
 	dir := t.TempDir()
@@ -107,7 +110,7 @@ func TestSystemSeedRun_AdminSucceedsAndWritesLedger(t *testing.T) {
 	if summary.Loaded != 1 || summary.Created != 1 {
 		t.Errorf("loaded=%d created=%d, want 1/1", summary.Loaded, summary.Created)
 	}
-	rows, err := server.ledger.List(context.Background(), "", ledger.ListOptions{
+	rows, err := server.deps.Ledger.List(context.Background(), "", ledger.ListOptions{
 		Type: ledger.TypeDecision,
 		Tags: []string{"kind:system-seed-run"},
 	}, nil)

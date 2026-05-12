@@ -13,6 +13,7 @@ import (
 	"time"
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/project"
 	"github.com/bobmcallan/satellites/internal/repo"
@@ -24,10 +25,12 @@ func newProjectSetTestServer(t *testing.T) *Server {
 	t.Helper()
 	cfg := &config.Config{Env: "dev", PublicURL: "https://sat.test"}
 	return New(cfg, satarbor.New("info"), time.Now(), Deps{
-		ProjectStore:   project.NewMemoryStore(),
-		RepoStore:      repo.NewMemoryStore(),
-		SessionStore:   session.NewMemoryStore(),
-		WorkspaceStore: workspace.NewMemoryStore(),
+		Client: client.Deps{
+			Projects:   project.NewMemoryStore(),
+			Repos:      repo.NewMemoryStore(),
+			Sessions:   session.NewMemoryStore(),
+			Workspaces: workspace.NewMemoryStore(),
+		},
 	})
 }
 
@@ -36,11 +39,11 @@ func newProjectSetTestServer(t *testing.T) *Server {
 // CreateWithRemote fixture path.
 func seedProjectWithRemote(t *testing.T, s *Server, ctx context.Context, ownerUserID, wsID, name, canonicalRemote string, now time.Time) project.Project {
 	t.Helper()
-	p, err := s.projects.Create(ctx, ownerUserID, wsID, name, now)
+	p, err := s.deps.Projects.Create(ctx, ownerUserID, wsID, name, now)
 	if err != nil {
 		t.Fatalf("project create: %v", err)
 	}
-	if _, err := s.repos.Create(ctx, repo.Repo{
+	if _, err := s.deps.Repos.Create(ctx, repo.Repo{
 		WorkspaceID: wsID,
 		ProjectID:   p.ID,
 		GitRemote:   canonicalRemote,
@@ -66,14 +69,14 @@ func TestProjectSet_HappyPath_StampsActiveProject(t *testing.T) {
 	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 	now := time.Now().UTC()
 
-	ws, err := s.workspaces.Create(ctx, "u_alice", "alpha", now)
+	ws, err := s.deps.Workspaces.Create(ctx, "u_alice", "alpha", now)
 	if err != nil {
 		t.Fatalf("workspace create: %v", err)
 	}
-	if err := s.workspaces.AddMember(ctx, ws.ID, "u_alice", "admin", "u_alice", now); err != nil {
+	if err := s.deps.Workspaces.AddMember(ctx, ws.ID, "u_alice", "admin", "u_alice", now); err != nil {
 		t.Fatalf("workspace member: %v", err)
 	}
-	if _, err := s.sessions.Register(ctx, "u_alice", "sess_abc", session.SourceSessionStart, now); err != nil {
+	if _, err := s.deps.Sessions.Register(ctx, "u_alice", "sess_abc", session.SourceSessionStart, now); err != nil {
 		t.Fatalf("session register: %v", err)
 	}
 	p := seedProjectWithRemote(t, s, ctx, "u_alice", ws.ID, "satellites", "https://github.com/owner/repo", now)
@@ -104,7 +107,7 @@ func TestProjectSet_HappyPath_StampsActiveProject(t *testing.T) {
 	}
 
 	// active_project_id stamped on the session row.
-	got, err := s.sessions.Get(ctx, "u_alice", "sess_abc")
+	got, err := s.deps.Sessions.Get(ctx, "u_alice", "sess_abc")
 	if err != nil {
 		t.Fatalf("session get: %v", err)
 	}
@@ -118,8 +121,8 @@ func TestProjectSet_NoProjectForRemote(t *testing.T) {
 	s := newProjectSetTestServer(t)
 	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 	now := time.Now().UTC()
-	ws, _ := s.workspaces.Create(ctx, "u_alice", "alpha", now)
-	_ = s.workspaces.AddMember(ctx, ws.ID, "u_alice", "admin", "u_alice", now)
+	ws, _ := s.deps.Workspaces.Create(ctx, "u_alice", "alpha", now)
+	_ = s.deps.Workspaces.AddMember(ctx, ws.ID, "u_alice", "admin", "u_alice", now)
 
 	res, err := s.handleProjectSet(ctx, newCallToolReq("project_set", map[string]any{
 		"repo_url": "git@github.com:owner/unknown.git",
@@ -160,8 +163,8 @@ func TestProjectSet_NormalisationParity(t *testing.T) {
 		s := newProjectSetTestServer(t)
 		ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})
 		now := time.Now().UTC()
-		ws, _ := s.workspaces.Create(ctx, "u_alice", "alpha", now)
-		_ = s.workspaces.AddMember(ctx, ws.ID, "u_alice", "admin", "u_alice", now)
+		ws, _ := s.deps.Workspaces.Create(ctx, "u_alice", "alpha", now)
+		_ = s.deps.Workspaces.AddMember(ctx, ws.ID, "u_alice", "admin", "u_alice", now)
 		seedProjectWithRemote(t, s, ctx, "u_alice", ws.ID, "p", want, now)
 		res, _ := s.handleProjectSet(ctx, newCallToolReq("project_set", map[string]any{"repo_url": in}))
 		body := decodeProjectSet(t, firstText(res))
@@ -180,10 +183,10 @@ func TestProjectSet_CrossWorkspaceIsolation(t *testing.T) {
 	now := time.Now().UTC()
 	ctx := context.Background()
 
-	wsA, _ := s.workspaces.Create(ctx, "u_alice", "alpha", now)
-	_ = s.workspaces.AddMember(ctx, wsA.ID, "u_alice", "admin", "u_alice", now)
-	wsB, _ := s.workspaces.Create(ctx, "u_bob", "beta", now)
-	_ = s.workspaces.AddMember(ctx, wsB.ID, "u_bob", "admin", "u_bob", now)
+	wsA, _ := s.deps.Workspaces.Create(ctx, "u_alice", "alpha", now)
+	_ = s.deps.Workspaces.AddMember(ctx, wsA.ID, "u_alice", "admin", "u_alice", now)
+	wsB, _ := s.deps.Workspaces.Create(ctx, "u_bob", "beta", now)
+	_ = s.deps.Workspaces.AddMember(ctx, wsB.ID, "u_bob", "admin", "u_bob", now)
 
 	// Same canonical remote registered in workspace A only.
 	seedProjectWithRemote(t, s, ctx, "u_alice", wsA.ID, "shared", "https://github.com/owner/shared", now)

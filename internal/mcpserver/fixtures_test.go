@@ -7,6 +7,7 @@ import (
 	"time"
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
@@ -78,12 +79,14 @@ func newContractFixture(t *testing.T) *contractFixture {
 	}
 
 	server := New(cfg, satarbor.New("info"), now, Deps{
-		DocStore:         docStore,
-		ProjectStore:     projStore,
-		DefaultProjectID: proj.ID,
-		LedgerStore:      ledStore,
-		StoryStore:       storyStore,
-		WorkspaceStore:   wsStore,
+		Client: client.Deps{
+			Documents:        docStore,
+			Projects:         projStore,
+			DefaultProjectID: proj.ID,
+			Ledger:           ledStore,
+			Stories:          storyStore,
+			Workspaces:       wsStore,
+		},
 	})
 
 	return &contractFixture{
@@ -115,7 +118,7 @@ func newOrchestratorFixture(t *testing.T) *orchestratorFixture {
 	f := newContractFixture(t)
 
 	taskStore := task.NewMemoryStore()
-	f.server.tasks = taskStore
+	f.server.deps.Tasks = taskStore
 
 	systemSrc := document.Document{
 		Type:   document.TypeWorkflow,
@@ -129,7 +132,7 @@ func newOrchestratorFixture(t *testing.T) *orchestratorFixture {
 			{"contract_name":"story_close","required":true,"min_count":1,"max_count":1}
 		]}`),
 	}
-	if _, err := f.server.docs.Create(context.Background(), systemSrc, f.now); err != nil {
+	if _, err := f.server.deps.Documents.Create(context.Background(), systemSrc, f.now); err != nil {
 		t.Fatalf("seed system workflow: %v", err)
 	}
 
@@ -163,7 +166,7 @@ func newOrchestratorFixture(t *testing.T) *orchestratorFixture {
 			Delivers:           sa.Delivers,
 			Reviews:            sa.Reviews,
 		})
-		if _, err := f.server.docs.Create(context.Background(), document.Document{
+		if _, err := f.server.deps.Documents.Create(context.Background(), document.Document{
 			Type:       document.TypeAgent,
 			Scope:      document.ScopeSystem,
 			Name:       sa.Name,

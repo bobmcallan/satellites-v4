@@ -10,6 +10,7 @@ import (
 
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
 	"github.com/bobmcallan/satellites/internal/changelog"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
@@ -31,13 +32,15 @@ func newChangelogTestServer(t *testing.T) *Server {
 	sessions := session.NewMemoryStore()
 	cl := changelog.NewMemoryStore()
 	return New(cfg, satarbor.New("info"), now, Deps{
-		DocStore:       docs,
-		ProjectStore:   projects,
-		LedgerStore:    led,
-		StoryStore:     stories,
-		WorkspaceStore: wss,
-		SessionStore:   sessions,
-		ChangelogStore: cl,
+		Client: client.Deps{
+			Documents:       docs,
+			Projects:   projects,
+			Ledger:    led,
+			Stories:     stories,
+			Workspaces: wss,
+			Sessions:   sessions,
+			Changelog: cl,
+		},
 	})
 }
 
@@ -45,9 +48,9 @@ func seedChangelogProject(t *testing.T, s *Server) (projectID string) {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now().UTC()
-	ws, _ := s.workspaces.Create(ctx, "u_alice", "alpha", now)
-	_ = s.workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now)
-	proj, _ := s.projects.Create(ctx, "u_alice", ws.ID, "alpha-1", now)
+	ws, _ := s.deps.Workspaces.Create(ctx, "u_alice", "alpha", now)
+	_ = s.deps.Workspaces.AddMember(ctx, ws.ID, "u_alice", workspace.RoleAdmin, "u_alice", now)
+	proj, _ := s.deps.Projects.Create(ctx, "u_alice", ws.ID, "alpha-1", now)
 	return proj.ID
 }
 

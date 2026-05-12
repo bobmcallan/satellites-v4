@@ -245,3 +245,24 @@ func TestDocumentList_WalksTierLadder(t *testing.T) {
 	assert.Contains(t, names, "plan", "system-tier should be in union")
 	assert.Contains(t, names, "alpha_agent", "workspace-tier should be in union")
 }
+
+// TestKnownDocumentKinds_ReturnsWrapperFamily asserts the accessor
+// enumerates the six wrapper kinds in stable order and returns a
+// fresh slice on each call (mutating the result must not leak back
+// into wrapperDocumentKinds).
+func TestKnownDocumentKinds_ReturnsWrapperFamily(t *testing.T) {
+	got := KnownDocumentKinds()
+	want := []string{
+		document.TypePrinciple,
+		document.TypeContract,
+		document.TypeSkill,
+		document.TypeReviewer,
+		document.TypeAgent,
+		document.TypeRole,
+	}
+	assert.Equal(t, want, got)
+
+	got[0] = "tampered"
+	again := KnownDocumentKinds()
+	assert.Equal(t, want, again, "mutating the returned slice must not affect later calls")
+}

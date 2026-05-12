@@ -7,32 +7,29 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/bobmcallan/satellites/internal/document"
+	"github.com/bobmcallan/satellites/internal/client"
 )
 
 // registerDocumentWrappers exposes the §9 type-specific thin wrappers
-// (`principle_*`, `contract_*`, `skill_*`, `reviewer_*`) on the MCP
-// surface. Each wrapper pins `type` to its kind, applies per-type
-// payload validation on create, and forwards to the matching generic
-// handleDocument* method. There is exactly one storage path per
-// operation (the generic verb's handler) — wrappers never duplicate
-// store calls.
+// (`principle_*`, `contract_*`, `skill_*`, `reviewer_*`, `agent_*`,
+// `role_*`) on the MCP surface. Each wrapper pins `type` to its kind,
+// applies per-type payload validation on create, and forwards to the
+// matching generic handleDocument* method. There is exactly one
+// storage path per operation (the generic verb's handler) — wrappers
+// never duplicate store calls.
 //
 // `artifact` intentionally has no wrapper (per docs/architecture.md §9
 // note); artefacts are exercised through the generic verbs and the
 // ledger.
+//
+// The wrapper-kind list lives on internal/client
+// (client.KnownDocumentKinds) so this transport file no longer imports
+// internal/document directly — see pr_mcp_cli_shared_path.
 func (s *Server) registerDocumentWrappers() {
 	if s.docs == nil {
 		return
 	}
-	for _, kind := range []string{
-		document.TypePrinciple,
-		document.TypeContract,
-		document.TypeSkill,
-		document.TypeReviewer,
-		document.TypeAgent,
-		document.TypeRole,
-	} {
+	for _, kind := range client.KnownDocumentKinds() {
 		s.registerWrapperFamily(kind)
 	}
 }
@@ -167,9 +164,11 @@ func (s *Server) wrapperSearch(kind string) func(context.Context, mcpgo.CallTool
 
 // validateWrapperPayload runs per-type structured/payload checks before
 // forwarding to handleDocumentCreate. Reads from args without mutating.
+// kind is the wire-level document type string (compared as literals so
+// this file no longer imports internal/document — pr_mcp_cli_shared_path).
 func validateWrapperPayload(kind string, args map[string]any) error {
 	switch kind {
-	case document.TypeContract:
+	case "contract":
 		raw, _ := args["structured"].(string)
 		if raw == "" {
 			return fmt.Errorf("contract_create requires structured payload with category, required_for_close, validation_mode")
@@ -183,14 +182,14 @@ func validateWrapperPayload(kind string, args map[string]any) error {
 				return fmt.Errorf("contract_create structured missing required key %q", k)
 			}
 		}
-	case document.TypeSkill, document.TypeReviewer:
+	case "skill", "reviewer":
 		s, _ := args["contract_binding"].(string)
 		if s == "" {
 			return fmt.Errorf("%s_create requires contract_binding", kind)
 		}
-	case document.TypePrinciple:
+	case "principle":
 		scope, _ := args["scope"].(string)
-		if scope != document.ScopeSystem && scope != document.ScopeProject {
+		if scope != "system" && scope != "project" {
 			return fmt.Errorf("principle_create requires scope=system|project")
 		}
 		tags, _ := args["tags"].([]any)

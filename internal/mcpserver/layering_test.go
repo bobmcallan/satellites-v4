@@ -114,13 +114,6 @@ var legacyAllowlist = map[string]map[string]struct{}{
 	"portal_replicate.go": {
 		"github.com/bobmcallan/satellites/internal/portalreplicate": {},
 	},
-	// wrappers.go — document type wrappers (principle_*, contract_*,
-	// skill_*, reviewer_*); fans out through the document type
-	// constants. TODO(sty_4db0e025): the wrappers themselves become
-	// thin shims over client.<Type>* methods.
-	"wrappers.go": {
-		"github.com/bobmcallan/satellites/internal/document": {},
-	},
 }
 
 // TestTransportLayering enforces pr_mcp_cli_shared_path.

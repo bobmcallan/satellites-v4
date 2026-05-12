@@ -15,6 +15,31 @@ import (
 // surface is called against a Client whose Deps.Documents is nil.
 var ErrDocumentStoreNotConfigured = errors.New("document store not configured")
 
+// wrapperDocumentKinds enumerates the document types that the §9
+// type-specific wrapper verbs (`principle_*`, `contract_*`, `skill_*`,
+// `reviewer_*`, `agent_*`, `role_*`) register on the MCP surface.
+// Lives in the client tier so transport-layer registration loops do
+// not need to import internal/document directly
+// (pr_mcp_cli_shared_path). `artifact` intentionally has no wrapper
+// per docs/architecture.md §9.
+var wrapperDocumentKinds = []string{
+	document.TypePrinciple,
+	document.TypeContract,
+	document.TypeSkill,
+	document.TypeReviewer,
+	document.TypeAgent,
+	document.TypeRole,
+}
+
+// KnownDocumentKinds returns a fresh copy of the document type strings
+// that the MCP wrapper-verb registration loop fans out across. Returned
+// in stable order; callers may sort/mutate the returned slice.
+func KnownDocumentKinds() []string {
+	out := make([]string, len(wrapperDocumentKinds))
+	copy(out, wrapperDocumentKinds)
+	return out
+}
+
 // ErrDocumentNoCallerIdentity is returned when document_create is
 // invoked without a caller user id. Mirrors the "no caller identity"
 // wire envelope previously emitted by handleDocumentCreate.

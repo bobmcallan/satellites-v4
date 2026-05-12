@@ -17,8 +17,8 @@ import (
 // sty_068a6c46 shipped 20; sty_73207fc8 added /api/v1/story/get;
 // sty_ef248ab2 added 30 operator-tier reads; sty_f38bd573 Tier A added
 // 37 operator-tier mutates; sty_004f3d3a added 9 reviewer/role/skill
-// read wrappers; sty_0b419d98 Tier B added 7 (agent_apikey + compose +
-// seed-runs + ingest-file). Total: 104. portal_replicate deferred.
+// read wrappers; sty_0b419d98 Tier B added 7; sty_e68ce6fb added
+// portal/replicate. Total: 105. Every CLI verb is now non-stub.
 var expectedRoutes = []string{
 	// Order:07a anchor (21).
 	"POST /api/v1/satellites/info",
@@ -129,15 +129,17 @@ var expectedRoutes = []string{
 	"POST /api/v1/project/seed-run",
 	"POST /api/v1/system/seed-run",
 	"POST /api/v1/document/ingest-file",
+	// sty_e68ce6fb portal_replicate (last verbStub closed).
+	"POST /api/v1/portal/replicate",
 }
 
-// TestAPI_RoutesRegistered asserts the registrar attaches all 104
+// TestAPI_RoutesRegistered asserts the registrar attaches all 105
 // verb routes to the supplied mux. Routes that respond 404 indicate
 // missing registration; any other status (400/500/200) proves the
 // handler was hit.
 func TestAPI_RoutesRegistered(t *testing.T) {
-	if got := len(expectedRoutes); got != 104 {
-		t.Fatalf("expected 104 routes, got %d (update the slice as the verb set grows)", got)
+	if got := len(expectedRoutes); got != 105 {
+		t.Fatalf("expected 105 routes, got %d (update the slice as the verb set grows)", got)
 	}
 
 	reg := NewAPIRegistrar(client.New(client.Deps{StartedAt: time.Now().UTC()}))

@@ -280,7 +280,7 @@ func registerSystemNoun(root *cobra.Command) {
 func registerPortalNoun(root *cobra.Command) {
 	noun := nounStub("portal", "Portal — replication + UI helpers.")
 	noun.AddCommand(
-		verbStub("replicate", "portal replicate", "Replicate the portal UI."),
+		newPortalReplicateCmd(), // sty_e68ce6fb
 	)
 	root.AddCommand(noun)
 }

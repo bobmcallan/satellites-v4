@@ -76,13 +76,11 @@ func TestPersistentFlagsRecognised(t *testing.T) {
 }
 
 func TestStubReturnsServerExitCode(t *testing.T) {
-	// Only verbs that remain stubs after order:04 + sty_ef248ab2 +
-	// sty_f38bd573 + sty_004f3d3a + sty_0b419d98 (Tier B partial).
-	// portal_replicate is the lone remaining verbStub — deferred to
-	// a chromedp+vocabulary follow-up.
-	verbs := [][]string{
-		{"portal", "replicate"},
-	}
+	// After sty_e68ce6fb, every CLI verb has a concrete handler —
+	// the stub set is empty. Keep this test as a guard: if a new
+	// verbStub regresses, this slice must be populated and the loop
+	// re-enabled. The current empty slice asserts no stubs remain.
+	verbs := [][]string{}
 	for _, args := range verbs {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
 			root := newRootCmd()

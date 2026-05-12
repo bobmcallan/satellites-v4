@@ -36,6 +36,8 @@ func (a *APIRegistrar) registerOperatorTierBRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/project/seed-run", a.handleProjectSeedRun)
 	mux.HandleFunc("POST /api/v1/system/seed-run", a.handleSystemSeedRun)
 	mux.HandleFunc("POST /api/v1/document/ingest-file", a.handleDocumentIngestFile)
+	// sty_e68ce6fb: portal replicate (last verbStub).
+	mux.HandleFunc("POST /api/v1/portal/replicate", a.handlePortalReplicate)
 }
 
 // ----- agent_apikey -----

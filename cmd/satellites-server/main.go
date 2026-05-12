@@ -564,6 +564,12 @@ func main() {
 	if err := mcp.LoadReplicateVocabularyFromDoc(ctx, "default"); err != nil {
 		logger.Warn().Str("error", err.Error()).Msg("portal_replicate vocabulary load failed (canonical-only fallback)")
 	}
+	// sty_e68ce6fb: hand the loaded vocabulary + runner to the
+	// /api/v1 client. The mcp server is the canonical loader; the
+	// api client shares the same vocab so /portal/replicate and the
+	// MCP verb resolve aliases identically.
+	replicateVocabForAPI := mcp.ReplicateVocabulary()
+	replicateRunnerForAPI := mcp.ReplicateRunner()
 	// sty_cd8b89c6: snapshot the registered MCP tool catalogue into the
 	// document store so the portal /mcp page renders 1:1 what Claude
 	// sees through tools/list. Boot-time only; no runtime drift window.
@@ -651,6 +657,8 @@ func main() {
 		APIKeys:          apiKeyStore,
 		Indexer:          repoIndexer,
 		DocsDir:          cfg.DocsDir,
+		ReplicateVocab:   replicateVocabForAPI,
+		ReplicateRunner:  replicateRunnerForAPI,
 		StartedAt:        startedAt,
 		DefaultProjectID: defaultProjectID,
 		Logger:           logger,

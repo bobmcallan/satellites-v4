@@ -7,10 +7,16 @@
 package main
 
 import (
+	"encoding/json"
+
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satellites/internal/cliexit"
 )
+
+// unmarshalJSON is a tiny helper for the CLI flag parsers that need
+// JSON-array payloads (portal replicate actions/cookies).
+func unmarshalJSON(raw string, dst any) error { return json.Unmarshal([]byte(raw), dst) }
 
 // ----- story -----
 
@@ -908,6 +914,46 @@ func newSystemSeedRunCmd() *cobra.Command {
 		Short: "Re-run the system-tier configseed loader [admin].",
 		RunE:  writeHandler("system_seed_run", func(cmd *cobra.Command, args []string) (any, error) { return map[string]any{}, nil }),
 	}
+}
+
+func newPortalReplicateCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "replicate",
+		Short: "Drive a headless browser through actions + ledger evidence onto a story.",
+		RunE: writeHandler("portal_replicate", func(cmd *cobra.Command, args []string) (any, error) {
+			storyID, _ := cmd.Flags().GetString("story-id")
+			targetURL, _ := cmd.Flags().GetString("target-url")
+			actionsRaw, _ := cmd.Flags().GetString("actions")
+			if storyID == "" || targetURL == "" || actionsRaw == "" {
+				return nil, cliexit.Newf(cliexit.Usage, "portal replicate: --story-id, --target-url, --actions required")
+			}
+			var actions []any
+			if err := unmarshalJSON(actionsRaw, &actions); err != nil {
+				return nil, cliexit.Newf(cliexit.Usage, "portal replicate: --actions must be valid JSON array: %v", err)
+			}
+			out := map[string]any{
+				"story_id":   storyID,
+				"target_url": targetURL,
+				"actions":    actions,
+			}
+			if cookiesRaw, _ := cmd.Flags().GetString("cookies"); cookiesRaw != "" {
+				var cookies []any
+				if err := unmarshalJSON(cookiesRaw, &cookies); err != nil {
+					return nil, cliexit.Newf(cliexit.Usage, "portal replicate: --cookies must be valid JSON array: %v", err)
+				}
+				out["cookies"] = cookies
+			}
+			return out, nil
+		}),
+	}
+	c.Flags().String("story-id", "", "Story to attach evidence to (required).")
+	c.Flags().String("target-url", "", "Absolute base URL (required).")
+	c.Flags().String("actions", "", "JSON array of {type, selector?, value?, label?} (required).")
+	c.Flags().String("cookies", "", "Optional JSON array of cookie objects.")
+	_ = c.MarkFlagRequired("story-id")
+	_ = c.MarkFlagRequired("target-url")
+	_ = c.MarkFlagRequired("actions")
+	return c
 }
 
 func newDocumentIngestFileCmd() *cobra.Command {

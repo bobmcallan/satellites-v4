@@ -26,6 +26,20 @@ func (s *Server) SetReplicateVocabulary(v *portalreplicate.Vocabulary) {
 	s.replicateVocab = v
 }
 
+// ReplicateVocabulary returns the currently-loaded action vocabulary.
+// Exposed so the /api/v1 layer (sty_e68ce6fb) can read the same vocab
+// the MCP handler uses without re-loading from the doc store.
+func (s *Server) ReplicateVocabulary() *portalreplicate.Vocabulary {
+	return s.replicateVocab
+}
+
+// ReplicateRunner returns the currently-installed runner override.
+// Returns nil when no SetReplicateRunner has been called — callers
+// fall back to portalreplicate.Run in that case.
+func (s *Server) ReplicateRunner() func(ctx context.Context, opts portalreplicate.RunOptions, actions []portalreplicate.Action) ([]portalreplicate.Result, portalreplicate.Summary, error) {
+	return s.replicateRunner
+}
+
 // SetReplicateRunner overrides the chromedp-driven runner with a
 // custom function. Tests inject a stub that returns deterministic
 // Results; production leaves it nil and the handler falls back to

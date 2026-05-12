@@ -11,6 +11,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/codeindex"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
+	"github.com/bobmcallan/satellites/internal/portalreplicate"
 	"github.com/bobmcallan/satellites/internal/project"
 	"github.com/bobmcallan/satellites/internal/repo"
 	"github.com/bobmcallan/satellites/internal/session"
@@ -49,6 +50,13 @@ type Deps struct {
 	APIKeys          auth.APIKeyStore
 	Indexer          codeindex.Indexer
 	DocsDir          string
+	// ReplicateVocab is the resolved action-alias vocabulary for the
+	// portal_replicate verb. Nil falls back to the canonical-only
+	// vocabulary (portalreplicate.NewVocabulary()).
+	ReplicateVocab *portalreplicate.Vocabulary
+	// ReplicateRunner overrides the chromedp-driven runner. Nil falls
+	// back to portalreplicate.Run. Tests inject a deterministic stub.
+	ReplicateRunner  func(ctx context.Context, opts portalreplicate.RunOptions, actions []portalreplicate.Action) ([]portalreplicate.Result, portalreplicate.Summary, error)
 	StartedAt        time.Time
 	DefaultProjectID string
 	Logger           arbor.ILogger

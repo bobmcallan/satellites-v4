@@ -158,16 +158,26 @@ func defaults() *Config {
 	if exeDir != "" {
 		logDir = filepath.Join(exeDir, "logs")
 	}
+	// WorktreeRoot anchors per-task git worktrees alongside the
+	// satellites-client binary (e.g. <repo>/bin/worktree/<task_id>/)
+	// rather than under the operator's cwd, so worktree state isn't
+	// co-mingled with the repo's working tree. sty_29d2dc1d. Falls
+	// back to the legacy ".satellites-clients/" path only when the
+	// exe directory can't be resolved (unusual; test environments
+	// without a real binary).
+	worktreeRoot := ".satellites-clients/"
+	if exeDir != "" {
+		worktreeRoot = filepath.Join(exeDir, "worktree")
+	}
 	return &Config{
 		Server:       "",
 		Token:        "",
 		OAuthEnabled: false,
 		RepoPath:     ".",
-		// WorktreeRoot + BranchTemplate use a "client-" prefix so
-		// satellites-client's per-task worktrees + branches don't
-		// collide with satellites-agent's (which use ".satellites-agents/"
-		// and "agent-…"). sty_b1345841.
-		WorktreeRoot:   ".satellites-clients/",
+		// BranchTemplate keeps the "client-" prefix so
+		// satellites-client's per-task branches don't collide with
+		// satellites-agent's (which uses "agent-…"). sty_b1345841.
+		WorktreeRoot:   worktreeRoot,
 		BranchTemplate: "client-{task_id}-from-{base_sha}",
 		ExecuteTimeout: 30 * time.Minute,
 		LogLevel:       "info",

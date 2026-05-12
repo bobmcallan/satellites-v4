@@ -7,11 +7,19 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/ternarybob/arbor"
 	arbormodels "github.com/ternarybob/arbor/models"
 )
+
+// LogRetentionCount caps how many rolled-over log files are kept per
+// per-binary basename stem. Each invocation writes a fresh timestamped
+// file (e.g. satellites-client.<ts>.log); without retention the dir
+// grows monotonically across operator sessions. sty_29d2dc1d.
+const LogRetentionCount = 20
 
 type ctxKey int
 
@@ -60,7 +68,7 @@ func NewWithFile(level, logDir, basename string) arbor.ILogger {
 		return New(level)
 	}
 	fileName := filepath.Join(logDir, basename)
-	return arbor.NewLogger().
+	logger := arbor.NewLogger().
 		WithConsoleWriter(arbormodels.WriterConfiguration{
 			Type:       arbormodels.LogWriterTypeConsole,
 			Writer:     os.Stdout,
@@ -72,6 +80,61 @@ func NewWithFile(level, logDir, basename string) arbor.ILogger {
 			TimeFormat: "2006-01-02T15:04:05Z07:00",
 		}).
 		WithLevelFromString(level)
+	pruneOldLogs(logDir, basenameStem(basename), LogRetentionCount)
+	return logger
+}
+
+// basenameStem strips the trailing ".log" suffix from a basename so
+// the retention sweep can match the per-binary prefix. Inputs without
+// the suffix are returned unchanged.
+func basenameStem(basename string) string {
+	return strings.TrimSuffix(basename, ".log")
+}
+
+// pruneOldLogs trims <logDir>/<stem>.*.log to the `keep` newest files
+// by mtime. The current invocation's file is by construction one of
+// the newest (arbor opened it before this runs). The bare
+// "<stem>.log" pointer (when present) is skipped — that's the
+// stable symlink/latest marker, not a rolled-over file.
+//
+// Best-effort: any os error short-circuits the function. The
+// satellites caller should not propagate retention failures up to
+// the boot path — losing a stale log row is acceptable; losing the
+// CLI invocation is not.
+func pruneOldLogs(logDir, stem string, keep int) {
+	if logDir == "" || stem == "" || keep <= 0 {
+		return
+	}
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		return
+	}
+	prefix := stem + "."
+	var matches []os.DirEntry
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if name == stem+".log" {
+			continue
+		}
+		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".log") {
+			continue
+		}
+		matches = append(matches, e)
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		ii, _ := matches[i].Info()
+		ji, _ := matches[j].Info()
+		return ii.ModTime().After(ji.ModTime())
+	})
+	for idx, e := range matches {
+		if idx < keep {
+			continue
+		}
+		_ = os.Remove(filepath.Join(logDir, e.Name()))
+	}
 }
 
 // WithRequestID attaches a request ID to ctx; downstream code pulls it out via

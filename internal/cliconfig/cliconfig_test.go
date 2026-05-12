@@ -30,8 +30,14 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.RepoPath != "." {
 		t.Fatalf("expected repo_path default '.', got %q", cfg.RepoPath)
 	}
-	if cfg.WorktreeRoot != ".satellites-clients/" {
-		t.Fatalf("expected worktree_root default '.satellites-clients/', got %q", cfg.WorktreeRoot)
+	// sty_29d2dc1d: default WorktreeRoot is an absolute path under
+	// <exe_dir>/worktree (or the legacy ".satellites-clients/" fallback
+	// when the exe dir can't be resolved). The strict-equality assertion
+	// against the legacy default is asserted in
+	// TestLoad_Defaults_WorktreeRootTracksExeDirNotCwd; here we only
+	// require a non-empty value.
+	if cfg.WorktreeRoot == "" {
+		t.Fatalf("expected non-empty worktree_root default, got %q", cfg.WorktreeRoot)
 	}
 	if cfg.BranchTemplate != "client-{task_id}-from-{base_sha}" {
 		t.Fatalf("expected branch_template default 'client-{task_id}-from-{base_sha}', got %q", cfg.BranchTemplate)
@@ -89,6 +95,52 @@ func TestLoad_Defaults_LogPathTracksExeDirNotCwd(t *testing.T) {
 	want := filepath.Join(filepath.Dir(real), "logs")
 	if cfg.LogPath != want {
 		t.Fatalf("LogPath = %q, want %q (exe=%q)", cfg.LogPath, want, real)
+	}
+}
+
+// TestLoad_Defaults_WorktreeRootTracksExeDirNotCwd locks in the
+// sty_29d2dc1d default: defaults().WorktreeRoot resolves to
+// <exe_dir>/worktree (absolute), not <cwd>/.satellites-clients/.
+// Mirrors the LogPath chdir-resilience pattern.
+func TestLoad_Defaults_WorktreeRootTracksExeDirNotCwd(t *testing.T) {
+	t.Setenv("SATELLITES_CLIENT_CONFIG", "")
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	chdirToEmpty(t)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+
+	cfg, _, err := cliconfig.Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.WorktreeRoot == "" {
+		t.Fatal("WorktreeRoot empty")
+	}
+	if strings.HasPrefix(cfg.WorktreeRoot, cwd) {
+		t.Fatalf("WorktreeRoot %q anchored on cwd %q — should track exe dir", cfg.WorktreeRoot, cwd)
+	}
+	if !filepath.IsAbs(cfg.WorktreeRoot) {
+		t.Fatalf("WorktreeRoot %q is not absolute", cfg.WorktreeRoot)
+	}
+	if filepath.Base(cfg.WorktreeRoot) != "worktree" {
+		t.Fatalf("WorktreeRoot %q does not end with /worktree", cfg.WorktreeRoot)
+	}
+	// Sanity: the resolved path must live under the running test
+	// binary's directory.
+	exe, err := os.Executable()
+	if err != nil {
+		t.Skipf("os.Executable unavailable: %v", err)
+	}
+	real, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		real = exe
+	}
+	want := filepath.Join(filepath.Dir(real), "worktree")
+	if cfg.WorktreeRoot != want {
+		t.Fatalf("WorktreeRoot = %q, want %q (exe=%q)", cfg.WorktreeRoot, want, real)
 	}
 }
 

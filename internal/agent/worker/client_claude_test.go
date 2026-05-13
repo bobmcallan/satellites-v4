@@ -211,7 +211,7 @@ func TestBuildMCPConfigJSON(t *testing.T) {
 		SpawnMCPURL: "https://satellites-pprod.fly.dev/mcp?project_id=proj_x",
 		AuthToken:   "sat_test123",
 	}
-	raw, err := buildMCPConfigJSON(cfg)
+	raw, err := buildSpawnMCPConfigJSON(cfg)
 	require.NoError(t, err)
 
 	var got struct {
@@ -234,7 +234,7 @@ func TestBuildMCPConfigJSON(t *testing.T) {
 
 func TestBuildMCPConfigJSON_NoToken_OmitsAuthHeader(t *testing.T) {
 	cfg := config.AgentConfig{SpawnMCPURL: "http://localhost:8080/mcp"}
-	raw, err := buildMCPConfigJSON(cfg)
+	raw, err := buildSpawnMCPConfigJSON(cfg)
 	require.NoError(t, err)
 	assert.NotContains(t, raw, "Authorization")
 	assert.NotContains(t, raw, "Bearer")

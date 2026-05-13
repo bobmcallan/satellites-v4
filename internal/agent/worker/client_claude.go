@@ -428,11 +428,12 @@ func worktreeExists(path string) (string, bool) {
 	return "", true
 }
 
-// buildMCPConfigJSON returns the JSON blob passed to `claude
-// --mcp-config`. The dispatched agent sees only the satellites MCP
-// server — strict-mcp-config + this single-server config means no
-// operator-side MCP connections (vire, jcodemunch, drive) leak in.
-func buildMCPConfigJSON(cfg config.AgentConfig) (string, error) {
+// buildSpawnMCPConfigJSON returns the JSON blob written to
+// <worktree>/.mcp.json before the claude subprocess is spawned. The
+// dispatched agent sees only the satellites MCP server — strict-mcp-
+// config + this single-server file means no operator-side MCP
+// connections (vire, jcodemunch, drive) leak in.
+func buildSpawnMCPConfigJSON(cfg config.AgentConfig) (string, error) {
 	server := map[string]any{
 		"type": "http",
 		"url":  cfg.SpawnMCPURL,
@@ -525,12 +526,30 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 		WorkDir: worktreePath,
 	})
 
-	// Step 6: launch claude. Stream stdout+stderr to .satellites-
-	// agent.log inside the worktree.
-	mcpConfig, err := buildMCPConfigJSON(c.cfg)
+	// Step 6: materialise <worktree>/.mcp.json — the spawned subprocess
+	// reads its MCP server list from this file (claude's documented
+	// project-level config convention). --strict-mcp-config below
+	// forbids merging the operator's ~/.claude/settings.json, so the
+	// subprocess sees exactly one MCP server: the satellites endpoint
+	// satellites-client TOML pointed at. pr_substrate_provides_context.
+	mcpConfig, err := buildSpawnMCPConfigJSON(c.cfg)
 	if err != nil {
 		return OutcomeFailure, fmt.Errorf("execute: mcp config: %w", err)
 	}
+	mcpConfigPath := filepath.Join(worktreePath, ".mcp.json")
+	if err := os.WriteFile(mcpConfigPath, []byte(mcpConfig), 0o600); err != nil {
+		return OutcomeFailure, fmt.Errorf("execute: write .mcp.json: %w", err)
+	}
+	// os.WriteFile only sets the mode when creating the file; a pre-
+	// existing .mcp.json (e.g. one git worktree add materialised from a
+	// repo-tracked copy) keeps its prior mode. Force 0o600 explicitly
+	// — the file always carries a bearer token.
+	if err := os.Chmod(mcpConfigPath, 0o600); err != nil {
+		return OutcomeFailure, fmt.Errorf("execute: chmod .mcp.json: %w", err)
+	}
+
+	// Launch claude. Stream stdout+stderr to .satellites-agent.log
+	// inside the worktree.
 	logPath := filepath.Join(worktreePath, ".satellites-agent.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
@@ -545,7 +564,6 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 	args := []string{
 		"--permission-mode", "bypassPermissions",
 		"--strict-mcp-config",
-		"--mcp-config", mcpConfig,
 		"-p", prompt,
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)

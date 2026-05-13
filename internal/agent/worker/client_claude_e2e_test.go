@@ -91,11 +91,16 @@ func TestClaudeClient_Execute_EndToEnd_StubBinary(t *testing.T) {
 	manifest, err := readStubManifest(t, captureDir)
 	require.NoError(t, err, "stub captures never written — claude not invoked")
 
-	// Argv carries the strict-mcp-config shape.
+	// Argv carries the strict-mcp-config shape. The inline
+	// `--mcp-config <JSON>` flag was retired in sty_74e67353 work#3:
+	// the spawn-config is now materialised as <worktree>/.mcp.json
+	// (claude's documented project-level config path). The presence
+	// of that file is asserted further down.
 	argvJoined := joinArgs(manifest.Argv)
 	assert.Contains(t, argvJoined, "--permission-mode bypassPermissions")
 	assert.Contains(t, argvJoined, "--strict-mcp-config")
-	assert.Contains(t, argvJoined, "--mcp-config")
+	assert.NotContains(t, argvJoined, "--mcp-config",
+		"--mcp-config inline flag retired in sty_74e67353 work#3 — file-on-disk replaces it")
 	assert.Contains(t, argvJoined, "-p")
 
 	// HOME inherited from the operator's environment, untouched.
@@ -121,6 +126,17 @@ func TestClaudeClient_Execute_EndToEnd_StubBinary(t *testing.T) {
 	logPath := filepath.Join(expectedWorktree, ".satellites-agent.log")
 	_, err = os.Stat(logPath)
 	require.NoError(t, err, "subprocess log file missing")
+
+	// sty_74e67353 work#3: <worktree>/.mcp.json materialised before
+	// spawn, mode 0o600, referencing cfg.SpawnMCPURL + bearer header.
+	mcpPath := filepath.Join(expectedWorktree, ".mcp.json")
+	mcpStat, err := os.Stat(mcpPath)
+	require.NoError(t, err, "worktree .mcp.json missing")
+	assert.Equal(t, os.FileMode(0o600), mcpStat.Mode().Perm(), ".mcp.json mode must be 0o600 (contains bearer)")
+	mcpRaw, err := os.ReadFile(mcpPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(mcpRaw), cfg.SpawnMCPURL, ".mcp.json must reference SpawnMCPURL")
+	assert.Contains(t, string(mcpRaw), "Bearer tok-e2e", ".mcp.json must carry the bearer header")
 
 	// The dispatcher hit each /api/v1 route the prompt composer reads
 	// from + the evidence-row appender. agent + contract both flow
@@ -163,6 +179,169 @@ func TestClaudeClient_Execute_EndToEnd_StubBinary(t *testing.T) {
 	// Worktree must be left in place on success (forensic policy).
 	_, err = os.Stat(expectedWorktree)
 	assert.NoError(t, err, "worktree was removed on success — AC requires forensic preservation")
+}
+
+// TestSpawnConfig_FileWrittenIntoWorktree pins the L2 invariant:
+// before claude is launched, satellites-client writes the spawned
+// subprocess's MCP server config into <worktree>/.mcp.json (claude's
+// documented project-level config path). The on-disk file MUST:
+//
+//   - exist at <worktree>/.mcp.json
+//   - contain cfg.SpawnMCPURL and a Bearer header sourced from
+//     cfg.AuthToken
+//   - have mode 0o600 (it carries a secret)
+//
+// sty_74e67353 work#3 AC "L2 spawn config".
+func TestSpawnConfig_FileWrittenIntoWorktree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("stub claude is a posix shell script")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoRoot := initGitRepo(t)
+	stubPath, _ := writeStubClaude(t)
+	_, apiURL, apiClose := stubAPI(t, "task_spawn_cfg")
+	defer apiClose()
+
+	worktreeRoot := filepath.Join(t.TempDir(), "wt")
+	cfg := config.AgentConfig{
+		SpawnMCPURL:      "https://satellites-pprod.fly.dev/mcp?project_id=proj_x",
+		AuthToken:        "sat_spawn_test",
+		ExecuteTimeout:   30 * time.Second,
+		RepoPath:         repoRoot,
+		WorktreeRoot:     worktreeRoot,
+		BranchTemplate:   "agent-{task_id}-from-{base_sha}",
+		ClaudeBinaryPath: stubPath,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	api := cliremote.New(apiURL, "tok-spawn", nil)
+	outcome, err := worker.RunDispatched(ctx, cfg, nil, api, worker.TaskEnvelope{
+		ID: "task_spawn_cfg", WorkspaceID: "wksp_e", ProjectID: "proj_e",
+	}, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, worker.OutcomeSuccess, outcome)
+
+	mcpPath := filepath.Join(worktreeRoot, "task_spawn_cfg", ".mcp.json")
+	st, err := os.Stat(mcpPath)
+	require.NoError(t, err, "expected %s to exist", mcpPath)
+	assert.Equal(t, os.FileMode(0o600), st.Mode().Perm(),
+		".mcp.json mode must be 0o600 (it carries a bearer token)")
+
+	raw, err := os.ReadFile(mcpPath)
+	require.NoError(t, err)
+	var parsed struct {
+		MCPServers map[string]struct {
+			Type    string            `json:"type"`
+			URL     string            `json:"url"`
+			Headers map[string]string `json:"headers"`
+		} `json:"mcpServers"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &parsed))
+	require.Contains(t, parsed.MCPServers, "satellites")
+	srv := parsed.MCPServers["satellites"]
+	assert.Equal(t, "http", srv.Type)
+	assert.Equal(t, cfg.SpawnMCPURL, srv.URL)
+	assert.Equal(t, "Bearer sat_spawn_test", srv.Headers["Authorization"])
+	// strict-mcp-config must see ONLY the satellites server.
+	assert.Len(t, parsed.MCPServers, 1)
+}
+
+// TestSpawnConfig_OperatorHomeNotRead pins the isolation invariant
+// (pr_substrate_provides_context): the operator's
+// $HOME/.claude/settings.json must NOT flow into the dispatched
+// subprocess's MCP server list. The dispatcher achieves this by
+// (a) writing the only MCP config the subprocess should consult into
+// <worktree>/.mcp.json, and (b) passing --strict-mcp-config in the
+// argv so claude is forbidden from merging operator-side MCP config.
+//
+// The test plants a sentinel "OPERATOR_LEAK" MCP server in a temp
+// HOME's ~/.claude/settings.json, dispatches RunDispatched with that
+// HOME, and asserts:
+//
+//   - the spawned subprocess's argv carries --strict-mcp-config
+//   - the worktree-written .mcp.json does NOT mention OPERATOR_LEAK
+//
+// sty_74e67353 work#3 AC "L2 isolation test".
+func TestSpawnConfig_OperatorHomeNotRead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("stub claude is a posix shell script")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoRoot := initGitRepo(t)
+	stubPath, captureDir := writeStubClaude(t)
+	_, apiURL, apiClose := stubAPI(t, "task_isolation")
+	defer apiClose()
+
+	// Plant a sentinel OPERATOR_LEAK server in the operator's HOME.
+	// claude WOULD merge this into its MCP server list if it ever read
+	// $HOME/.claude/settings.json — --strict-mcp-config + the on-disk
+	// .mcp.json in the worktree forbid that path.
+	srcHome := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(srcHome, ".claude"), 0o755))
+	leakConfig := `{"mcpServers":{"OPERATOR_LEAK":{"type":"http","url":"http://operator-leak.invalid/mcp"}}}`
+	require.NoError(t, os.WriteFile(
+		filepath.Join(srcHome, ".claude", "settings.json"),
+		[]byte(leakConfig), 0o600,
+	))
+	require.NoError(t, os.Setenv("HOME", srcHome))
+	t.Cleanup(func() { _ = os.Unsetenv("HOME") })
+
+	worktreeRoot := filepath.Join(t.TempDir(), "wt")
+	cfg := config.AgentConfig{
+		SpawnMCPURL:      apiURL + "/mcp",
+		AuthToken:        "tok-isolation",
+		ExecuteTimeout:   30 * time.Second,
+		RepoPath:         repoRoot,
+		WorktreeRoot:     worktreeRoot,
+		BranchTemplate:   "agent-{task_id}-from-{base_sha}",
+		ClaudeBinaryPath: stubPath,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	api := cliremote.New(apiURL, "tok-isolation", nil)
+	outcome, err := worker.RunDispatched(ctx, cfg, nil, api, worker.TaskEnvelope{
+		ID: "task_isolation", WorkspaceID: "wksp_e", ProjectID: "proj_e",
+	}, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, worker.OutcomeSuccess, outcome)
+
+	manifest, err := readStubManifest(t, captureDir)
+	require.NoError(t, err, "stub captures never written")
+
+	// Argv MUST carry --strict-mcp-config; without it claude would
+	// merge $HOME/.claude/settings.json into the subprocess's MCP list.
+	argvJoined := joinArgs(manifest.Argv)
+	assert.Contains(t, argvJoined, "--strict-mcp-config",
+		"--strict-mcp-config gone — operator HOME could leak in via claude's settings.json merge")
+
+	// The MCP config the subprocess sees comes from the worktree file,
+	// NOT the operator's HOME. The worktree file is the only place
+	// the subprocess can resolve MCP servers from under
+	// --strict-mcp-config.
+	mcpPath := filepath.Join(worktreeRoot, "task_isolation", ".mcp.json")
+	raw, err := os.ReadFile(mcpPath)
+	require.NoError(t, err, "worktree .mcp.json missing")
+	assert.NotContains(t, string(raw), "OPERATOR_LEAK",
+		"operator HOME leaked into worktree .mcp.json — isolation broken")
+	assert.Contains(t, string(raw), apiURL,
+		"worktree .mcp.json must reference SpawnMCPURL")
+
+	// HOME inheritance is intentional (the existing e2e test asserts
+	// the operator's HOME flows through to the subprocess unmodified —
+	// satellites doesn't synthesise HOME). The point of this test is
+	// that the operator's HOME contents don't become MCP-server config.
+	assert.Equal(t, srcHome, manifest.HomeEnv,
+		"stub claude did not see operator HOME — satellites must not override the subprocess's HOME")
 }
 
 // initGitRepo creates a real git repo with an initial commit. Returns

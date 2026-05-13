@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -13,30 +14,37 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bobmcallan/satellites/internal/cliremote"
 	"github.com/bobmcallan/satellites/internal/config"
 )
 
 // Tests live in the worker package (not worker_test) because they
 // exercise unexported helpers — runHotPath, the per-contract runners,
 // requiredClosingFieldsMissing, etc.
+//
+// Per sty_74e67353 work#2: the hot-path runners route through
+// internal/cliremote.Client → POST /api/v1/<noun>/<verb>. The test
+// double is an httptest.NewServer serving those routes. The prior
+// MCP JSON-RPC stub (roundTripperFunc on cc.http.Transport) is gone.
 
-// hotpathStub composes a *claudeClient backed by mock callTool +
-// gitRunner channels suitable for asserting against the recorded
-// command stream + ledger row contents.
+// hotpathStub composes a *claudeClient backed by an httptest server
+// responding to /api/v1/<noun>/<verb> + a mock gitRunner suitable for
+// asserting against the recorded command stream + ledger row contents.
 type hotpathStub struct {
 	t          *testing.T
 	gitCmds    [][]string
 	gitOutputs map[string]string // joined args → stdout
 	gitErrors  map[string]error  // joined args → error
-	mcpCalls   []recordedMCPCall
-	mcpResp    map[string]string // tool name → response text
-	mcpErr     map[string]error  // tool name → error
+	apiCalls   []recordedAPICall
+	apiResp    map[string]string // path → response body (JSON)
 	mu         sync.Mutex
+	srv        *httptest.Server
 }
 
-type recordedMCPCall struct {
-	Tool string
-	Args map[string]any
+// recordedAPICall captures one POST /api/v1/<noun>/<verb> request.
+type recordedAPICall struct {
+	Path string
+	Body map[string]any
 }
 
 func newHotpathStub(t *testing.T) *hotpathStub {
@@ -44,8 +52,7 @@ func newHotpathStub(t *testing.T) *hotpathStub {
 		t:          t,
 		gitOutputs: map[string]string{},
 		gitErrors:  map[string]error{},
-		mcpResp:    map[string]string{},
-		mcpErr:     map[string]error{},
+		apiResp:    map[string]string{},
 	}
 }
 
@@ -61,58 +68,54 @@ func (s *hotpathStub) gitRunner(_ context.Context, dir string, args ...string) (
 	return []byte(s.gitOutputs[joined]), nil
 }
 
-// client builds a *claudeClient whose callTool http transport is
-// intercepted by an in-process http.RoundTripper. The roundtripper
-// records every JSON-RPC tools/call request and replies from the
-// stub's mcpResp / mcpErr tables.
+// setAPIResp registers the response body for a tool's /api/v1/<noun>/<verb>
+// path. toolName uses the `<noun>_<verb>` form (e.g. "task_walk").
+func (s *hotpathStub) setAPIResp(toolName, body string) {
+	s.apiResp["/api/v1"+cliremote.ToolNameToPath(toolName)] = body
+}
+
+// client builds a *claudeClient whose api field POSTs to an
+// httptest.NewServer serving /api/v1 shape responses. Each request is
+// recorded for assertion.
 func (s *hotpathStub) client(cfg config.AgentConfig) *claudeClient {
-	cc := newClaudeClient(cfg, nil)
-	cc.http.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		body, err := io.ReadAll(req.Body)
+	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
 		require.NoError(s.t, err)
-		var parsed struct {
-			Params struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments"`
-			} `json:"params"`
-			ID int64 `json:"id"`
-		}
-		require.NoError(s.t, json.Unmarshal(body, &parsed))
+		var parsed map[string]any
+		_ = json.Unmarshal(body, &parsed)
 		s.mu.Lock()
-		s.mcpCalls = append(s.mcpCalls, recordedMCPCall{
-			Tool: parsed.Params.Name,
-			Args: parsed.Params.Arguments,
+		s.apiCalls = append(s.apiCalls, recordedAPICall{
+			Path: r.URL.Path,
+			Body: parsed,
 		})
+		resp, ok := s.apiResp[r.URL.Path]
 		s.mu.Unlock()
-		if err := s.mcpErr[parsed.Params.Name]; err != nil {
-			return nil, err
+		w.Header().Set("Content-Type", "application/json")
+		if !ok {
+			// Default to empty-object so the substrate call returns
+			// nil-error; per-test apiResp entries supply realistic
+			// payloads where the runner reads them.
+			resp = "{}"
 		}
-		text := s.mcpResp[parsed.Params.Name]
-		respBody, _ := json.Marshal(map[string]any{
-			"jsonrpc": "2.0",
-			"id":      parsed.ID,
-			"result": map[string]any{
-				"content": []map[string]any{{"type": "text", "text": text}},
-			},
-		})
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader(string(respBody))),
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-		}, nil
-	})
+		_, _ = w.Write([]byte(resp))
+	}))
+	s.t.Cleanup(s.srv.Close)
+
+	cc := newClaudeClient(cfg, nil)
+	cc.api = cliremote.New(s.srv.URL, "tok", nil)
 	cc.gitRunner = s.gitRunner
 	return cc
 }
 
-// findMCPCall returns the first recorded call to the named tool, or
-// nil when absent.
-func (s *hotpathStub) findMCPCall(tool string) *recordedMCPCall {
+// findAPICall returns the first recorded call to the given /api/v1
+// path. toolName uses the `<noun>_<verb>` form.
+func (s *hotpathStub) findAPICall(toolName string) *recordedAPICall {
+	target := "/api/v1" + cliremote.ToolNameToPath(toolName)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i := range s.mcpCalls {
-		if s.mcpCalls[i].Tool == tool {
-			return &s.mcpCalls[i]
+	for i := range s.apiCalls {
+		if s.apiCalls[i].Path == target {
+			return &s.apiCalls[i]
 		}
 	}
 	return nil
@@ -125,7 +128,7 @@ func TestRunHotPath_DispatchesByContractName(t *testing.T) {
 	// Unknown contract → errHotUnimplemented sentinel so Execute
 	// falls back to the heavy path.
 	s := newHotpathStub(t)
-	cc := s.client(config.AgentConfig{SpawnMCPURL: "http://mock"})
+	cc := s.client(config.AgentConfig{})
 	outcome, err := cc.runHotPath(context.Background(),
 		TaskEnvelope{ID: "task_test"},
 		taskInfo{ID: "task_test", Action: "contract:bogus"},
@@ -139,10 +142,10 @@ func TestRunHotPath_DispatchesByContractName(t *testing.T) {
 }
 
 // TestRunPushHotPath_HappyPath drives the full push runner: trigger-
-// supplied branch wins, gitRunner records the four expected commands
+// supplied branch wins, gitRunner records the three expected commands
 // (log, push, ls-remote — branch resolution short-circuits via
 // trigger), and the ledger evidence row carries the shape-equivalent
-// tag set.
+// tag set on /api/v1/ledger/append.
 func TestRunPushHotPath_HappyPath(t *testing.T) {
 	s := newHotpathStub(t)
 	s.gitOutputs["log -1 --pretty=fuller agent-task_dev-from-833a28e"] =
@@ -151,10 +154,10 @@ func TestRunPushHotPath_HappyPath(t *testing.T) {
 		"To github.com:org/repo.git\n * [new branch]      agent-task_dev-from-833a28e -> agent-task_dev-from-833a28e\n"
 	s.gitOutputs["ls-remote origin agent-task_dev-from-833a28e"] =
 		"deadbeefcafe\trefs/heads/agent-task_dev-from-833a28e\n"
-	s.mcpResp["ledger_append"] = `{"id":"ldg_xxx"}`
-	s.mcpResp["task_update"] = `{"id":"task_push","status":"closed"}`
+	s.setAPIResp("ledger_append", `{"id":"ldg_xxx"}`)
+	s.setAPIResp("task_update", `{"task_id":"task_push","status":"closed","outcome":"success"}`)
 
-	cc := s.client(config.AgentConfig{SpawnMCPURL: "http://mock", RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
 
 	trigger, _ := json.Marshal(map[string]string{"branch": "agent-task_dev-from-833a28e"})
 	ti := taskInfo{
@@ -177,9 +180,9 @@ func TestRunPushHotPath_HappyPath(t *testing.T) {
 	assert.Equal(t, []string{"DIR=/repo", "ls-remote", "origin", "agent-task_dev-from-833a28e"}, s.gitCmds[2])
 
 	// Evidence row tags must match the heavy-path fixture shape.
-	led := s.findMCPCall("ledger_append")
-	require.NotNil(t, led, "ledger_append must be called")
-	tagsAny, _ := led.Args["tags"].([]any)
+	led := s.findAPICall("ledger_append")
+	require.NotNil(t, led, "ledger_append must be called via /api/v1/ledger/append")
+	tagsAny, _ := led.Body["tags"].([]any)
 	tags := make([]string, len(tagsAny))
 	for i, v := range tagsAny {
 		tags[i] = v.(string)
@@ -192,7 +195,7 @@ func TestRunPushHotPath_HappyPath(t *testing.T) {
 	assert.Contains(t, tags, "dispatch_class:hot")
 
 	// task_update issued at the end of the runner.
-	require.NotNil(t, s.findMCPCall("task_update"))
+	require.NotNil(t, s.findAPICall("task_update"))
 }
 
 // TestRunPushHotPath_InferBranchFromChain: with no trigger, the
@@ -208,17 +211,17 @@ func TestRunPushHotPath_InferBranchFromChain(t *testing.T) {
 		{ID: "task_push", Action: "contract:push", Kind: "work", Status: "claimed"},
 	}}
 	walkBytes, _ := json.Marshal(walk)
-	s.mcpResp["task_walk"] = string(walkBytes)
+	s.setAPIResp("task_walk", string(walkBytes))
 	s.gitOutputs["branch --list agent-task_dev_b-from-*"] = "  agent-task_dev_b-from-833a28e\n"
 	s.gitOutputs["log -1 --pretty=fuller agent-task_dev_b-from-833a28e"] = "commit feedface\n"
 	s.gitOutputs["push origin agent-task_dev_b-from-833a28e:agent-task_dev_b-from-833a28e"] =
 		"To origin\n * [new branch]      agent-task_dev_b-from-833a28e -> agent-task_dev_b-from-833a28e\n"
 	s.gitOutputs["ls-remote origin agent-task_dev_b-from-833a28e"] =
 		"feedface\trefs/heads/agent-task_dev_b-from-833a28e\n"
-	s.mcpResp["ledger_append"] = `{"id":"ldg_y"}`
-	s.mcpResp["task_update"] = `{}`
+	s.setAPIResp("ledger_append", `{"id":"ldg_y"}`)
+	s.setAPIResp("task_update", `{}`)
 
-	cc := s.client(config.AgentConfig{SpawnMCPURL: "http://mock", RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
 
 	ti := taskInfo{
 		ID: "task_push", StoryID: "sty_x", ProjectID: "proj_x",
@@ -252,7 +255,7 @@ func TestRunMergeToMainHotPath(t *testing.T) {
 		{ID: "task_merge", Action: "contract:merge_to_main", Kind: "work", Status: "claimed"},
 	}}
 	walkBytes, _ := json.Marshal(walk)
-	s.mcpResp["task_walk"] = string(walkBytes)
+	s.setAPIResp("task_walk", string(walkBytes))
 	s.gitOutputs["fetch origin --quiet"] = ""
 	s.gitOutputs["rev-parse main"] = "abc123\n"
 	s.gitOutputs["merge-base --is-ancestor main agent-task_dev-from-833a28e"] = ""
@@ -260,10 +263,10 @@ func TestRunMergeToMainHotPath(t *testing.T) {
 		"Updating abc123..deadbeef\nFast-forward\n internal/auth/middleware.go | 10 ++++++++++\n"
 	// Second rev-parse main returns the post-merge SHA.
 	s.gitOutputs["rev-parse main"] = "deadbeef\n"
-	s.mcpResp["ledger_append"] = `{"id":"ldg_m"}`
-	s.mcpResp["task_update"] = `{}`
+	s.setAPIResp("ledger_append", `{"id":"ldg_m"}`)
+	s.setAPIResp("task_update", `{}`)
 
-	cc := s.client(config.AgentConfig{SpawnMCPURL: "http://mock", RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
 
 	trigger, _ := json.Marshal(map[string]string{"branch": "agent-task_dev-from-833a28e"})
 	ti := taskInfo{
@@ -285,9 +288,9 @@ func TestRunMergeToMainHotPath(t *testing.T) {
 		assert.Equal(t, want, s.gitCmds[i][1], "git command #%d should be %q", i, want)
 	}
 
-	led := s.findMCPCall("ledger_append")
+	led := s.findAPICall("ledger_append")
 	require.NotNil(t, led)
-	tagsAny, _ := led.Args["tags"].([]any)
+	tagsAny, _ := led.Body["tags"].([]any)
 	tags := make([]string, len(tagsAny))
 	for i, v := range tagsAny {
 		tags[i] = v.(string)
@@ -306,7 +309,7 @@ func TestRunStoryCloseHotPath_RefusesEmptyRequiredFields(t *testing.T) {
 		{ID: "task_close", Action: "contract:story_close", Kind: "work", Status: "claimed"},
 	}}
 	walkBytes, _ := json.Marshal(walk)
-	s.mcpResp["task_walk"] = string(walkBytes)
+	s.setAPIResp("task_walk", string(walkBytes))
 
 	story := storyRaw{
 		Story: storyRawStory{
@@ -328,9 +331,9 @@ func TestRunStoryCloseHotPath_RefusesEmptyRequiredFields(t *testing.T) {
 		},
 	}
 	storyBytes, _ := json.Marshal(story)
-	s.mcpResp["story_get"] = string(storyBytes)
+	s.setAPIResp("story_get", string(storyBytes))
 
-	cc := s.client(config.AgentConfig{SpawnMCPURL: "http://mock", RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
 
 	ti := taskInfo{
 		ID: "task_close", StoryID: "sty_close", ProjectID: "proj_x",
@@ -355,7 +358,7 @@ func TestRunStoryCloseHotPath_HappyPath(t *testing.T) {
 		{ID: "task_close", Action: "contract:story_close", Kind: "work", Status: "claimed"},
 	}}
 	walkBytes, _ := json.Marshal(walk)
-	s.mcpResp["task_walk"] = string(walkBytes)
+	s.setAPIResp("task_walk", string(walkBytes))
 
 	story := storyRaw{
 		Story: storyRawStory{
@@ -388,11 +391,11 @@ func TestRunStoryCloseHotPath_HappyPath(t *testing.T) {
 		},
 	}
 	storyBytes, _ := json.Marshal(story)
-	s.mcpResp["story_get"] = string(storyBytes)
-	s.mcpResp["ledger_append"] = `{"id":"ldg_c"}`
-	s.mcpResp["task_update"] = `{}`
+	s.setAPIResp("story_get", string(storyBytes))
+	s.setAPIResp("ledger_append", `{"id":"ldg_c"}`)
+	s.setAPIResp("task_update", `{}`)
 
-	cc := s.client(config.AgentConfig{SpawnMCPURL: "http://mock", RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
 
 	trigger, _ := json.Marshal(map[string]string{"resolution": "delivered"})
 	ti := taskInfo{
@@ -405,9 +408,9 @@ func TestRunStoryCloseHotPath_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, OutcomeSuccess, outcome)
 
-	led := s.findMCPCall("ledger_append")
+	led := s.findAPICall("ledger_append")
 	require.NotNil(t, led)
-	tagsAny, _ := led.Args["tags"].([]any)
+	tagsAny, _ := led.Body["tags"].([]any)
 	tags := make([]string, len(tagsAny))
 	for i, v := range tagsAny {
 		tags[i] = v.(string)
@@ -415,7 +418,7 @@ func TestRunStoryCloseHotPath_HappyPath(t *testing.T) {
 	assert.Contains(t, tags, "phase:story_close")
 	assert.Contains(t, tags, "resolution:delivered")
 	assert.Contains(t, tags, "dispatch_class:hot")
-	content, _ := led.Args["content"].(string)
+	content, _ := led.Body["content"].(string)
 	assert.Contains(t, content, "internal/agent/worker/")
 	assert.Contains(t, content, "deadbeef")
 	assert.Contains(t, content, "Chain summary")
@@ -505,14 +508,53 @@ func TestResolveLocalBranch_AmbiguousFails(t *testing.T) {
 	s.gitOutputs["branch --list agent-task_dev-from-*"] =
 		"  agent-task_dev-from-aaaaaaa\n  agent-task_dev-from-bbbbbbb\n"
 
-	cc := s.client(config.AgentConfig{SpawnMCPURL: "http://mock", RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
 	_, err := cc.resolveLocalBranch(context.Background(), "task_dev")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "multiple matches")
 }
 
-// roundTripperFunc adapts a closure to http.RoundTripper for the
-// inline MCP stub.
-type roundTripperFunc func(req *http.Request) (*http.Response, error)
+// TestHotPath_RoutesThroughAPIv1 asserts that every substrate call the
+// hot runners make lands on /api/v1/<noun>/<verb> — no JSON-RPC
+// tools/call request reaches the stub server.
+func TestHotPath_RoutesThroughAPIv1(t *testing.T) {
+	s := newHotpathStub(t)
+	walk := taskWalkResponse{Tasks: []taskWalkTask{
+		{ID: "task_dev", Action: "contract:develop", Kind: "work", Status: "closed", Outcome: "success"},
+		{ID: "task_close", Action: "contract:story_close", Kind: "work", Status: "claimed"},
+	}}
+	walkBytes, _ := json.Marshal(walk)
+	s.setAPIResp("task_walk", string(walkBytes))
+	story := storyRaw{
+		Story: storyRawStory{
+			ID: "sty_v1", Title: "api-v1 routing", Status: "in_progress",
+			Fields: map[string]any{"scope": "x"},
+		},
+		Template: storyTemplate{
+			Category: "infrastructure",
+			Fields:   []storyTemplateField{{Name: "scope", Required: true}},
+		},
+	}
+	storyBytes, _ := json.Marshal(story)
+	s.setAPIResp("story_get", string(storyBytes))
+	s.setAPIResp("ledger_append", `{"id":"ldg_v1"}`)
+	s.setAPIResp("task_update", `{}`)
 
-func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
+
+	ti := taskInfo{
+		ID: "task_close", StoryID: "sty_v1", ProjectID: "proj_x",
+		Action: "contract:story_close",
+	}
+	_, _ = cc.runHotPath(context.Background(),
+		TaskEnvelope{ID: "task_close", ProjectID: "proj_x"},
+		ti, agentInfo{}, contractInfo{Name: "story_close"}, storyInfo{ID: "sty_v1"})
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	require.NotEmpty(t, s.apiCalls, "hot runner must issue at least one substrate call")
+	for _, call := range s.apiCalls {
+		assert.True(t, strings.HasPrefix(call.Path, "/api/v1/"),
+			"every substrate request must route through /api/v1; got %s", call.Path)
+	}
+}

@@ -29,6 +29,10 @@ import (
 	"strings"
 )
 
+// All substrate calls in this file route through c.api (the shared
+// /api/v1 HTTP client, internal/cliremote). The legacy MCP tools/call
+// transport was retired in sty_74e67353 work#2.
+
 // errHotUnimplemented is the sentinel runHotPath returns when no
 // in-process runner exists for the given contract. Execute callers
 // MUST fall back to the heavy claude subprocess path on this
@@ -75,21 +79,16 @@ type taskWalkResponse struct {
 	Tasks []taskWalkTask `json:"tasks"`
 }
 
-// fetchTaskWalk calls task_walk(story_id) and returns the chain.
+// fetchTaskWalk POSTs to /api/v1/task/walk and returns the chain. The
+// route returns the full TaskWalkOutput; this decode keeps only the
+// fields the hot runners read (Tasks).
 func (c *claudeClient) fetchTaskWalk(ctx context.Context, storyID string) (taskWalkResponse, error) {
 	if storyID == "" {
 		return taskWalkResponse{}, errors.New("task_walk: story_id empty")
 	}
-	text, err := c.callTool(ctx, "task_walk", map[string]any{"story_id": storyID})
-	if err != nil {
-		return taskWalkResponse{}, fmt.Errorf("task_walk: %w", err)
-	}
 	var tw taskWalkResponse
-	if text == "" {
-		return tw, nil
-	}
-	if err := json.Unmarshal([]byte(text), &tw); err != nil {
-		return tw, fmt.Errorf("task_walk decode: %w", err)
+	if err := c.api.Call(ctx, "task_walk", map[string]any{"story_id": storyID}, &tw); err != nil {
+		return taskWalkResponse{}, fmt.Errorf("task_walk: %w", err)
 	}
 	return tw, nil
 }
@@ -499,21 +498,19 @@ type storyHookCheck struct {
 	Field string `json:"field,omitempty"`
 }
 
-// fetchStoryRaw calls story_get and returns the full envelope.
+// fetchStoryRaw POSTs to /api/v1/story/get and returns the full
+// envelope. The route returns StoryGetOutput ({story, template,
+// project, ...}); the hot runner reads story.Fields + template.Hooks.
 func (c *claudeClient) fetchStoryRaw(ctx context.Context, id string) (storyRaw, error) {
 	if id == "" {
 		return storyRaw{}, errors.New("story_get: id empty")
 	}
-	text, err := c.callTool(ctx, "story_get", map[string]any{"id": id})
-	if err != nil {
-		return storyRaw{}, err
-	}
-	if text == "" {
-		return storyRaw{}, errors.New("story_get: empty response")
-	}
 	var sr storyRaw
-	if err := json.Unmarshal([]byte(text), &sr); err != nil {
-		return storyRaw{}, fmt.Errorf("story_get decode: %w", err)
+	if err := c.api.Call(ctx, "story_get", map[string]any{"id": id}, &sr); err != nil {
+		return storyRaw{}, fmt.Errorf("story_get: %w", err)
+	}
+	if sr.Story.ID == "" {
+		return storyRaw{}, errors.New("story_get: empty response")
 	}
 	return sr, nil
 }
@@ -673,9 +670,9 @@ func summariseSingleLine(s string) string {
 	return s
 }
 
-// appendEvidence is the shared callTool wrapper for ledger_append.
-// Threads through workspace/project/story when set; leaves them
-// off the args map when empty so the substrate's defaults apply.
+// appendEvidence POSTs to /api/v1/ledger/append. Threads through
+// project/story when set; leaves them off the args map when empty so
+// the substrate's defaults apply.
 func (c *claudeClient) appendEvidence(ctx context.Context, projectID, storyID string, tags []string, content string) error {
 	args := map[string]any{
 		"type":    "evidence",
@@ -688,17 +685,15 @@ func (c *claudeClient) appendEvidence(ctx context.Context, projectID, storyID st
 	if storyID != "" {
 		args["story_id"] = storyID
 	}
-	_, err := c.callTool(ctx, "ledger_append", args)
-	return err
+	return c.api.Call(ctx, "ledger_append", args, nil)
 }
 
-// closeTaskSuccess closes the task via task_update. Failure surfaces
-// as an error the caller wraps with phase context.
+// closeTaskSuccess closes the task via /api/v1/task/update. Failure
+// surfaces as an error the caller wraps with phase context.
 func (c *claudeClient) closeTaskSuccess(ctx context.Context, taskID string) error {
-	_, err := c.callTool(ctx, "task_update", map[string]any{
+	return c.api.Call(ctx, "task_update", map[string]any{
 		"id":      taskID,
 		"status":  "closed",
 		"outcome": "success",
-	})
-	return err
+	}, nil)
 }

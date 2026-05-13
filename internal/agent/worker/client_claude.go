@@ -24,13 +24,14 @@
 //  6. Map exit code → Outcome (success | failure | timeout).
 //  7. Leave the worktree in place on terminal outcome (forensic).
 //
-// Transport: the dispatcher's pre-spawn fetches (task / agent /
-// contract / story) and the post-spawn evidence row issue HTTP POSTs
-// to /api/v1/<noun>/<verb> via internal/cliremote.Client — the same
-// shared client.Client typed surface the MCP and HTTP transports both
-// delegate to (pr_mcp_cli_shared_path). The hot-path runners
-// (hotpath.go) retain the legacy MCP `tools/call` shape until
-// sty_74e67353 work#2 migrates them onto the same cliremote surface.
+// Transport: every substrate call this package issues — the
+// dispatcher's pre-spawn fetches (task / agent / contract / story),
+// the post-spawn evidence row, and the hot-path runners in
+// hotpath.go — POSTs to /api/v1/<noun>/<verb> via
+// internal/cliremote.Client. That client.Client typed surface is the
+// same one the MCP and HTTP transports both delegate to
+// (pr_mcp_cli_shared_path). sty_74e67353 work#2 retired the residual
+// MCP tools/call transport hotpath.go used to carry.
 
 package worker
 
@@ -40,13 +41,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
-	"time"
 
 	"github.com/bobmcallan/satellites/internal/cliremote"
 	"github.com/bobmcallan/satellites/internal/config"
@@ -56,27 +54,17 @@ import (
 // claudeClient drives the orchestrator-side dispatch flow: composing
 // the thin-pointer prompt, materialising the worktree, and spawning
 // the claude subprocess. The api field carries the shared /api/v1
-// HTTP client all pre-spawn fetches + appendExecuteEvidence route
-// through; the http + rpcID fields remain for the residual MCP
-// tools/call transport hotpath.go still uses (work#2 deletes them).
+// HTTP client all substrate calls — pre-spawn fetches,
+// appendExecuteEvidence, and the hot-path runners in hotpath.go —
+// route through.
 type claudeClient struct {
 	cfg    config.AgentConfig
 	logger arbor.ILogger
 
 	// api is the shared /api/v1 HTTP client (internal/cliremote). All
-	// pre-spawn substrate fetches + the kind:agent-execute-evidence
-	// row route through it. nil is a programmer error on the dispatch
-	// path; hotpath tests that construct claudeClient directly leave
-	// it nil because the hot runners do not call api.
+	// substrate calls in this package route through it. nil is a
+	// programmer error on the dispatch path.
 	api *cliremote.Client
-
-	// http + rpcID are the legacy MCP tools/call transport hotpath.go
-	// still depends on. work#2 (sty_74e67353) deletes both fields
-	// when it migrates the hot runners onto cliremote.
-	http *http.Client
-
-	// rpcID generates monotonic JSON-RPC request ids for callTool.
-	rpcID atomic.Int64
 
 	// gitRunner runs a git command in dir. Production uses exec.Command;
 	// tests inject a recorder.
@@ -92,21 +80,13 @@ type claudeClient struct {
 	stderrTee io.Writer
 }
 
-// newClaudeClient constructs the dispatcher. The legacy http client
-// powering hotpath.go's residual callTool transport is preserved
-// (work#2 retires it together with hotpath.go's MCP call sites). The
-// per-request timeout is derived from cfg.ExecuteTimeout/2 (the outer
-// worker contexts already enforce per-call timeouts; this is a
-// belt-and-braces transport-level cap).
+// newClaudeClient constructs the dispatcher. All substrate calls
+// route through the api field that the caller wires post-construction
+// (RunDispatched + tests).
 func newClaudeClient(cfg config.AgentConfig, logger arbor.ILogger) *claudeClient {
-	timeout := cfg.ExecuteTimeout / 2
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
 	return &claudeClient{
 		cfg:       cfg,
 		logger:    logger,
-		http:      &http.Client{Timeout: timeout},
 		gitRunner: runGit,
 	}
 }

@@ -133,12 +133,10 @@ func TestEnsureWorktree_CreatePath(t *testing.T) {
 
 	var cmds [][]string
 	c := &claudeClient{
-		placeholderClient: &placeholderClient{
-			cfg: config.AgentConfig{
-				RepoPath:       repo,
-				WorktreeRoot:   worktreeRoot,
-				BranchTemplate: "agent-{task_id}-from-{base_sha}",
-			},
+		cfg: config.AgentConfig{
+			RepoPath:       repo,
+			WorktreeRoot:   worktreeRoot,
+			BranchTemplate: "agent-{task_id}-from-{base_sha}",
 		},
 		gitRunner: func(ctx context.Context, dir string, args ...string) ([]byte, error) {
 			cmds = append(cmds, append([]string{"DIR=" + dir}, args...))
@@ -174,12 +172,10 @@ func TestEnsureWorktree_ReusePath(t *testing.T) {
 
 	gitCalled := false
 	c := &claudeClient{
-		placeholderClient: &placeholderClient{
-			cfg: config.AgentConfig{
-				RepoPath:       repo,
-				WorktreeRoot:   worktreeRoot,
-				BranchTemplate: "x-{task_id}-{base_sha}",
-			},
+		cfg: config.AgentConfig{
+			RepoPath:       repo,
+			WorktreeRoot:   worktreeRoot,
+			BranchTemplate: "x-{task_id}-{base_sha}",
 		},
 		gitRunner: func(ctx context.Context, dir string, args ...string) ([]byte, error) {
 			gitCalled = true
@@ -195,8 +191,8 @@ func TestEnsureWorktree_ReusePath(t *testing.T) {
 
 func TestEnsureWorktree_RepoPathEmpty_Errors(t *testing.T) {
 	c := &claudeClient{
-		placeholderClient: &placeholderClient{cfg: config.AgentConfig{}},
-		gitRunner:         func(ctx context.Context, dir string, args ...string) ([]byte, error) { return nil, nil },
+		cfg:       config.AgentConfig{},
+		gitRunner: func(ctx context.Context, dir string, args ...string) ([]byte, error) { return nil, nil },
 	}
 	_, _, err := c.ensureWorktree(context.Background(), TaskEnvelope{ID: "x"})
 	require.Error(t, err)

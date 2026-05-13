@@ -68,14 +68,12 @@ func TestClaudeClient_Execute_EndToEnd_StubBinary(t *testing.T) {
 		ClientConfigPath: "/operator/path/to/bin/satellites-client.toml",
 	}
 
-	client := worker.NewClaudeClient(cfg, nil)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	outcome, err := client.Execute(ctx, worker.TaskEnvelope{
+	outcome, err := worker.RunDispatched(ctx, cfg, nil, worker.TaskEnvelope{
 		ID: "task_test_e2e", WorkspaceID: "wksp_e", ProjectID: "proj_e",
-	})
+	}, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, worker.OutcomeSuccess, outcome)
 

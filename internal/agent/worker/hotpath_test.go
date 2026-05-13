@@ -61,15 +61,13 @@ func (s *hotpathStub) gitRunner(_ context.Context, dir string, args ...string) (
 	return []byte(s.gitOutputs[joined]), nil
 }
 
-// patchCallTool replaces (*claudeClient).callTool by overriding the
-// underlying http.Do. Easier: build a real httptest mcp stub.
-
-// We attach the stub to a *claudeClient via the placeholderClient's
-// http field. Lighter-weight: wrap the placeholderClient's http with
-// an in-process http.RoundTripper that records the request.
+// client builds a *claudeClient whose callTool http transport is
+// intercepted by an in-process http.RoundTripper. The roundtripper
+// records every JSON-RPC tools/call request and replies from the
+// stub's mcpResp / mcpErr tables.
 func (s *hotpathStub) client(cfg config.AgentConfig) *claudeClient {
-	pc := newPlaceholderClient(cfg, nil)
-	pc.http.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	cc := newClaudeClient(cfg, nil)
+	cc.http.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		body, err := io.ReadAll(req.Body)
 		require.NoError(s.t, err)
 		var parsed struct {
@@ -103,10 +101,7 @@ func (s *hotpathStub) client(cfg config.AgentConfig) *claudeClient {
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
 		}, nil
 	})
-	cc := &claudeClient{
-		placeholderClient: pc,
-		gitRunner:         s.gitRunner,
-	}
+	cc.gitRunner = s.gitRunner
 	return cc
 }
 

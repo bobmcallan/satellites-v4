@@ -1,8 +1,9 @@
-// claudeClient is the satellites-agent worker.Client that spawns a
-// real `claude` subprocess per claimed task — the production shape
-// for sty_a6250f92 (order:03). It composes *placeholderClient for
-// Claim / Close / Heartbeat / Shutdown delegation, and overrides
-// Execute with the worktree + subprocess flow.
+// claudeClient is the satellites-agent's dispatcher: it spawns a real
+// `claude` subprocess per task — the production shape for sty_a6250f92
+// (order:03). It is constructed only via RunDispatched
+// (sty_3e27a3f5) and is no longer a worker.Client implementation —
+// after sty_4db0e025 slice E1 the agent daemon's worker.Client surface
+// is satisfied solely by cliClient (the cli-primary transport, sty_9aa8c2c2).
 //
 // Step shape (per AC):
 //
@@ -22,27 +23,46 @@
 //  5. Capture an evidence ledger row tagged kind:agent-execute-evidence.
 //  6. Map exit code → Outcome (success | failure | timeout).
 //  7. Leave the worktree in place on terminal outcome (forensic).
+//
+// The dispatcher reads orchestrator-side metadata (task / agent /
+// contract / story) via the substrate's MCP tools/call surface — the
+// same JSON-RPC endpoint the dispatched claude subprocess itself uses
+// for substrate calls. The wire shape is the satellites server's /mcp
+// endpoint; the previous indirection through a separate placeholderClient
+// type was removed in sty_4db0e025 slice E1.
 
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/ternarybob/arbor"
 )
 
-// claudeClient overrides Execute on top of placeholderClient.
+// claudeClient drives the orchestrator-side dispatch flow: composing
+// the thin-pointer prompt, materialising the worktree, and spawning
+// the claude subprocess. callTool talks to the satellites server's MCP
+// endpoint (same wire as the dispatched subprocess).
 type claudeClient struct {
-	*placeholderClient
+	cfg    config.AgentConfig
+	logger arbor.ILogger
+	http   *http.Client
+
+	// rpcID generates monotonic JSON-RPC request ids for callTool.
+	rpcID atomic.Int64
 
 	// gitRunner runs a git command in dir. Production uses exec.Command;
 	// tests inject a recorder.
@@ -58,15 +78,20 @@ type claudeClient struct {
 	stderrTee io.Writer
 }
 
-// NewClaudeClient constructs a worker.Client whose Execute spawns a
-// real `claude --print` subprocess in a per-task git worktree. The
-// subprocess inherits the operator's environment unmodified — claude
-// is configured outside satellites-client. Claim / Close / Heartbeat /
-// Shutdown delegate to the placeholder client (same MCP transport).
-func NewClaudeClient(cfg config.AgentConfig, logger arbor.ILogger) Client {
+// newClaudeClient constructs the dispatcher bound to cfg.MCPURL. The
+// http client uses cfg.ExecuteTimeout/2 as its per-request bound (the
+// outer worker contexts already enforce per-call timeouts; this is a
+// belt-and-braces transport-level cap).
+func newClaudeClient(cfg config.AgentConfig, logger arbor.ILogger) *claudeClient {
+	timeout := cfg.ExecuteTimeout / 2
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
 	return &claudeClient{
-		placeholderClient: newPlaceholderClient(cfg, logger),
-		gitRunner:         runGit,
+		cfg:       cfg,
+		logger:    logger,
+		http:      &http.Client{Timeout: timeout},
+		gitRunner: runGit,
 	}
 }
 
@@ -76,23 +101,104 @@ func NewClaudeClient(cfg config.AgentConfig, logger arbor.ILogger) Client {
 // worktree log file. It is the orchestrator-invoked entry point used
 // by `satellites-client task run <task_id>` (sty_3e27a3f5).
 //
-// The daemon's NewClaudeClient + Loop / Claim / Execute / Close cycle
-// is unchanged — daemon callers never construct via RunDispatched and
-// the streaming tees default nil.
-//
 // The caller owns the task lifecycle: RunDispatched does NOT Claim
 // (the task_id is supplied directly) and does NOT Close (the
 // dispatched claude session writes its own task_update via the
 // substrate; the returned Outcome + exit-code-derived error let the
 // caller surface the result).
 func RunDispatched(ctx context.Context, cfg config.AgentConfig, logger arbor.ILogger, env TaskEnvelope, stdout, stderr io.Writer) (Outcome, error) {
-	c := &claudeClient{
-		placeholderClient: newPlaceholderClient(cfg, logger),
-		gitRunner:         runGit,
-		stdoutTee:         stdout,
-		stderrTee:         stderr,
-	}
+	c := newClaudeClient(cfg, logger)
+	c.stdoutTee = stdout
+	c.stderrTee = stderr
 	return c.Execute(ctx, env)
+}
+
+// jsonrpcReq is the wire shape sent to the MCP server.
+type jsonrpcReq struct {
+	JSONRPC string         `json:"jsonrpc"`
+	ID      int64          `json:"id"`
+	Method  string         `json:"method"`
+	Params  jsonrpcCallReq `json:"params"`
+}
+
+type jsonrpcCallReq struct {
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments"`
+}
+
+// jsonrpcResp is the wire shape parsed back. The MCP tools/call shape
+// returns a `result.content[].text` payload that callTool surfaces as
+// raw bytes for caller-specific decoding.
+type jsonrpcResp struct {
+	JSONRPC string         `json:"jsonrpc"`
+	ID      int64          `json:"id"`
+	Result  *jsonrpcResult `json:"result,omitempty"`
+	Error   *jsonrpcErr    `json:"error,omitempty"`
+}
+
+type jsonrpcResult struct {
+	Content []jsonrpcContent `json:"content"`
+	IsError bool             `json:"isError,omitempty"`
+}
+
+type jsonrpcContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type jsonrpcErr struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+// callTool issues an MCP tools/call request and returns the first
+// content text on success. A non-nil error covers transport, HTTP-
+// status, and JSON-RPC error envelopes. Used by Execute + the hot-path
+// runners to fetch orchestrator-side context (task / agent / contract /
+// story) and emit evidence + task_update rows.
+func (c *claudeClient) callTool(ctx context.Context, name string, args map[string]any) (string, error) {
+	id := c.rpcID.Add(1)
+	body, err := json.Marshal(jsonrpcReq{
+		JSONRPC: "2.0",
+		ID:      id,
+		Method:  "tools/call",
+		Params:  jsonrpcCallReq{Name: name, Arguments: args},
+	})
+	if err != nil {
+		return "", fmt.Errorf("callTool: marshal %s: %w", name, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.MCPURL, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("callTool: new request %s: %w", name, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if tok := c.cfg.AuthToken; tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("callTool: %s: %w", name, err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("callTool: read %s: %w", name, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("callTool: %s: status %d body %s", name, resp.StatusCode, string(raw))
+	}
+	var parsed jsonrpcResp
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return "", fmt.Errorf("callTool: decode %s: %w", name, err)
+	}
+	if parsed.Error != nil {
+		return "", fmt.Errorf("callTool: %s: rpc error %d: %s", name, parsed.Error.Code, parsed.Error.Message)
+	}
+	if parsed.Result == nil || len(parsed.Result.Content) == 0 {
+		return "", nil
+	}
+	return parsed.Result.Content[0].Text, nil
 }
 
 // taskInfo captures the subset of task_get response the orchestrator

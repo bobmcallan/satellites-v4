@@ -9,10 +9,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -23,51 +23,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mcpRecord is a single tools/call request the stub captured.
-type mcpRecord struct {
-	Tool string
-	Args map[string]any
+// cliRecord is a single satellites-client invocation the stub captured.
+// Tool is the inferred verb name (`<noun>_<verb>` form so legacy
+// assertions keyed off the MCP tool name still match) and Args is the
+// flag map decoded from argv. The stub writes one JSON line per call
+// to the recorder file the test reads back at assertion time.
+type cliRecord struct {
+	Tool string         `json:"tool"`
+	Args map[string]any `json:"args"`
 }
 
-// stubServers spins up an httptest MCP and WS pair, writes a
-// matching agent.toml into a temp dir, and returns the path. The
-// test cleanup tears everything down.
-func stubServers(t *testing.T) (cfgPath string, mcpCalls *[]mcpRecord, mu *sync.Mutex, wsConns *atomic.Int32) {
+// stubServers builds a stub satellites-client binary, spins up a WS
+// hub, writes a matching agent.toml, and returns the config path plus
+// a thunk that reads the recorded CLI calls. The test cleanup tears
+// everything down.
+func stubServers(t *testing.T) (cfgPath string, cliCalls func() []cliRecord, wsConns *atomic.Int32) {
 	t.Helper()
-	calls := make([]mcpRecord, 0, 8)
-	var lock sync.Mutex
 	wsCount := atomic.Int32{}
-
-	respondTaskClaim := atomic.Value{}
-	respondTaskClaim.Store("null") // empty queue by default
-
-	mcp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var req struct {
-			ID     int64 `json:"id"`
-			Params struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments"`
-			} `json:"params"`
-		}
-		_ = json.Unmarshal(body, &req)
-		lock.Lock()
-		calls = append(calls, mcpRecord{Tool: req.Params.Name, Args: req.Params.Arguments})
-		lock.Unlock()
-
-		text := ""
-		if req.Params.Name == "task_claim" {
-			text = respondTaskClaim.Load().(string)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"jsonrpc": "2.0",
-			"id":      req.ID,
-			"result": map[string]any{
-				"content": []map[string]any{{"type": "text", "text": text}},
-			},
-		})
-	}))
-	t.Cleanup(mcp.Close)
 
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	ws := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -92,11 +64,14 @@ func stubServers(t *testing.T) (cfgPath string, mcpCalls *[]mcpRecord, mu *sync.
 	wsURL.Path = "/ws"
 
 	tmp := t.TempDir()
+	recorderPath := filepath.Join(tmp, "cli-calls.jsonl")
+	stubPath := buildStubClient(t, tmp, recorderPath)
+
 	cfgPath = filepath.Join(tmp, "agent.toml")
 	body := []byte(`worker_id = "test-worker"
 workspace_ids = ["wksp_a"]
-mcp_url = "` + mcp.URL + `"
-transport = "mcp"
+mcp_url = "http://stub-unused"
+cli_binary_path = "` + stubPath + `"
 auth_token = "tok-test"
 idle_backoff = "20ms"
 heartbeat_interval = "1h"
@@ -109,11 +84,118 @@ ws_reconnect_min_backoff = "10ms"
 ws_reconnect_max_backoff = "50ms"
 `)
 	require.NoError(t, os.WriteFile(cfgPath, body, 0o600))
-	return cfgPath, &calls, &lock, &wsCount
+
+	readCalls := func() []cliRecord {
+		raw, err := os.ReadFile(recorderPath)
+		if err != nil {
+			return nil
+		}
+		var out []cliRecord
+		for _, line := range strings.Split(string(raw), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			var rec cliRecord
+			if err := json.Unmarshal([]byte(line), &rec); err == nil {
+				out = append(out, rec)
+			}
+		}
+		return out
+	}
+
+	return cfgPath, readCalls, &wsCount
+}
+
+// buildStubClient compiles a tiny Go program that mimics
+// satellites-client for the agent daemon's view. It writes one
+// jsonl record per invocation into recorderPath, then emits an empty
+// envelope on stdout so cliClient sees "no task / no error". Tests
+// scan the jsonl file to assert which verbs the daemon shelled.
+func buildStubClient(t *testing.T, dir, recorderPath string) string {
+	t.Helper()
+	src := filepath.Join(dir, "stubclient.go")
+	stubSrc := `package main
+
+import (
+	"encoding/json"
+	"os"
+	"strings"
+)
+
+// rec is the per-invocation record shape main_test.go scans.
+type rec struct {
+	Tool string                 ` + "`json:\"tool\"`" + `
+	Args map[string]interface{} ` + "`json:\"args\"`" + `
+}
+
+func main() {
+	argv := os.Args[1:]
+	noun := ""
+	verb := ""
+	args := map[string]interface{}{}
+	// strip global flags --server / --token / --json (taking the value
+	// for --server / --token); the remaining positionals are
+	// <noun> <verb> followed by --flag value pairs.
+	i := 0
+	for i < len(argv) {
+		a := argv[i]
+		switch a {
+		case "--server", "--token":
+			i += 2
+			continue
+		case "--json":
+			i += 1
+			continue
+		}
+		if !strings.HasPrefix(a, "--") {
+			if noun == "" {
+				noun = a
+			} else if verb == "" {
+				verb = a
+			}
+			i++
+			continue
+		}
+		key := strings.TrimPrefix(a, "--")
+		key = strings.ReplaceAll(key, "-", "_")
+		val := ""
+		if i+1 < len(argv) && !strings.HasPrefix(argv[i+1], "--") {
+			val = argv[i+1]
+			i += 2
+		} else {
+			val = "true"
+			i++
+		}
+		args[key] = val
+	}
+	tool := noun + "_" + verb
+	r := rec{Tool: tool, Args: args}
+	body, _ := json.Marshal(r)
+	f, err := os.OpenFile(` + "`" + recorderPath + "`" + `, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err == nil {
+		_, _ = f.Write(body)
+		_, _ = f.Write([]byte("\n"))
+		_ = f.Close()
+	}
+	// emit an empty envelope on stdout (task claim "null", others "{}")
+	if tool == "task_claim" {
+		os.Stdout.WriteString("null")
+	} else {
+		os.Stdout.WriteString("{}")
+	}
+}
+`
+	require.NoError(t, os.WriteFile(src, []byte(stubSrc), 0o644))
+	bin := filepath.Join(dir, "stubclient")
+	build := exec.Command("go", "build", "-o", bin, src)
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, "build stub: %s", out)
+	return bin
 }
 
 func TestMain_Run_BootShutdown_ContextCancel(t *testing.T) {
-	cfgPath, calls, mu, wsCount := stubServers(t)
+	cfgPath, cliCalls, wsCount := stubServers(t)
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -127,10 +209,8 @@ func TestMain_Run_BootShutdown_ContextCancel(t *testing.T) {
 	}()
 
 	require.Eventually(t, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return len(*calls) > 0 && wsCount.Load() > 0
-	}, 3*time.Second, 20*time.Millisecond, "agent never called MCP or WS")
+		return len(cliCalls()) > 0 && wsCount.Load() > 0
+	}, 3*time.Second, 20*time.Millisecond, "agent never shelled satellites-client or attached to WS")
 
 	cancel()
 	select {
@@ -140,25 +220,21 @@ func TestMain_Run_BootShutdown_ContextCancel(t *testing.T) {
 		t.Fatalf("run did not exit within 3s after cancel; stderr=%q", stderr.String())
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
 	sawShutdown := false
-	for _, c := range *calls {
+	for _, c := range cliCalls() {
 		if c.Tool != "ledger_append" {
 			continue
 		}
-		tags, _ := c.Args["tags"].([]any)
-		for _, tag := range tags {
-			if s, _ := tag.(string); strings.Contains(s, "worker-shutdown") {
-				sawShutdown = true
-			}
+		tags, _ := c.Args["tags"].(string)
+		if strings.Contains(tags, "worker-shutdown") {
+			sawShutdown = true
 		}
 	}
 	assert.True(t, sawShutdown, "expected one ledger_append with kind:worker-shutdown after graceful exit")
 }
 
 func TestMain_Run_BootShutdown_SIGINT(t *testing.T) {
-	cfgPath, _, _, _ := stubServers(t)
+	cfgPath, _, _ := stubServers(t)
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -188,24 +264,13 @@ func TestMain_Run_BootShutdown_SIGINT(t *testing.T) {
 }
 
 func TestMain_Run_NoHubURL_PollingFallback(t *testing.T) {
-	mcp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var req struct {
-			ID int64 `json:"id"`
-		}
-		_ = json.Unmarshal(body, &req)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"jsonrpc": "2.0", "id": req.ID,
-			"result": map[string]any{"content": []map[string]any{{"type": "text", "text": "null"}}},
-		})
-	}))
-	defer mcp.Close()
-
 	tmp := t.TempDir()
+	stubPath := buildStubClient(t, tmp, filepath.Join(tmp, "cli-calls.jsonl"))
+
 	cfgPath := filepath.Join(tmp, "agent.toml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(`worker_id = "p"
-mcp_url = "`+mcp.URL+`"
-transport = "mcp"
+mcp_url = "http://stub-unused"
+cli_binary_path = "`+stubPath+`"
 hub_url = ""
 idle_backoff = "20ms"
 heartbeat_interval = "1h"
@@ -238,24 +303,13 @@ func TestMain_Run_ConfigFlagMissing_ReturnsErr(t *testing.T) {
 // the runtime. Captures os.Stdout for the lifetime of the run() call
 // — the arbor logger writes there directly (internal/arbor/logger.go).
 func TestRun_StartupLogReflectsLoadedConfig(t *testing.T) {
-	mcp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var req struct {
-			ID int64 `json:"id"`
-		}
-		_ = json.Unmarshal(body, &req)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"jsonrpc": "2.0", "id": req.ID,
-			"result": map[string]any{"content": []map[string]any{{"type": "text", "text": "null"}}},
-		})
-	}))
-	defer mcp.Close()
-
 	tmp := t.TempDir()
+	stubPath := buildStubClient(t, tmp, filepath.Join(tmp, "cli-calls.jsonl"))
+
 	cfgPath := filepath.Join(tmp, "agent.toml")
 	body := []byte(`worker_id = "smoke-startup-log"
-mcp_url = "` + mcp.URL + `"
-transport = "mcp"
+mcp_url = "http://stub-unused"
+cli_binary_path = "` + stubPath + `"
 hub_url = ""
 idle_backoff = "20ms"
 heartbeat_interval = "1h"
@@ -324,25 +378,13 @@ claude_binary_path = "/opt/claude/bin/claude"
 // receives the startup log line. Console writer continues to fire
 // (verified via fd 2 capture analogous to the prior test).
 func TestRun_LogPath_WritesFile(t *testing.T) {
-	mcp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var req struct {
-			ID int64 `json:"id"`
-		}
-		_ = json.Unmarshal(body, &req)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"jsonrpc": "2.0", "id": req.ID,
-			"result": map[string]any{"content": []map[string]any{{"type": "text", "text": "null"}}},
-		})
-	}))
-	defer mcp.Close()
-
 	tmp := t.TempDir()
+	stubPath := buildStubClient(t, tmp, filepath.Join(tmp, "cli-calls.jsonl"))
 	logDir := filepath.Join(tmp, "agent-logs")
 	cfgPath := filepath.Join(tmp, "agent.toml")
 	body := []byte(`worker_id = "smoke-logpath"
-mcp_url = "` + mcp.URL + `"
-transport = "mcp"
+mcp_url = "http://stub-unused"
+cli_binary_path = "` + stubPath + `"
 hub_url = ""
 idle_backoff = "20ms"
 heartbeat_interval = "1h"

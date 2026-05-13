@@ -2,10 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,10 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLifecycle_StartStatusStop_E2E builds the binary, starts it
-// against a stub MCP server, observes status=running, then stops it
-// and observes status=stopped. This is the AC's "start, status, stop
-// lifecycle" integration test.
+// TestLifecycle_StartStatusStop_E2E builds the binary, starts it with
+// a stub satellites-client on PATH (the agent daemon's cli transport),
+// observes status=running, then stops it and observes status=stopped.
+// This is the AC's "start, status, stop lifecycle" integration test.
 func TestLifecycle_StartStatusStop_E2E(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("setsid + signals are POSIX-shaped")
@@ -39,24 +35,14 @@ func TestLifecycle_StartStatusStop_E2E(t *testing.T) {
 	out, err := build.CombinedOutput()
 	require.NoError(t, err, "go build failed: %s", out)
 
-	// Stub MCP that returns null for every tools/call (empty queue).
-	mcp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var req struct {
-			ID int64 `json:"id"`
-		}
-		_ = json.Unmarshal(body, &req)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"jsonrpc": "2.0", "id": req.ID,
-			"result": map[string]any{"content": []map[string]any{{"type": "text", "text": "null"}}},
-		})
-	}))
-	defer mcp.Close()
+	// Stub satellites-client that records each invocation and emits
+	// an empty envelope on stdout. Shared with main_test.go.
+	stubPath := buildStubClient(t, dir, filepath.Join(dir, "cli-calls.jsonl"))
 
 	cfgPath := filepath.Join(dir, "agent.toml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(`worker_id = "lifecycle-e2e"
-mcp_url = "`+mcp.URL+`"
-transport = "mcp"
+mcp_url = "http://stub-unused"
+cli_binary_path = "`+stubPath+`"
 hub_url = ""
 idle_backoff = "1s"
 heartbeat_interval = "1h"

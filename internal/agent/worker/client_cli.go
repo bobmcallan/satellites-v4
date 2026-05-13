@@ -5,9 +5,10 @@
 // ledger_append, task_update) reach the substrate via the CLI's
 // auto-JSON-when-piped output instead of an in-process HTTP client.
 //
-// The MCP placeholderClient remains as the rollback escape gated on
-// AgentConfig.Transport == "mcp"; order:07 (sty_3dc39a5c) deletes
-// both the flag and the MCP path.
+// Post sty_4db0e025 slice E1 cliClient is the agent daemon's sole
+// Client implementation — the legacy MCP-rooted transport + the
+// `transport` config knob's "mcp" enum value were retired together
+// with the placeholderClient shim.
 
 package worker
 
@@ -161,11 +162,10 @@ func (c *cliClient) Heartbeat(ctx context.Context, workerID, taskID, workspaceID
 		"--tags", "kind:worker-heartbeat,task_id:" + taskID + ",worker_id:" + workerID,
 		"--content", content,
 	}
-	// project_id is omitted to mirror placeholderClient.Heartbeat's
-	// behaviour pre-cutover; the CLI verb may reject the call when
-	// project_id is required and missing. The wire-shape parity is
-	// the principled stance — order:07's cleanup will adjust both
-	// transports together.
+	// project_id is omitted — the CLI verb may reject the call when
+	// project_id is required and missing; tracked as a follow-up
+	// (sty_4db0e025 slice E1 retired the parallel MCP transport that
+	// previously enforced the same omission).
 	_, err := c.runCLI(ctx, argv)
 	return err
 }

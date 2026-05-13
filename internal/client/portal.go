@@ -38,12 +38,12 @@ import (
 // JSON form is set, this method unmarshals it before substrate work.
 // Sty_4db0e025 slice A8.
 type PortalReplicateInput struct {
-	StoryID      string
-	TargetURL    string
-	Actions      []portalreplicate.Action
-	Cookies      []portalreplicate.Cookie
-	ActionsJSON  string
-	CookiesJSON  string
+	StoryID     string
+	TargetURL   string
+	Actions     []portalreplicate.Action
+	Cookies     []portalreplicate.Cookie
+	ActionsJSON string
+	CookiesJSON string
 	// Now overrides the per-row ledger timestamp; zero falls back to
 	// time.Now().UTC(). Tests inject a fixture time for determinism.
 	Now time.Time

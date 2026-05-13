@@ -97,11 +97,11 @@ func registerLedgerNoun(root *cobra.Command) {
 func registerProjectNoun(root *cobra.Command) {
 	noun := nounStub("project", "Projects — top-level work surface.")
 	noun.AddCommand(
-		newProjectAddCmd(),    // sty_f38bd573 + sty_4db0e025 C9 (create→add rename)
-		newProjectGetCmd(),    // sty_ef248ab2
-		newProjectListCmd(),   // sty_ef248ab2
-		newProjectUpdateCmd(), // sty_f38bd573
-		newProjectDeleteCmd(), // sty_f38bd573
+		newProjectAddCmd(),     // sty_f38bd573 + sty_4db0e025 C9 (create→add rename)
+		newProjectGetCmd(),     // sty_ef248ab2
+		newProjectListCmd(),    // sty_ef248ab2
+		newProjectUpdateCmd(),  // sty_f38bd573
+		newProjectDeleteCmd(),  // sty_f38bd573
 		newProjectSetCmd(),     // order:05
 		newProjectSeedRunCmd(), // sty_0b419d98
 	)
@@ -152,12 +152,12 @@ func registerRepoNoun(root *cobra.Command) {
 func registerAgentNoun(root *cobra.Command) {
 	noun := nounStub("agent", "Agents — typed roles.")
 	noun.AddCommand(
-		newAgentAddCmd(), // sty_4db0e025 (was newAgentCreateCmd)
-		newAgentGetCmd(),    // order:04
-		newAgentListCmd(),   // sty_ef248ab2
-		newAgentUpdateCmd(), // sty_f38bd573
-		newAgentDeleteCmd(), // sty_f38bd573
-		newAgentSearchCmd(), // sty_ef248ab2
+		newAgentAddCmd(),              // sty_4db0e025 (was newAgentCreateCmd)
+		newAgentGetCmd(),              // order:04
+		newAgentListCmd(),             // sty_ef248ab2
+		newAgentUpdateCmd(),           // sty_f38bd573
+		newAgentDeleteCmd(),           // sty_f38bd573
+		newAgentSearchCmd(),           // sty_ef248ab2
 		newAgentComposeCmd(),          // sty_0b419d98
 		newAgentEphemeralSummaryCmd(), // sty_ef248ab2
 		newAgentAPIKeyCreateCmd(),     // sty_0b419d98
@@ -170,7 +170,7 @@ func registerAgentNoun(root *cobra.Command) {
 func registerContractNoun(root *cobra.Command) {
 	noun := nounStub("contract", "Contracts — lifecycle phase rubrics.")
 	noun.AddCommand(
-		newContractAddCmd(), // sty_4db0e025 (was newContractCreateCmd)
+		newContractAddCmd(),    // sty_4db0e025 (was newContractCreateCmd)
 		newContractGetCmd(),    // order:04
 		newContractListCmd(),   // sty_ef248ab2
 		newContractUpdateCmd(), // sty_f38bd573
@@ -183,7 +183,7 @@ func registerContractNoun(root *cobra.Command) {
 func registerPrincipleNoun(root *cobra.Command) {
 	noun := nounStub("principle", "Principles — workspace + project policy.")
 	noun.AddCommand(
-		newPrincipleAddCmd(), // sty_4db0e025 (was newPrincipleCreateCmd)
+		newPrincipleAddCmd(),    // sty_4db0e025 (was newPrincipleCreateCmd)
 		newPrincipleGetCmd(),    // sty_ef248ab2
 		newPrincipleListCmd(),   // order:04
 		newPrincipleUpdateCmd(), // sty_f38bd573
@@ -196,11 +196,11 @@ func registerPrincipleNoun(root *cobra.Command) {
 func registerDocumentNoun(root *cobra.Command) {
 	noun := nounStub("document", "Documents — generic typed markdown.")
 	noun.AddCommand(
-		newDocumentAddCmd(), // sty_4db0e025
-		newDocumentGetCmd(),    // sty_004f3d3a
-		newDocumentListCmd(),   // sty_004f3d3a
-		newDocumentUpdateCmd(), // sty_f38bd573
-		newDocumentDeleteCmd(), // sty_f38bd573
+		newDocumentAddCmd(),        // sty_4db0e025
+		newDocumentGetCmd(),        // sty_004f3d3a
+		newDocumentListCmd(),       // sty_004f3d3a
+		newDocumentUpdateCmd(),     // sty_f38bd573
+		newDocumentDeleteCmd(),     // sty_f38bd573
 		newDocumentSearchCmd(),     // sty_ef248ab2
 		newDocumentIngestFileCmd(), // sty_0b419d98
 	)
@@ -210,7 +210,7 @@ func registerDocumentNoun(root *cobra.Command) {
 func registerReviewerNoun(root *cobra.Command) {
 	noun := nounStub("reviewer", "Reviewers — judgment-shape agent identities.")
 	noun.AddCommand(
-		newReviewerAddCmd(), // sty_4db0e025 (was newReviewerCreateCmd)
+		newReviewerAddCmd(),    // sty_4db0e025 (was newReviewerCreateCmd)
 		newReviewerGetCmd(),    // sty_004f3d3a
 		newReviewerListCmd(),   // sty_004f3d3a
 		newReviewerUpdateCmd(), // sty_f38bd573
@@ -223,7 +223,7 @@ func registerReviewerNoun(root *cobra.Command) {
 func registerRoleNoun(root *cobra.Command) {
 	noun := nounStub("role", "Roles — workspace permission grants.")
 	noun.AddCommand(
-		newRoleAddCmd(), // sty_4db0e025 (was newRoleCreateCmd)
+		newRoleAddCmd(),    // sty_4db0e025 (was newRoleCreateCmd)
 		newRoleGetCmd(),    // sty_004f3d3a
 		newRoleListCmd(),   // sty_004f3d3a
 		newRoleUpdateCmd(), // sty_f38bd573
@@ -236,7 +236,7 @@ func registerRoleNoun(root *cobra.Command) {
 func registerSkillNoun(root *cobra.Command) {
 	noun := nounStub("skill", "Skills — agent capability bundles.")
 	noun.AddCommand(
-		newSkillAddCmd(), // sty_4db0e025 (was newSkillCreateCmd)
+		newSkillAddCmd(),    // sty_4db0e025 (was newSkillCreateCmd)
 		newSkillGetCmd(),    // sty_004f3d3a
 		newSkillListCmd(),   // sty_004f3d3a
 		newSkillUpdateCmd(), // sty_f38bd573

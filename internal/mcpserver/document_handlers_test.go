@@ -26,7 +26,7 @@ func newDocumentTestServer(t *testing.T) *Server {
 	docStore := document.NewMemoryStore()
 	return New(cfg, satarbor.New("info"), time.Now(), Deps{
 		Client: client.Deps{
-			Documents:       docStore,
+			Documents:  docStore,
 			Workspaces: wsStore,
 		},
 	})

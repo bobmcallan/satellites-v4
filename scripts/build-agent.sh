@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# Builds satellites-agent into ./bin/satellites-agent. Thin wrapper
-# over `scripts/build.sh agent` (which already stamps ldflags from the
-# [satellites-agent] section of .version with -trimpath enabled). The
-# wrapper exists because build.sh writes the binary to repo root; the
-# operator-facing convention from sty_ccb35588 is that the agent
-# binary lives at ./bin/satellites-agent.
+# Builds satellites-agent and installs it to $SATELLITES_INSTALL_DIR
+# (default $HOME/.satellites/bin). Dev + operator workflows converge
+# on the same install location; the ./bin carve-out from
+# sty_ccb35588 is gone. See sty_64e69db8 for the alignment story.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 bash scripts/build.sh agent
 
-mkdir -p bin
-mv -f satellites-agent bin/satellites-agent
-echo "built: bin/satellites-agent"
+INSTALL_DIR="${SATELLITES_INSTALL_DIR:-$HOME/.satellites/bin}"
+mkdir -p "$INSTALL_DIR"
+mv -f satellites-agent "$INSTALL_DIR/satellites-agent"
+echo "built: $INSTALL_DIR/satellites-agent"

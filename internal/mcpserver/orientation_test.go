@@ -46,13 +46,13 @@ func newOrientationFixture(t *testing.T) (*Server, project.Project, string) {
 	led := ledger.NewMemoryStore()
 	s := New(cfg, satarbor.New("info"), time.Now(), Deps{
 		Client: client.Deps{
-			Documents:       docs,
+			Documents:  docs,
 			Projects:   project.NewMemoryStore(),
 			Repos:      repo.NewMemoryStore(),
 			Sessions:   session.NewMemoryStore(),
 			Workspaces: workspace.NewMemoryStore(),
-			Ledger:    led,
-			Stories:     story.NewMemoryStore(led),
+			Ledger:     led,
+			Stories:    story.NewMemoryStore(led),
 		},
 	})
 	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice", Source: "session"})

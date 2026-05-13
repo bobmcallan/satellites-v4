@@ -58,7 +58,7 @@ func newRepoFixture(t *testing.T) *repoFixture {
 
 	server := New(cfg, satarbor.New("info"), now, Deps{
 		Client: client.Deps{
-			Ledger:    ledStore,
+			Ledger:     ledStore,
 			Projects:   projStore,
 			Workspaces: wsStore,
 			Repos:      repoStore,

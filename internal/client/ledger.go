@@ -106,17 +106,17 @@ type LedgerListInput struct {
 // directly so it never names ledger.ListOptions in source
 // (sty_4db0e025 slice A11).
 type LedgerListArgs struct {
-	ResolvedProjectID    string
-	Memberships          []string
-	Type                 string
-	StoryID              string
-	Tags                 []string
-	Durability           string
-	SourceType           string
-	Status               string
-	IncludeDereferenced  bool
-	Limit                int
-	Sensitive            *bool
+	ResolvedProjectID   string
+	Memberships         []string
+	Type                string
+	StoryID             string
+	Tags                []string
+	Durability          string
+	SourceType          string
+	Status              string
+	IncludeDereferenced bool
+	Limit               int
+	Sensitive           *bool
 }
 
 // LedgerListByArgs is the wire-friendly equivalent of LedgerList.
@@ -132,19 +132,19 @@ func (c *Client) LedgerListByArgs(ctx context.Context, caller Caller, in LedgerL
 // in a wire-friendly flat shape so the MCP transport never references
 // ledger.SearchOptions in source.
 type LedgerSearchArgs struct {
-	ResolvedProjectID    string
-	Memberships          []string
-	Query                string
-	TopK                 int
-	Type                 string
-	StoryID              string
-	Tags                 []string
-	Durability           string
-	SourceType           string
-	Status               string
-	IncludeDereferenced  bool
-	Limit                int
-	Sensitive            *bool
+	ResolvedProjectID   string
+	Memberships         []string
+	Query               string
+	TopK                int
+	Type                string
+	StoryID             string
+	Tags                []string
+	Durability          string
+	SourceType          string
+	Status              string
+	IncludeDereferenced bool
+	Limit               int
+	Sensitive           *bool
 }
 
 // LedgerSearchByArgs is the wire-friendly equivalent of LedgerSearch.

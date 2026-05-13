@@ -93,9 +93,9 @@ func TestProjectMCPRoundTrip(t *testing.T) {
 	result, _ := list["result"].(map[string]any)
 	tools, _ := result["tools"].([]any)
 	need := map[string]bool{
-		"project_add": false,
-		"project_get":    false,
-		"project_list":   false,
+		"project_add":  false,
+		"project_get":  false,
+		"project_list": false,
 	}
 	for _, raw := range tools {
 		if tool, ok := raw.(map[string]any); ok {

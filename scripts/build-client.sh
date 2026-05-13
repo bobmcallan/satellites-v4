@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# Builds satellites-client into ./bin/satellites-client. Thin wrapper
-# over `scripts/build.sh client` (which stamps ldflags from the
-# [satellites-client] section of .version). The wrapper exists
-# because build.sh writes the binary to repo root; the operator-
-# facing convention from cli-primary order:03 (sty_bfd1dd92) is that
-# operator binaries live at ./bin/<name> alongside ./bin/satellites-agent.
+# Builds satellites-client and installs it to $SATELLITES_INSTALL_DIR
+# (default $HOME/.satellites/bin). Dev + operator workflows converge
+# on the same install location; the ./bin carve-out from
+# sty_bfd1dd92 is gone. See sty_64e69db8 for the alignment story.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 bash scripts/build.sh client
 
-mkdir -p bin
-mv -f satellites-client bin/satellites-client
-echo "built: bin/satellites-client"
+INSTALL_DIR="${SATELLITES_INSTALL_DIR:-$HOME/.satellites/bin}"
+mkdir -p "$INSTALL_DIR"
+mv -f satellites-client "$INSTALL_DIR/satellites-client"
+echo "built: $INSTALL_DIR/satellites-client"

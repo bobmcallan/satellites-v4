@@ -52,10 +52,10 @@ func newProjectSeedFixture(t *testing.T) (*Server, string, string) {
 
 	server := New(cfg, satarbor.New("info"), now, Deps{
 		Client: client.Deps{
-			Documents:       docs,
+			Documents:  docs,
 			Projects:   projects,
-			Ledger:    led,
-			Stories:     stories,
+			Ledger:     led,
+			Stories:    stories,
 			Workspaces: ws,
 			Sessions:   sessions,
 		},

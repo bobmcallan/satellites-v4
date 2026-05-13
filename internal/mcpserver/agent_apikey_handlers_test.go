@@ -35,12 +35,12 @@ func newAPIKeyTestServer(t *testing.T) *Server {
 	keyStore := auth.NewMemoryAgentAPIKeyStore()
 	return New(cfg, satarbor.New("info"), now, Deps{
 		Client: client.Deps{
-			Ledger:    led,
+			Ledger:     led,
 			Workspaces: wss,
 			Projects:   projects,
 			APIKeys:    keyStore,
 		},
-		NowFunc:        func() time.Time { return now },
+		NowFunc: func() time.Time { return now },
 	})
 }
 

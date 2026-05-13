@@ -65,10 +65,10 @@ func newImpersonationFixture(t *testing.T, callerGlobalAdmin bool) *impersonatio
 
 	server := New(cfg, satarbor.New("info"), now, Deps{
 		Client: client.Deps{
-			Documents:       docStore,
+			Documents:  docStore,
 			Projects:   projStore,
-			Ledger:    ledStore,
-			Stories:     storyStore,
+			Ledger:     ledStore,
+			Stories:    storyStore,
 			Workspaces: wsStore,
 			Sessions:   sessionStore,
 		},

@@ -33,13 +33,13 @@ func newChangelogTestServer(t *testing.T) *Server {
 	cl := changelog.NewMemoryStore()
 	return New(cfg, satarbor.New("info"), now, Deps{
 		Client: client.Deps{
-			Documents:       docs,
+			Documents:  docs,
 			Projects:   projects,
-			Ledger:    led,
-			Stories:     stories,
+			Ledger:     led,
+			Stories:    stories,
 			Workspaces: wss,
 			Sessions:   sessions,
-			Changelog: cl,
+			Changelog:  cl,
 		},
 	})
 }

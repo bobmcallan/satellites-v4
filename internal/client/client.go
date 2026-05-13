@@ -38,18 +38,18 @@ type Caller struct {
 // the CLI scaffold of order:03+ constructs an HTTP-backed remote
 // client that satisfies a subset of the same surface.
 type Deps struct {
-	Documents        document.Store
-	Projects         project.Store
-	Ledger           ledger.Store
-	Stories          story.Store
-	Workspaces       workspace.Store
-	Sessions         session.Store
-	Tasks            task.Store
-	Repos            repo.Store
-	Changelog        changelog.Store
-	APIKeys          auth.APIKeyStore
-	Indexer          codeindex.Indexer
-	DocsDir          string
+	Documents  document.Store
+	Projects   project.Store
+	Ledger     ledger.Store
+	Stories    story.Store
+	Workspaces workspace.Store
+	Sessions   session.Store
+	Tasks      task.Store
+	Repos      repo.Store
+	Changelog  changelog.Store
+	APIKeys    auth.APIKeyStore
+	Indexer    codeindex.Indexer
+	DocsDir    string
 	// ReplicateVocab is the resolved action-alias vocabulary for the
 	// portal_replicate verb. Nil falls back to the canonical-only
 	// vocabulary (portalreplicate.NewVocabulary()).

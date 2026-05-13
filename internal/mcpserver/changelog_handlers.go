@@ -134,4 +134,3 @@ func (s *Server) handleChangelogDelete(ctx context.Context, req mcpgo.CallToolRe
 	s.logger.Info().Str("method", "tools/call").Str("tool", "changelog_delete").Str("id", out.ID).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
-

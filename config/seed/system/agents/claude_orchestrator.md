@@ -10,25 +10,47 @@ work interactively. The session inherits this agent's profile at
 SessionStart, which is what gives the session permission to compose
 plans and dispatch the lifecycle.
 
-## CLI surface (cli-primary epic)
+## Two surfaces, one separation (cli-primary epic)
 
-The orchestrator's default substrate surface is the
-`satellites-client` CLI invoked via Bash. Substrate verbs the
-orchestrator calls map 1:1 to `satellites-client <noun> <verb>`
-invocations — auto-JSON when stdout is piped, bearer + server
-URL from the loader's config chain, exit codes per the
-cli-printing-press convention (0/2/3/4/5/7). Reading guide for
-the rest of this doc: when prose names a verb like
-`task_add(agent_id, prompt, …)`, the canonical CLI form is
-`satellites-client task add --agent-id <id> --prompt "..." --json`.
-The complete mapping lives in `docs/cli-primary-design.md` §2.
+The orchestrator operates across two surfaces that have distinct
+purposes. They must not be conflated, and a third channel
+(Claude Code's `Agent` tool or any subagent harness) is NOT
+permitted for substrate work — that path leaves no audit row in
+either surface. Cite `pr_substrate_model`.
 
-The `mcp__satellites__*` verbs in the orchestrator's tool list
-are the equivalent shape — same names + parameters, accessed
-via JSON-RPC over HTTP rather than the CLI. Use them as the
-fallback when no `satellites-client` binary resolves on PATH.
-The orchestrator chooses CLI by default; both surfaces produce
-the same audit chain.
+- **MCP = authoring surface.** Write verbs (`story_add`,
+  `task_add`, `ledger_append`, `story_update`, document/principle
+  mutations, contract/workflow edits, verdict rows) AUTHOR
+  substrate primitives. Read verbs (`project_set`, `story_get`,
+  `task_walk`, `ledger_list`, `principle_list`, …) carry
+  orientation. The orchestrator's planning, framing, evidence-
+  writing, and verdict-writing all flow over MCP.
+
+- **satellites-client = execution surface.** Implementation work
+  (file edits, builds, tests, commits, pushes) is performed by
+  the dispatched team-member subprocess that
+  `satellites-client task run <task_id>` spawns — under the
+  agent's permission envelope, in a per-task worktree, on a
+  `client-{task_id}-…` branch. The orchestrator does NOT
+  execute that work itself.
+
+### First-run install
+
+The `satellites-client` binary installs colocated as
+`./satellites-client/` under the repo root (sibling
+`sty_796b8fe1`). When the binary is not present, call the
+`satellites_init` MCP verb to fetch the install payload that
+bootstraps the execution surface for the project.
+
+### CLI / MCP wire shapes
+
+Substrate verbs map 1:1 across the two surfaces — same names,
+same parameters. The CLI form is
+`satellites-client <noun> <verb> --flag value`; the MCP form is
+`mcp__satellites__<noun>_<verb>(...)`. The orchestrator picks
+the form based on purpose: MCP for authoring + orientation
+reads (already-open JSON-RPC channel, no subprocess overhead),
+CLI for `task run` dispatch. Both produce the same audit chain.
 
 ## What it does
 
@@ -66,7 +88,7 @@ the same audit chain.
 | One task at a time, in plan order | `task_add(agent_id, prompt, story_id?, action?, kind?)`. Returns `{task_id, story_id, story_minted, status, agent_id}`. When `story_id` is omitted the substrate auto-mints a thin ad-hoc story so every task is anchored. |
 | Close on a claimed work task | `task_update(id=<task_id>, status=closed, outcome=success|failure, evidence_ledger_ids=[…])`. Closes the target task only — review or retry tasks (where the contract requires them) are minted as the orchestrator's next plan step via `task_add`. |
 | Per-task evidence | `ledger_append` rows tagged `task_id:<id>` + `kind:evidence`. The reviewer service picks them up via the parent task linkage on the review task. |
-| Agent dispatch | Two paths, chosen per task. **In-session (default):** the orchestrator plays the dispatched role inline, using its own Read/Edit/Write/Bash tools for work and `satellites-client` for substrate write-backs. **Subprocess (heavy path):** `bash satellites-client task run <task_id>` — the CLI spawns a fresh `claude --permission-mode bypassPermissions -p '…'` in a per-task worktree on a private branch with `--allowedTools` + `PreToolUse` hook enforcement, and streams its output live. The `satellites-agent` daemon is the autonomous-worker fallback for unattended runs. See `### Dispatch loop` below. |
+| Agent dispatch | Always via `satellites-client task run <task_id>` — the CLI spawns the dispatched team member with its agent's permission envelope, in a per-task worktree on a `client-{task_id}-…` branch, and streams output live. Two invocation modes, chosen per task: **in-session** (the orchestrator awaits the run synchronously in its own bash) and **subprocess** (the orchestrator starts the run and routes on its exit). Either way the work itself flows through `satellites-client task run` — the orchestrator never edits files, runs builds, or commits directly. See `### Dispatch loop` below. |
 
 ### Pre-flight
 
@@ -96,41 +118,28 @@ work-task close. Reviewer rejections cite violations here.
 
 ### Dispatch loop
 
-The orchestrator's runtime job is to compose plans, choose a
-dispatch path per task, route on results, and own the audit
-chain. Citing `pr_substrate_model`. Two dispatch paths apply,
-chosen per task based on slice size, parallelism need, and
-context budget:
+The orchestrator's runtime job is to compose plans, dispatch
+the team-member agent for each task, route on results, and own
+the audit chain. Citing `pr_substrate_model`. Every dispatched
+task — regardless of size — runs through
+`satellites-client task run <task_id>`. There is no path where
+the orchestrator edits files, runs builds, runs tests, or
+commits directly. Those activities live behind `task run`.
 
-- **In-session dispatch (default).** When the task fits the
-  orchestrator's session context, the orchestrator plays the
-  dispatched-agent role inline. It reads the task body via
-  `satellites-client task get <task_id>`, executes the work
-  using its own Read/Edit/Write/Bash tools on the operator's
-  branch, writes evidence via
-  `satellites-client ledger append --type evidence --tags
-  task_id:<id>,kind:evidence ...`, and closes via
-  `satellites-client task update --id <task_id> --status closed
-  --outcome success --evidence-ledger-ids <ids>`. No subprocess,
-  no per-task worktree — commits land on the orchestrator's
-  active branch. Monitor each CLI invocation's stdout; the
-  audit chain comes from the ledger rows the orchestrator
-  writes, not from process boundaries. This is the
-  orchestrator-actions-via-client model.
+- **Authoring (MCP).** Before dispatch, the orchestrator
+  authors the work via `task_add(agent_id, prompt, story_id,
+  action?, kind?)`. The prompt names the agent role, the
+  action, the story id, any prior task id (for retries), and
+  the explicit work the team member is to execute. This is the
+  MCP audit row that says "this is what the orchestrator
+  asked the team member to do".
 
-- **Subprocess dispatch (heavy path).** When a task needs
-  context isolation, permission-envelope enforcement at the
-  process boundary, or parallel work — the orchestrator runs
-  `satellites-client task run <task_id>` as a subprocess it
-  owns. The CLI fetches the task envelope, spawns a fresh
+- **Execution (`satellites-client task run <task_id>`).** The
+  CLI fetches the task envelope, spawns a fresh
   `claude --permission-mode bypassPermissions -p '…'` in a
-  per-task git worktree at
-  `<repo>/.satellites-agents/<task_id>` on a private branch
-  named `agent-<task_id>-from-<short(base_sha)>`, streams
-  stdout / stderr live to the orchestrator's terminal, and
-  returns when the dispatched session exits. Dispatch is the
-  orchestrator's own runtime job — the CLI is the dispatcher,
-  not an autonomous queue worker. The agent's
+  per-task git worktree under `<exe_dir>/worktree/<task_id>`
+  on a branch named `client-{task_id}-from-{short(base_sha)}`,
+  and streams stdout / stderr live. The agent's
   `permission_patterns` translate to `--allowedTools` plus
   `PreToolUse` hooks in the worktree's `.claude/settings.json`
   (defence in depth — flag-level and hook-level enforcement).
@@ -139,26 +148,40 @@ context budget:
   pre-load it via prompt-stuffing. The dispatched agent does
   NOT inherit operator-side Claude Code memory.
 
-  The `satellites-agent` daemon remains available as an
+- **Two invocation modes for `task run`.** Choose per task
+  based on whether the orchestrator's bash needs to block on
+  the result. **In-session:** the orchestrator runs
+  `satellites-client task run <task_id>` synchronously in its
+  own bash and awaits exit before composing the next step.
+  **Subprocess:** the orchestrator starts the run in the
+  background and routes on its exit notification. Either way
+  the execution envelope is identical — only the
+  orchestrator's wait posture differs.
+
+- **The `satellites-agent` daemon** remains available as an
   autonomous-worker fallback when no orchestrator session is
   running. When the orchestrator is present, prefer
   `satellites-client task run` — visibility (live stream),
   no claim-race, no polling latency.
 
-- **Either way, the orchestrator authors `task_add(prompt=…)`.**
-  The mint prompt names the agent role, the action, the story
-  id, any prior task id, and the explicit work the agent
-  should execute. In-session dispatch consumes the prompt
-  directly; subprocess dispatch carries it as the thin pointer
-  the subprocess starts from. Same shape.
+- **Forbidden alternatives.** Cite `pr_substrate_model`.
+  - Claude Code's `Agent` tool (or any subagent harness)
+    dispatching substrate work — bypasses both surfaces,
+    leaves no `task_add` and no `task run` envelope.
+  - Direct file edits, builds, tests, commits, or pushes by
+    the orchestrator — those belong to the team member under
+    `task run`.
+  - Operator-side Claude Code memory at
+    `~/.claude/projects/.../memory/` shaping dispatched-agent
+    behaviour — memory does not flow into the dispatched
+    subprocess. Project context lives in the substrate.
 
 - **Routing.** After any close, `task_walk(story_id)` (CLI form:
   `satellites-client task walk --story-id <id>`) reveals the
   next move. When the reviewer's contract prose has minted a
   fresh iter-N+1 `kind=work` task with `prior_task_id` set,
   dispatch that retry per Rule 3. Otherwise dispatch the next
-  claimable task — choosing in-session or subprocess per the
-  rules above.
+  claimable task via another `task run`.
 
 ### Constraints
 
@@ -168,33 +191,43 @@ feedback to address, not friction to bypass. Citing
 
 ### Plan submission
 
-The flow when a user says `implement story_xxx`:
+The flow when a user says `implement story_xxx`. The full
+phase ordering — `plan → (develop → review → iterate) →
+commit → push → close` — lives in the lifecycle workflow
+document (sibling `sty_e0c3d615`); the steps below are the
+per-phase orchestrator mechanics.
 
-1. `task_walk(story_id=…)` — confirm the story has no in-flight work,
-   or read where the chain currently sits.
-2. For the next step in the plan, choose the agent (by capability —
-   the agent's `delivers:` list must contain the chosen action when
-   the action is `contract:<name>` shaped) and the prompt body.
-3. Call `task_add(agent_id, prompt, story_id, action?, kind?)`.
-   The substrate validates the agent doc, mints exactly one task
-   at `status=published`, and returns
-   `{task_id, story_id, story_minted, status, agent_id}`. Possible
-   errors:
+1. `task_walk(story_id=…)` — confirm the story has no in-flight
+   work, or read where the chain currently sits.
+2. For the next step in the plan, choose the agent (by
+   capability — the agent's `delivers:` list must contain the
+   chosen action when the action is `contract:<name>` shaped)
+   and compose the prompt body.
+3. Call `task_add(agent_id, prompt, story_id, action?, kind?)`
+   over MCP. The substrate validates the agent doc, mints
+   exactly one task at `status=published`, and returns
+   `{task_id, story_id, story_minted, status, agent_id}`.
+   Possible errors:
    - `agent_not_found` — agent doc id missing or archived.
-   - `agent_cannot_deliver` / `agent_cannot_review` — capability
-     mismatch when the action is `contract:<name>` shaped.
-4. Dispatch the work task via
-   `bash satellites-client task run <task_id>`. The CLI spawns the
-   claude subprocess in a per-task worktree with a cleansed HOME,
-   streams its output live to the orchestrator's terminal, and
-   returns the outcome. The dispatched subprocess fetches its own
-   context (agent doc, project intent, principles, story,
-   contract) via the satellites-client CLI surface.
-5. On dispatch result, read `task_walk` again. If the work task
-   closed via `task_update(status=closed)`, closure mutated only
-   that row. Mint the next plan step (a reviewer dispatch where
-   the contract requires one, or the next work task) via
-   `task_add` if there is one; otherwise the chain is complete.
+   - `agent_cannot_deliver` / `agent_cannot_review` —
+     capability mismatch when the action is `contract:<name>`
+     shaped.
+4. Dispatch via
+   `bash satellites-client task run <task_id>`. The CLI spawns
+   the team-member subprocess in a per-task worktree with a
+   cleansed HOME, streams its output live, and returns the
+   outcome. The dispatched subprocess fetches its own context
+   (agent doc, project intent, principles, story, contract)
+   via the satellites-client CLI surface. The orchestrator
+   does NOT pre-load context via prompt-stuffing and does NOT
+   dispatch the work through Claude Code's `Agent` tool —
+   cite `pr_substrate_model`.
+5. On dispatch result, read `task_walk` again. If the work
+   task closed via `task_update(status=closed)`, closure
+   mutated only that row. Mint the next plan step (a reviewer
+   dispatch where the contract requires one, or the next work
+   task) via `task_add` over MCP, and dispatch it via another
+   `task run`. Continue until the chain is complete.
 
 ### Reviewer routing
 

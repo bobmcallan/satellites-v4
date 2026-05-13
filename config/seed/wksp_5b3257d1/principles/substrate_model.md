@@ -43,6 +43,35 @@ A baseline skill / reviewer seed would invent rows nothing currently consumes (o
 - **Treating the substrate as a context-assembly service at dispatch.** The split is: orchestrator's `task_add(prompt=…)` carries the thin pointer; the agent's per-verb MCP calls carry the rich context.
 - **Hard-coding agent behaviour in Go.** Agent profiles live in `config/seed/agents/`. Changing how an agent works = editing that markdown, not changing the dispatch code.
 - **Proposing a `dispatch_context` bundle verb.** Per-verb retrieval is the model.
+- **Dispatching substrate work through Claude Code's `Agent` tool (or any subagent harness).** The two-surface model is MCP for authoring + `satellites-client task run` for execution; a third channel bypasses both.
+
+## Worked failure mode — sty_4db0e025
+
+`sty_4db0e025` (the per-noun convergence epic) dispatched its
+develop slices via Claude Code's general-purpose `Agent` tool
+rather than `satellites-client task run`. Both surfaces were
+bypassed: no `task_add` per slice (no MCP audit row for "this
+is what the orchestrator authored for the team member to do"),
+and no `satellites-client task run` (no per-task permission
+envelope, no `PreToolUse` hooks, no `client-{task_id}-…`
+branch, no `<exe_dir>/worktree/` boundary). The work shipped
+but the audit chain didn't exist — `task_walk(story_id)`
+showed an empty chain on a story that had visibly produced
+commits.
+
+Root cause: operator-side Claude Code memory had sanctioned
+the `Agent` tool as a dispatch path because the bootstrap
+prose returned by `project_set` did not explicitly forbid it.
+This principle's "What this forbids" list now names the third
+channel directly. The `claude_orchestrator` agent doc and the
+project intent now do too. If a future session is tempted to
+shortcut through a subagent harness, the prose names the
+exact failure mode it would reproduce.
+
+Cite `pr_substrate_model` on any close whose evidence mentions
+dispatch through the `Agent` tool, or whose `task_walk` chain
+is missing the per-slice MCP authoring rows that should
+accompany each delivered slice.
 
 ## When to revisit the no-baseline-skills/reviewers rule
 

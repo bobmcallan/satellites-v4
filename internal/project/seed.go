@@ -44,7 +44,7 @@ func SeedDefault(ctx context.Context, store Store, logger arbor.ILogger, workspa
 // — new users no longer get a Default project on login, and existing
 // rows with this name are archived as part of the project-schema
 // rollout (sty_c975ebeb). A canonical project is now keyed on its
-// git_remote and must be created explicitly via project_create.
+// git_remote and must be created explicitly via project_add.
 const PerUserDefaultName = "Default"
 
 // ArchiveLegacyDefaults flips every active per-user Default project

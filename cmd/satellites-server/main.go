@@ -380,7 +380,7 @@ func main() {
 		// explicit action — sty_c975ebeb removed the auto-seeded "Default"
 		// project because it conflated multi-repo scopes with single-repo
 		// stories. Users land on /projects with an empty-state panel until
-		// they create a project (project_create + repo_add for code-backed
+		// they create a project (project_add + repo_add for code-backed
 		// projects per sty_14dfd05b, or via the portal).
 		authHandlers.OnUserCreated = func(hookCtx context.Context, userID string) {
 			now := time.Now().UTC()

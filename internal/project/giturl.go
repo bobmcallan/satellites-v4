@@ -6,8 +6,8 @@ import (
 )
 
 // ErrInvalidGitRemote signals that an input string does not parse to a
-// recognisable git remote. Callers (project_create / project_set MCP
-// handlers) map this to a structured `repo_url_invalid` error.
+// recognisable git remote. Callers (project_add / project_set HTTP +
+// MCP handlers) map this to a structured `repo_url_invalid` error.
 var ErrInvalidGitRemote = errors.New("project: invalid git remote URL")
 
 // CanonicaliseGitRemote normalises a git remote URL so the same repo

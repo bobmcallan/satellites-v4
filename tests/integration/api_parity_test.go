@@ -236,15 +236,17 @@ func bootstrapParityFixtures(t *testing.T, ctx context.Context, ff *parityFixtur
 	// Create a project for the bootstrap fixtures. project_set's bind-
 	// to-repo_url path requires a pre-existing repo binding, which
 	// requires repo_add (in the order:05 followup and out of scope for
-	// this story). Using project_create directly is sufficient — the
-	// project_set verb case below exercises the no-binding path
-	// (returns {status:"no_project_for_remote"} on both transports).
-	createResp := callTool(t, ctx, ff.mcpURL, bearer, "project_create", map[string]any{
+	// this story). project_add was removed from MCP in sty_4db0e025 C9
+	// (operator authoring per sty_3dc39a5c "Removed from MCP"); route
+	// via /api/v1 instead. The project_set verb case below exercises
+	// the no-binding path (returns {status:"no_project_for_remote"}
+	// on both transports).
+	createResp := callAPIv1(t, ctx, ff.baseURL, bearer, "project_add", map[string]any{
 		"name": "parity-test-project",
 	})
 	pid, _ := createResp["id"].(string)
 	if pid == "" {
-		t.Fatalf("project_create returned no id: %+v", createResp)
+		t.Fatalf("project_add returned no id: %+v", createResp)
 	}
 	ff.projectID = pid
 

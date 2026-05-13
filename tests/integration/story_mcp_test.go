@@ -15,7 +15,7 @@ import (
 )
 
 // TestStoryMCPRoundTrip drives the full story primitive MCP surface:
-// project_create → story_add → story_list → transitions
+// project_add → story_add → story_list → transitions
 // (backlog→ready→in_progress→done) → assert 3 ledger rows of type
 // story.status_change for the owning project.
 func TestStoryMCPRoundTrip(t *testing.T) {
@@ -101,7 +101,7 @@ func TestStoryMCPRoundTrip(t *testing.T) {
 	createProj := rpcCall(t, ctx, mcpURL, "key_story", map[string]any{
 		"jsonrpc": "2.0", "id": 3, "method": "tools/call",
 		"params": map[string]any{
-			"name":      "project_create",
+			"name":      "project_add",
 			"arguments": map[string]any{"name": "story-smoke"},
 		},
 	})

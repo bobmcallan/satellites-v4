@@ -148,7 +148,7 @@ func TestProjectSet_NoProjectForRemote(t *testing.T) {
 func TestProjectSet_NormalisationParity(t *testing.T) {
 	t.Parallel()
 	// Pin the same canonical form across every accepted input shape so
-	// project_set + project_create cannot drift on what counts as the
+	// project_set + project_add cannot drift on what counts as the
 	// same repo. AC3.
 	want := "https://github.com/owner/repo"
 	cases := []string{

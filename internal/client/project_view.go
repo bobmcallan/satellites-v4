@@ -123,10 +123,10 @@ func (c *Client) ProjectListJSON(ctx context.Context, caller Caller, memberships
 	return body, len(list), nil
 }
 
-// ProjectCreateView mints a project and returns the embeddable view
+// ProjectAddView mints a project and returns the embeddable view
 // with mcp_url + mcp_config resolved against baseURL.
-func (c *Client) ProjectCreateView(ctx context.Context, caller Caller, in ProjectCreateInput, baseURL string) (ProjectView, project.Project, error) {
-	p, err := c.ProjectCreate(ctx, caller, in)
+func (c *Client) ProjectAddView(ctx context.Context, caller Caller, in ProjectAddInput, baseURL string) (ProjectView, project.Project, error) {
+	p, err := c.ProjectAdd(ctx, caller, in)
 	if err != nil {
 		return ProjectView{}, project.Project{}, err
 	}

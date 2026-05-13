@@ -73,7 +73,9 @@ func TestAgentCompose_FullStack(t *testing.T) {
 	mcpURL := baseURL + "/mcp"
 	rpcInit(t, ctx, mcpURL, "key_agentcompose")
 
-	project := callTool(t, ctx, mcpURL, "key_agentcompose", "project_create", map[string]any{
+	// project_add was removed from MCP in sty_4db0e025 C9 (operator
+	// authoring per sty_3dc39a5c "Removed from MCP"); route via /api/v1.
+	project := callAPIv1(t, ctx, baseURL, "key_agentcompose", "project_add", map[string]any{
 		"name": "agent-compose-project",
 	})
 	projectID, _ := project["id"].(string)

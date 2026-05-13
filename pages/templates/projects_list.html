@@ -14,7 +14,7 @@
           <p class="muted">Projects are unavailable in this environment (no database configured).</p>
         {{else if not .Projects}}
           <p class="muted">You don't own any projects yet.</p>
-          <p class="muted">Create one via the MCP <code>project_create</code> tool.</p>
+          <p class="muted">Add one via the CLI: <code>satellites-client project add --name &lt;name&gt;</code>.</p>
         {{else}}
           <table class="data-table">
             <thead>

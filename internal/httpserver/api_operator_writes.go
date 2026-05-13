@@ -3,7 +3,7 @@
 //
 // Tier A scope (~30 verbs, straightforward CRUD):
 //   story:     create, update, delete
-//   project:   create, update, delete
+//   project:   add, update, delete
 //   workspace: create, member-add, member-update-role, member-remove
 //   kv:        set, delete
 //   changelog: add, update, delete
@@ -45,7 +45,7 @@ func (a *APIRegistrar) registerOperatorWriteRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/story/update", a.handleStoryUpdate)
 	mux.HandleFunc("POST /api/v1/story/delete", a.handleStoryDelete)
 
-	mux.HandleFunc("POST /api/v1/project/create", a.handleProjectCreate)
+	mux.HandleFunc("POST /api/v1/project/add", a.handleProjectAdd)
 	mux.HandleFunc("POST /api/v1/project/update", a.handleProjectUpdate)
 	mux.HandleFunc("POST /api/v1/project/delete", a.handleProjectDelete)
 
@@ -224,7 +224,7 @@ func (a *APIRegistrar) handleStoryDelete(w http.ResponseWriter, r *http.Request)
 
 // ----- project -----
 
-func (a *APIRegistrar) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
+func (a *APIRegistrar) handleProjectAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
 	}

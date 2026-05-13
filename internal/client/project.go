@@ -23,9 +23,9 @@ var ErrRepoURLInvalid = errors.New("repo_url_invalid")
 // wire-layer caller maps this to a per-verb "unavailable" envelope.
 var ErrProjectStoreNotConfigured = errors.New("project store not configured")
 
-// ErrProjectNameRequired is returned by ProjectCreate when the input
+// ErrProjectNameRequired is returned by ProjectAdd when the input
 // supplies no name. Wire-layer envelope mirrors the historical
-// project_create error message produced by the MCP handler.
+// project_add error message produced by the HTTP handler.
 var ErrProjectNameRequired = errors.New("name required")
 
 // ErrProjectIDRequired is returned by ProjectUpdate / ProjectDelete
@@ -40,7 +40,7 @@ var ErrProjectNotFound = errors.New("project not found")
 
 // ErrNoCallerIdentity is returned when a typed project mutator runs
 // without a resolved caller user id. Mirrors the historical
-// "no caller identity" envelope the project_create MCP handler raised.
+// "no caller identity" envelope the project_add HTTP handler raised.
 var ErrNoCallerIdentity = errors.New("no caller identity")
 
 // ProjectSetInput names the bind: repo_url is required; the workspace
@@ -80,7 +80,7 @@ const (
 // canonicalised git remote in the caller's workspace, then returns the
 // orientation bundle. Idempotent: a fresh bind on an already-bound
 // session refreshes LastSeenAt + ActiveProjectID. Never creates a
-// project — projects are minted by project_create, not by this bind.
+// project — projects are minted by project_add, not by this bind.
 //
 // The function takes a worker-callback into the repos store (via
 // c.deps.Repos.GetByRemote) to honour the workspace-scoped (workspace,
@@ -152,22 +152,22 @@ func (c *Client) resolveProjectByRemote(ctx context.Context, workspaceID, canoni
 	return p, true
 }
 
-// ProjectCreateInput captures the project_create request shape. The
+// ProjectAddInput captures the project_add request shape. The
 // wire-layer caller pre-resolves the workspace id from the caller's
 // session context and threads it in as WorkspaceID; Now overrides the
 // timestamp for deterministic tests (zero falls back to time.Now().UTC()).
-type ProjectCreateInput struct {
+type ProjectAddInput struct {
 	Name        string
 	WorkspaceID string
 	Now         time.Time
 }
 
-// ProjectCreate mints a new project row owned by caller.UserID in the
+// ProjectAdd mints a new project row owned by caller.UserID in the
 // supplied workspace. Returns the freshly-persisted project.Project;
 // wire-layer assembly of the projectView (mcp_url / mcp_config) stays
 // in the adapter because it depends on the request's base-URL stash —
 // a transport-only concern.
-func (c *Client) ProjectCreate(ctx context.Context, caller Caller, in ProjectCreateInput) (project.Project, error) {
+func (c *Client) ProjectAdd(ctx context.Context, caller Caller, in ProjectAddInput) (project.Project, error) {
 	if c.deps.Projects == nil {
 		return project.Project{}, ErrProjectStoreNotConfigured
 	}

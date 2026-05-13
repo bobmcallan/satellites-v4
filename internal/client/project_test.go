@@ -50,9 +50,9 @@ func newProjectFixture(t *testing.T) *projectFixture {
 	}
 }
 
-func TestProjectCreate_HappyPath(t *testing.T) {
+func TestProjectAdd_HappyPath(t *testing.T) {
 	f := newProjectFixture(t)
-	p, err := f.c.ProjectCreate(context.Background(), f.caller, ProjectCreateInput{
+	p, err := f.c.ProjectAdd(context.Background(), f.caller, ProjectAddInput{
 		Name:        "satellites",
 		WorkspaceID: f.wsID,
 		Now:         f.now,
@@ -64,32 +64,32 @@ func TestProjectCreate_HappyPath(t *testing.T) {
 	assert.NotEmpty(t, p.ID)
 }
 
-func TestProjectCreate_RejectsEmptyName(t *testing.T) {
+func TestProjectAdd_RejectsEmptyName(t *testing.T) {
 	f := newProjectFixture(t)
-	_, err := f.c.ProjectCreate(context.Background(), f.caller, ProjectCreateInput{
+	_, err := f.c.ProjectAdd(context.Background(), f.caller, ProjectAddInput{
 		WorkspaceID: f.wsID,
 	})
 	require.ErrorIs(t, err, ErrProjectNameRequired)
 }
 
-func TestProjectCreate_RejectsMissingCaller(t *testing.T) {
+func TestProjectAdd_RejectsMissingCaller(t *testing.T) {
 	f := newProjectFixture(t)
-	_, err := f.c.ProjectCreate(context.Background(), Caller{}, ProjectCreateInput{
+	_, err := f.c.ProjectAdd(context.Background(), Caller{}, ProjectAddInput{
 		Name:        "satellites",
 		WorkspaceID: f.wsID,
 	})
 	require.ErrorIs(t, err, ErrNoCallerIdentity)
 }
 
-func TestProjectCreate_RejectsMissingStore(t *testing.T) {
+func TestProjectAdd_RejectsMissingStore(t *testing.T) {
 	c := New(Deps{})
-	_, err := c.ProjectCreate(context.Background(), Caller{UserID: "u_alice"}, ProjectCreateInput{Name: "x"})
+	_, err := c.ProjectAdd(context.Background(), Caller{UserID: "u_alice"}, ProjectAddInput{Name: "x"})
 	require.ErrorIs(t, err, ErrProjectStoreNotConfigured)
 }
 
 func TestProjectUpdate_RenamesAndStampsMCPURL(t *testing.T) {
 	f := newProjectFixture(t)
-	p, err := f.c.ProjectCreate(context.Background(), f.caller, ProjectCreateInput{
+	p, err := f.c.ProjectAdd(context.Background(), f.caller, ProjectAddInput{
 		Name:        "satellites",
 		WorkspaceID: f.wsID,
 		Now:         f.now,
@@ -117,7 +117,7 @@ func TestProjectUpdate_MissingIDErrors(t *testing.T) {
 
 func TestProjectUpdate_CrossOwnerHidesProject(t *testing.T) {
 	f := newProjectFixture(t)
-	p, err := f.c.ProjectCreate(context.Background(), f.caller, ProjectCreateInput{
+	p, err := f.c.ProjectAdd(context.Background(), f.caller, ProjectAddInput{
 		Name:        "satellites",
 		WorkspaceID: f.wsID,
 		Now:         f.now,
@@ -134,7 +134,7 @@ func TestProjectUpdate_CrossOwnerHidesProject(t *testing.T) {
 
 func TestProjectUpdate_MCPURLClearsWhenEmptyPointerSupplied(t *testing.T) {
 	f := newProjectFixture(t)
-	p, err := f.c.ProjectCreate(context.Background(), f.caller, ProjectCreateInput{
+	p, err := f.c.ProjectAdd(context.Background(), f.caller, ProjectAddInput{
 		Name:        "satellites",
 		WorkspaceID: f.wsID,
 		Now:         f.now,
@@ -168,7 +168,7 @@ func TestProjectUpdate_MCPURLClearsWhenEmptyPointerSupplied(t *testing.T) {
 
 func TestProjectDelete_ArchivesProject(t *testing.T) {
 	f := newProjectFixture(t)
-	p, err := f.c.ProjectCreate(context.Background(), f.caller, ProjectCreateInput{
+	p, err := f.c.ProjectAdd(context.Background(), f.caller, ProjectAddInput{
 		Name:        "satellites",
 		WorkspaceID: f.wsID,
 		Now:         f.now,
@@ -193,7 +193,7 @@ func TestProjectDelete_MissingIDErrors(t *testing.T) {
 
 func TestProjectDelete_CrossOwnerHidesProject(t *testing.T) {
 	f := newProjectFixture(t)
-	p, err := f.c.ProjectCreate(context.Background(), f.caller, ProjectCreateInput{
+	p, err := f.c.ProjectAdd(context.Background(), f.caller, ProjectAddInput{
 		Name:        "satellites",
 		WorkspaceID: f.wsID,
 		Now:         f.now,

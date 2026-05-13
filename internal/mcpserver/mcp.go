@@ -1,6 +1,6 @@
 // Package mcpserver exposes the satellites MCP surface over Streamable HTTP.
 // v4 currently registers: satellites_info, document_ingest_file, document_get,
-// project_create/get/list, ledger_append/list, story_get/list/update,
+// project_get/list/set, ledger_append/list, story_get/list/update,
 // workspace_add/get/list. Subsequent epics add more.
 package mcpserver
 
@@ -214,14 +214,13 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	}
 
 	if s.deps.Projects != nil {
-		createTool := mcpgo.NewTool("project_create",
-			mcpgo.WithDescription("Create a new project owned by the caller. Code-backed projects: follow with repo_add to register the git remote on the resulting project. The (workspace, git_remote) binding lives on the per-project repo row, not on the project itself."),
-			mcpgo.WithString("name",
-				mcpgo.Required(),
-				mcpgo.Description("Project display name."),
-			),
-		)
-		s.mcp.AddTool(createTool, s.handleProjectCreate)
+		// project_add / project_update / project_delete MCP registrations
+		// removed in sty_4db0e025 slice C9 — operator authoring per
+		// sty_3dc39a5c "Removed from MCP" list. Reachable through /api/v1
+		// + the satellites-client CLI only. handleProjectAdd /
+		// handleProjectUpdate / handleProjectDelete remain so the typed
+		// methods on *client.Client continue to back the HTTP routes and
+		// CLI verbs.
 
 		getProjTool := mcpgo.NewTool("project_get",
 			mcpgo.WithDescription("Return the orientation bundle for a project the caller owns: project row, mcp_url + mcp_config (paste-ready client snippets that scope an MCP client to this project via ?project_id=), intent_body, and active principles. Cross-owner access returns not-found."),
@@ -237,20 +236,6 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		)
 		s.mcp.AddTool(listProjTool, s.handleProjectList)
 
-		updateProjTool := mcpgo.NewTool("project_update",
-			mcpgo.WithDescription("Update a project's name and/or mcp_url. Owner-only. The git remote binding is managed by repo_add — call that to add or replace the project's tracked repo."),
-			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Project id (proj_<8hex>).")),
-			mcpgo.WithString("name", mcpgo.Description("New display name. Empty to leave unchanged.")),
-			mcpgo.WithString("mcp_url", mcpgo.Description("Explicit MCP connection URL. Empty string clears the override and falls back to the derived form. Absent leaves unchanged.")),
-		)
-		s.mcp.AddTool(updateProjTool, s.handleProjectUpdate)
-
-		deleteProjTool := mcpgo.NewTool("project_delete",
-			mcpgo.WithDescription("Archive a project (soft delete — flips status to archived, rows are not physically removed). Owner-only."),
-			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Project id (proj_<8hex>).")),
-		)
-		s.mcp.AddTool(deleteProjTool, s.handleProjectDelete)
-
 		// project_set — sty_4db7c3a3 + sty_31d51494 layer 2. The agent's
 		// first call after a user prompt fires when the prompt references
 		// substrate primitives (story, task, contract, agent) or asks
@@ -262,7 +247,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		// Idempotent. Never creates a project.
 		setProjTool := mcpgo.NewTool("project_set",
 			mcpgo.WithDescription("Bootstrap call after a user prompt fires when the prompt references substrate primitives (story id, task id, contract name, agent name) or asks about the project. Binds the caller's session to the project that owns the given git remote URL. Auto-registers the session row keyed by the Mcp-Session-Id header — no explicit session_register required. Returns the orientation bundle: {project_id, status: \"resolved\", mcp_url, intent_body, principles[]}. When no project matches, returns {status: \"no_project_for_remote\", repo_url_canonical}. Subsequent project-scoped verbs may default to the bound project. Idempotent."),
-			mcpgo.WithString("repo_url", mcpgo.Required(), mcpgo.Description("Git remote URL — accepts ssh, https, or git:// forms. Normalised server-side via the same canonicaliser project_create uses. Typically `git remote get-url origin` from the working directory.")),
+			mcpgo.WithString("repo_url", mcpgo.Required(), mcpgo.Description("Git remote URL — accepts ssh, https, or git:// forms. Normalised server-side via the same canonicaliser project_add uses. Typically `git remote get-url origin` from the working directory.")),
 			mcpgo.WithString("session_id", mcpgo.Description("Optional explicit session id. Streamable HTTP callers should let the Mcp-Session-Id header carry the id; this arg is for stdio/test callers that can't set the header.")),
 		)
 		s.mcp.AddTool(setProjTool, s.handleProjectSet)
@@ -1209,21 +1194,21 @@ func (s *Server) resolveBaseURL(ctx context.Context) string {
 	return base
 }
 
-func (s *Server) handleProjectCreate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+func (s *Server) handleProjectAdd(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
 	name, err := req.RequireString("name")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	view, p, err := s.cli().ProjectCreateView(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email}, client.ProjectCreateInput{
+	view, p, err := s.cli().ProjectAddView(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email}, client.ProjectAddInput{
 		Name: name, WorkspaceID: s.resolveCallerWorkspaceID(ctx, caller), Now: s.nowUTC(),
 	}, s.resolveBaseURL(ctx))
 	if err != nil {
 		return mcpgo.NewToolResultError(projectErrMessage(err)), nil
 	}
 	body, _ := json.Marshal(view)
-	s.logger.Info().Str("method", "tools/call").Str("tool", "project_create").
+	s.logger.Info().Str("method", "tools/call").Str("tool", "project_add").
 		Str("project_id", p.ID).Str("owner_user_id", p.OwnerUserID).
 		Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
@@ -1388,7 +1373,7 @@ func (s *Server) handleProjectDelete(ctx context.Context, req mcpgo.CallToolRequ
 }
 
 // projectErrMessage maps typed sentinels from internal/client into the
-// wire-error envelopes the project_create/update/delete handlers
+// wire-error envelopes the project_add/update/delete handlers
 // historically produced. Centralises the mapping so each adapter stays
 // inside the ≤25-line floor mandated by sty_f3f7bf9b's review-criteria.
 func projectErrMessage(err error) string {

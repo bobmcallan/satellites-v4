@@ -77,7 +77,7 @@ var expectedRoutes = []string{
 	"POST /api/v1/story/add",
 	"POST /api/v1/story/update",
 	"POST /api/v1/story/delete",
-	"POST /api/v1/project/create",
+	"POST /api/v1/project/add",
 	"POST /api/v1/project/update",
 	"POST /api/v1/project/delete",
 	"POST /api/v1/workspace/add",

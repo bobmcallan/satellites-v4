@@ -99,7 +99,7 @@ func registerLedgerNoun(root *cobra.Command) {
 func registerProjectNoun(root *cobra.Command) {
 	noun := nounStub("project", "Projects — top-level work surface.")
 	noun.AddCommand(
-		newProjectCreateCmd(), // sty_f38bd573
+		newProjectAddCmd(),    // sty_f38bd573 + sty_4db0e025 C9 (create→add rename)
 		newProjectGetCmd(),    // sty_ef248ab2
 		newProjectListCmd(),   // sty_ef248ab2
 		newProjectUpdateCmd(), // sty_f38bd573

@@ -3,7 +3,7 @@ package project
 import "testing"
 
 // TestCanonicaliseGitRemote_RoundTrip pins the canonicaliser shape so
-// project_create + project_set (sty_4db7c3a3) cannot drift — both use
+// project_add + project_set (sty_4db7c3a3) cannot drift — both use
 // this function as their shared normaliser.
 func TestCanonicaliseGitRemote_RoundTrip(t *testing.T) {
 	t.Parallel()

@@ -2,7 +2,6 @@ package integration
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -147,27 +146,11 @@ func TestPortalProjectsPages(t *testing.T) {
 	})
 	defer stop()
 
-	// 1. Create a project via MCP as the API key caller (owner = "apikey").
-	mcpURL := baseURL + "/mcp"
-	rpcCall(t, ctx, mcpURL, "key_portal", map[string]any{
-		"jsonrpc": "2.0", "id": 1, "method": "initialize",
-		"params": map[string]any{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "integration-test", "version": "0.0.1"},
-		},
-	})
-	created := rpcCall(t, ctx, mcpURL, "key_portal", map[string]any{
-		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-		"params": map[string]any{
-			"name":      "project_create",
-			"arguments": map[string]any{"name": "portal-smoke"},
-		},
-	})
-	var proj map[string]any
-	if err := json.Unmarshal([]byte(extractToolText(t, created)), &proj); err != nil {
-		t.Fatalf("decode project_create: %v", err)
-	}
+	// 1. Add a project via HTTP /api/v1 as the API key caller
+	// (owner = "apikey"). project_add was removed from MCP in
+	// sty_4db0e025 C9 (operator authoring per sty_3dc39a5c "Removed
+	// from MCP"); route via /api/v1 instead.
+	proj := callAPIv1(t, ctx, baseURL, "key_portal", "project_add", map[string]any{"name": "portal-smoke"})
 	apikeyProjID, _ := proj["id"].(string)
 	if apikeyProjID == "" {
 		t.Fatal("created project missing id")

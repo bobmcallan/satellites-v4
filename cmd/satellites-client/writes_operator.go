@@ -123,14 +123,14 @@ func newStoryDeleteCmd() *cobra.Command {
 
 // ----- project -----
 
-func newProjectCreateCmd() *cobra.Command {
+func newProjectAddCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new project.",
-		RunE: writeHandler("project_create", func(cmd *cobra.Command, args []string) (any, error) {
+		Use:   "add",
+		Short: "Add a new project.",
+		RunE: writeHandler("project_add", func(cmd *cobra.Command, args []string) (any, error) {
 			name, _ := cmd.Flags().GetString("name")
 			if name == "" {
-				return nil, cliexit.Newf(cliexit.Usage, "project create: --name is required")
+				return nil, cliexit.Newf(cliexit.Usage, "project add: --name is required")
 			}
 			return map[string]any{"name": name}, nil
 		}),

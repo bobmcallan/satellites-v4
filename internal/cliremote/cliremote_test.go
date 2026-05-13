@@ -191,6 +191,7 @@ func TestCall_PathMappingViaServer(t *testing.T) {
 		wantPath string
 	}{
 		{"satellites_info", "/api/v1/satellites/info"},
+		{"system_version", "/api/v1/system/version"},
 		{"session_whoami", "/api/v1/session/whoami"},
 		{"session_register", "/api/v1/session/register"},
 		{"task_get", "/api/v1/task/get"},
@@ -282,3 +283,23 @@ func TestCall_NilLoggerIsNoOp(t *testing.T) {
 
 // silence unused import in dev cycles where the helper is dropped.
 var _ = json.RawMessage(nil)
+
+// TestSystemVersion_HappyPath asserts the typed convenience wrapper
+// decodes the server's payload into the typed output.
+func TestSystemVersion_HappyPath(t *testing.T) {
+	body := `{"version":"0.0.269","build":"b","commit":"c","artifacts":[{"os":"linux","arch":"amd64","filename":"satellites-client-linux-amd64","sha256":"deadbeef","download_url":"https://example.invalid/a"}],"fetched_at":"2026-05-13T12:00:00Z"}`
+	_, client := stubServer(t, "/api/v1/system/version", http.StatusOK, body)
+	out, err := client.SystemVersion(context.Background())
+	if err != nil {
+		t.Fatalf("SystemVersion: %v", err)
+	}
+	if out.Version != "0.0.269" {
+		t.Errorf("version = %q, want 0.0.269", out.Version)
+	}
+	if len(out.Artifacts) != 1 {
+		t.Fatalf("artifacts len = %d, want 1", len(out.Artifacts))
+	}
+	if out.Artifacts[0].SHA256 != "deadbeef" {
+		t.Errorf("sha256 = %q, want deadbeef", out.Artifacts[0].SHA256)
+	}
+}

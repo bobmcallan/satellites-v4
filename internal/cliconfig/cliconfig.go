@@ -82,6 +82,19 @@ type Config struct {
 	// disables the file writer — the CLI runs stdout-only.
 	LogPath string `toml:"log_path"`
 
+	// UpdateTolerancePatches is the number of patch increments the
+	// local satellites-client binary is allowed to lag behind the
+	// remote manifest's `version` before the boot drift check exits
+	// 9. Default 0 (strict — exact match required). sty_64e69db8.
+	UpdateTolerancePatches int `toml:"update_tolerance_patches"`
+
+	// UpdateCheckDisabled turns off the boot drift check entirely.
+	// Operators set this in CI / pinned environments where version
+	// freedom is a feature, not a bug. Also honoured at runtime via
+	// `SATELLITES_CLIENT_SKIP_UPDATE_CHECK=1` for cases where editing
+	// a TOML is awkward. sty_64e69db8.
+	UpdateCheckDisabled bool `toml:"update_check_disabled"`
+
 	// loadedTOMLPath records the path that was actually read; "" when
 	// the loader fell back to defaults.
 	loadedTOMLPath string
@@ -112,10 +125,12 @@ func (c Config) String() string {
 	}
 	return fmt.Sprintf(
 		"Config{server=%q token=%s oauth_enabled=%t repo_path=%q worktree_root=%q "+
-			"branch_template=%q execute_timeout=%s log_level=%q log_path=%q}",
+			"branch_template=%q execute_timeout=%s log_level=%q log_path=%q "+
+			"update_tolerance_patches=%d update_check_disabled=%t}",
 		c.Server, mask, c.OAuthEnabled,
 		c.RepoPath, c.WorktreeRoot, c.BranchTemplate,
 		c.ExecuteTimeout, c.LogLevel, c.LogPath,
+		c.UpdateTolerancePatches, c.UpdateCheckDisabled,
 	)
 }
 
@@ -191,15 +206,17 @@ func defaults() *Config {
 // selectively. Durations decode via the local duration wrapper so
 // operators can write "30m", "5s" instead of nanoseconds.
 type tomlOverlay struct {
-	Server         *string   `toml:"server"`
-	Token          *string   `toml:"token"`
-	OAuthEnabled   *bool     `toml:"oauth_enabled"`
-	RepoPath       *string   `toml:"repo_path"`
-	WorktreeRoot   *string   `toml:"worktree_root"`
-	BranchTemplate *string   `toml:"branch_template"`
-	ExecuteTimeout *duration `toml:"execute_timeout"`
-	LogLevel       *string   `toml:"log_level"`
-	LogPath        *string   `toml:"log_path"`
+	Server                 *string   `toml:"server"`
+	Token                  *string   `toml:"token"`
+	OAuthEnabled           *bool     `toml:"oauth_enabled"`
+	RepoPath               *string   `toml:"repo_path"`
+	WorktreeRoot           *string   `toml:"worktree_root"`
+	BranchTemplate         *string   `toml:"branch_template"`
+	ExecuteTimeout         *duration `toml:"execute_timeout"`
+	LogLevel               *string   `toml:"log_level"`
+	LogPath                *string   `toml:"log_path"`
+	UpdateTolerancePatches *int      `toml:"update_tolerance_patches"`
+	UpdateCheckDisabled    *bool     `toml:"update_check_disabled"`
 }
 
 // duration wraps time.Duration with a TextUnmarshaler so go-toml/v2 can
@@ -355,5 +372,15 @@ func (o tomlOverlay) applyTo(cfg *Config, warnings *[]string) {
 	}
 	if o.LogPath != nil {
 		cfg.LogPath = *o.LogPath
+	}
+	if o.UpdateTolerancePatches != nil {
+		if *o.UpdateTolerancePatches < 0 {
+			*warnings = append(*warnings, fmt.Sprintf("client config: update_tolerance_patches=%d must be >= 0 — keeping %d", *o.UpdateTolerancePatches, cfg.UpdateTolerancePatches))
+		} else {
+			cfg.UpdateTolerancePatches = *o.UpdateTolerancePatches
+		}
+	}
+	if o.UpdateCheckDisabled != nil {
+		cfg.UpdateCheckDisabled = *o.UpdateCheckDisabled
 	}
 }

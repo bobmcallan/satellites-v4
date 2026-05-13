@@ -162,3 +162,101 @@ jobs:
               --strategy rolling \
               --wait-timeout 300 \
               --yes
+
+  # client-release publishes satellites-client linux binaries + a
+  # manifest.json onto a GitHub Release whenever a v* tag is pushed.
+  # The drift check baked into the binary (sty_64e69db8) fetches
+  # this manifest on boot to detect when an operator is running a
+  # stale version. Tag-gated; branch pushes do not fire this job.
+  client-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Extract client version metadata
+        id: meta
+        run: |
+          VERSION=$(awk '
+            BEGIN { in_section = 0 }
+            /^[[:space:]]*\[.*\][[:space:]]*$/ {
+              header = $0
+              sub(/^[[:space:]]*\[/, "", header)
+              sub(/\][[:space:]]*$/, "", header)
+              in_section = (header == "satellites-client")
+              next
+            }
+            in_section && /^[[:space:]]*version[[:space:]]*=/ {
+              gsub(/^[[:space:]]*version[[:space:]]*=[[:space:]]*/, "", $0)
+              gsub(/[[:space:]]+$/, "", $0)
+              print
+              exit
+            }
+          ' .version)
+          BUILD=$(date -u +%Y-%m-%d-%H-%M-%S)
+          COMMIT=${GITHUB_SHA::8}
+          {
+            echo "version=${VERSION}"
+            echo "build=${BUILD}"
+            echo "commit=${COMMIT}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build linux/amd64 + linux/arm64
+        run: |
+          set -euo pipefail
+          MOD=$(go list -m)
+          LDFLAGS="-X ${MOD}/internal/config.Version=${{ steps.meta.outputs.version }} -X ${MOD}/internal/config.Build=${{ steps.meta.outputs.build }} -X ${MOD}/internal/config.GitCommit=${{ steps.meta.outputs.commit }}"
+          mkdir -p dist
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LDFLAGS}" -o dist/satellites-client-linux-amd64 ./cmd/satellites-client
+          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "${LDFLAGS}" -o dist/satellites-client-linux-arm64 ./cmd/satellites-client
+
+      - name: Compute sha256 + emit manifest.json
+        id: manifest
+        run: |
+          set -euo pipefail
+          cd dist
+          AMD64_SHA=$(sha256sum satellites-client-linux-amd64 | awk '{print $1}')
+          ARM64_SHA=$(sha256sum satellites-client-linux-arm64 | awk '{print $1}')
+          TAG="${GITHUB_REF_NAME}"
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          cat > manifest.json <<EOF
+          {
+            "version": "${{ steps.meta.outputs.version }}",
+            "build": "${{ steps.meta.outputs.build }}",
+            "commit": "${{ steps.meta.outputs.commit }}",
+            "artifacts": [
+              {
+                "os": "linux",
+                "arch": "amd64",
+                "filename": "satellites-client-linux-amd64",
+                "sha256": "${AMD64_SHA}",
+                "download_url": "${BASE}/satellites-client-linux-amd64"
+              },
+              {
+                "os": "linux",
+                "arch": "arm64",
+                "filename": "satellites-client-linux-arm64",
+                "sha256": "${ARM64_SHA}",
+                "download_url": "${BASE}/satellites-client-linux-arm64"
+              }
+            ]
+          }
+          EOF
+          cat manifest.json
+
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/satellites-client-linux-amd64
+            dist/satellites-client-linux-arm64
+            dist/manifest.json
+          fail_on_unmatched_files: true

@@ -50,6 +50,7 @@ var auditReadVerbsExact = map[string]struct{}{
 	"satellites_info":         {},
 	"task_walk":               {},
 	"system_list_mcp_tools":   {},
+	"system_version":          {},
 	"agent_ephemeral_summary": {},
 	"story_template_list":     {},
 	"document_search":         {},

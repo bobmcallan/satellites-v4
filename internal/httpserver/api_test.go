@@ -22,6 +22,7 @@ import (
 var expectedRoutes = []string{
 	// Order:07a anchor (21).
 	"POST /api/v1/satellites/info",
+	"POST /api/v1/system/version",
 	"POST /api/v1/session/whoami",
 	"POST /api/v1/session/register",
 	"POST /api/v1/ledger/get",
@@ -142,8 +143,8 @@ var expectedRoutes = []string{
 // /api/v1/story/field-set (folded into /api/v1/story/update), so the
 // expected count is 105 → 103.
 func TestAPI_RoutesRegistered(t *testing.T) {
-	if got := len(expectedRoutes); got != 103 {
-		t.Fatalf("expected 103 routes, got %d (update the slice as the verb set grows)", got)
+	if got := len(expectedRoutes); got != 104 {
+		t.Fatalf("expected 104 routes, got %d (update the slice as the verb set grows)", got)
 	}
 
 	reg := NewAPIRegistrar(client.New(client.Deps{StartedAt: time.Now().UTC()}))
@@ -219,5 +220,86 @@ func TestAPI_ErrorEnvelope_Shape(t *testing.T) {
 	}
 	if env.Error != "test error" {
 		t.Errorf("error = %q, want %q", env.Error, "test error")
+	}
+}
+
+// TestAPI_SystemVersion_HappyPath asserts the handler forwards to
+// client.SystemVersion and returns the manifest payload. Wires an
+// httptest.Server as the upstream manifest source via client.Deps.
+func TestAPI_SystemVersion_HappyPath(t *testing.T) {
+	client.ResetSystemVersionCacheForTest()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+		    "version":"0.0.269",
+		    "build":"2026-05-13-12-00-00",
+		    "commit":"abcd1234",
+		    "artifacts":[
+		      {"os":"linux","arch":"amd64","filename":"satellites-client-linux-amd64","sha256":"deadbeef","download_url":"https://example.invalid/a"}
+		    ]
+		}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	reg := NewAPIRegistrar(client.New(client.Deps{
+		StartedAt:   time.Now().UTC(),
+		ManifestURL: upstream.URL,
+	}))
+	mux := http.NewServeMux()
+	reg.Register(mux)
+
+	req := httptest.NewRequest("POST", "/api/v1/system/version", bytes.NewReader([]byte("{}")))
+	req = req.WithContext(auth.WithCaller(req.Context(), auth.CallerIdentity{
+		Email:  "operator@example.com",
+		UserID: "u_test",
+		Source: "apikey",
+	}))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Version   string                         `json:"version"`
+		Artifacts []client.SystemVersionArtifact `json:"artifacts"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Version != "0.0.269" {
+		t.Errorf("version = %q, want 0.0.269", got.Version)
+	}
+	if len(got.Artifacts) != 1 {
+		t.Errorf("artifacts len = %d, want 1", len(got.Artifacts))
+	}
+}
+
+// TestAPI_SystemVersion_MalformedManifest exercises the typed surface's
+// error path: the upstream manifest is unparseable, the handler
+// surfaces a non-2xx envelope.
+func TestAPI_SystemVersion_MalformedManifest(t *testing.T) {
+	client.ResetSystemVersionCacheForTest()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`not-json`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	reg := NewAPIRegistrar(client.New(client.Deps{
+		StartedAt:   time.Now().UTC(),
+		ManifestURL: upstream.URL,
+	}))
+	mux := http.NewServeMux()
+	reg.Register(mux)
+
+	req := httptest.NewRequest("POST", "/api/v1/system/version", bytes.NewReader([]byte("{}")))
+	req = req.WithContext(auth.WithCaller(req.Context(), auth.CallerIdentity{
+		Email:  "operator@example.com",
+		UserID: "u_test",
+		Source: "apikey",
+	}))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("expected non-200 on malformed manifest, body: %s", rec.Body.String())
 	}
 }

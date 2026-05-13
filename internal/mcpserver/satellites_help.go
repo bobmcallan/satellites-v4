@@ -257,6 +257,7 @@ var cliCatalogue = []helpNoun{
 		Short: "System — admin-tier verbs.",
 		Verbs: []helpVerb{
 			{Name: "seed-run", Short: "Re-run the system-tier configseed loader [admin]."},
+			{Name: "version", Short: "Return the latest published satellites-client release stamp."},
 		},
 	},
 	{

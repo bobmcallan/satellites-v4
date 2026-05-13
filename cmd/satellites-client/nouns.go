@@ -271,6 +271,7 @@ func registerSystemNoun(root *cobra.Command) {
 	noun := nounStub("system", "System — admin-tier verbs.")
 	noun.AddCommand(
 		newSystemSeedRunCmd(), // sty_0b419d98
+		newSystemVersionCmd(), // sty_64e69db8
 	)
 	root.AddCommand(noun)
 }

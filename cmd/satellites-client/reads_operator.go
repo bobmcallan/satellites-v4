@@ -776,3 +776,12 @@ func newRepoGetOutlineCmd() *cobra.Command {
 	_ = c.MarkFlagRequired("path")
 	return c
 }
+
+// newSystemVersionCmd surfaces the system_version verb. Sty_64e69db8.
+func newSystemVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Return the latest published satellites-client release stamp from the configured GitHub Release manifest.",
+		RunE:  readHandler("system_version", func(cmd *cobra.Command, args []string) (any, error) { return map[string]any{}, nil }),
+	}
+}

@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -140,6 +141,20 @@ func newRootCmd() *cobra.Command {
 				Str("server", cfg.Server).
 				Str("log_path", resolvedLogPath).
 				Msgf("satellites-client %s", config.GetFullVersion())
+
+			// sty_64e69db8 boot drift check: compare the stamped
+			// version against the remote manifest. Skip in dev /
+			// disabled / env-skip; fail-open on network errors.
+			fetch := func(ctx context.Context) (cliremote.SystemVersionOutput, error) {
+				rem, rerr := ensureRemote()
+				if rerr != nil {
+					return cliremote.SystemVersionOutput{}, rerr
+				}
+				return rem.SystemVersion(ctx)
+			}
+			if err := runBootDriftCheck(cmd.Context(), config.Version, cfg, fetch, os.Stderr, envFunc); err != nil {
+				return err
+			}
 			return nil
 		},
 	}

@@ -165,6 +165,40 @@ func (c *Client) Call(ctx context.Context, toolName string, args any, dst any) (
 	}
 }
 
+// SystemVersionArtifact mirrors the per-binary entry in the manifest
+// payload returned by /api/v1/system/version. Re-stated locally so
+// CLI callers (the boot drift check) can decode the typed shape
+// without importing internal/client. sty_64e69db8.
+type SystemVersionArtifact struct {
+	OS          string `json:"os"`
+	Arch        string `json:"arch"`
+	Filename    string `json:"filename"`
+	SHA256      string `json:"sha256"`
+	DownloadURL string `json:"download_url"`
+}
+
+// SystemVersionOutput mirrors the JSON wire-shape the server emits at
+// POST /api/v1/system/version. Decode-only struct — callers don't
+// construct one.
+type SystemVersionOutput struct {
+	Version   string                  `json:"version"`
+	Build     string                  `json:"build"`
+	Commit    string                  `json:"commit"`
+	Artifacts []SystemVersionArtifact `json:"artifacts"`
+	FetchedAt time.Time               `json:"fetched_at"`
+}
+
+// SystemVersion is the typed convenience wrapper around Call(...) for
+// the boot drift check. Returns the decoded payload or a typed
+// cliexit error.
+func (c *Client) SystemVersion(ctx context.Context) (SystemVersionOutput, error) {
+	var out SystemVersionOutput
+	if err := c.Call(ctx, "system_version", map[string]any{}, &out); err != nil {
+		return SystemVersionOutput{}, err
+	}
+	return out, nil
+}
+
 // ToolNameToPath translates a tool name (`<noun>_<verb>` form, where
 // the verb itself may carry further `_` separators) into the URL path
 // the HTTP API exposes (`/<noun>/<verb>`, with `_` inside the verb

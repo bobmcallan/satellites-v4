@@ -107,6 +107,16 @@ func runTaskCmd(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "satellites-client task run: dispatching %s (workspace=%s project=%s)\n",
 		taskID, t.WorkspaceID, t.ProjectID)
+	// sty_64e69db8: the dispatched claude subprocess re-invokes
+	// `satellites-client` (task_run.go and the various verb
+	// handlers) inside the per-task worktree. The dispatcher's
+	// parent process already passed the boot drift check;
+	// running it again in every spawned `satellites-client` call
+	// would re-cost an HTTP round-trip and risk a recursive exit
+	// 9 the orchestrator never asked for. Propagate the skip env
+	// via os.Setenv so the worker's `cmd.Env = append(os.Environ(),
+	// …)` inherits it.
+	_ = os.Setenv(driftEnvSkip, "1")
 	outcome, runErr := worker.RunDispatched(cmd.Context(), cfg, logger, api, env, os.Stdout, os.Stderr)
 	fmt.Fprintf(os.Stderr, "\nsatellites-client task run: outcome=%s\n", outcome)
 	if runErr != nil {

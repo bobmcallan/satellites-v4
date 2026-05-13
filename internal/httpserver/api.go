@@ -50,6 +50,7 @@ func NewAPIRegistrar(c *client.Client) *APIRegistrar {
 func (a *APIRegistrar) Register(mux *http.ServeMux) {
 	// Read verbs.
 	mux.HandleFunc("POST /api/v1/satellites/info", a.handleSatellitesInfo)
+	mux.HandleFunc("POST /api/v1/system/version", a.handleSystemVersion)
 	mux.HandleFunc("POST /api/v1/session/whoami", a.handleSessionWhoami)
 	mux.HandleFunc("POST /api/v1/session/register", a.handleSessionRegister)
 	mux.HandleFunc("POST /api/v1/ledger/get", a.handleLedgerGet)
@@ -135,6 +136,20 @@ func (a *APIRegistrar) resolveScopedAndMemberships(r *http.Request, requestedPro
 func (a *APIRegistrar) handleSatellitesInfo(w http.ResponseWriter, r *http.Request) {
 	cc := a.clientCaller(r)
 	out, err := a.client.SatellitesInfo(r.Context(), cc, client.SatellitesInfoInput{})
+	if err != nil {
+		writeAPIError(w, err)
+		return
+	}
+	writeAPIJSON(w, out)
+}
+
+// handleSystemVersion forwards to the typed SystemVersion method on
+// *client.Client (sty_64e69db8). The typed surface owns the manifest
+// fetch + TTL cache; this handler only decodes the request, threads
+// the caller, and writes the JSON payload.
+func (a *APIRegistrar) handleSystemVersion(w http.ResponseWriter, r *http.Request) {
+	cc := a.clientCaller(r)
+	out, err := a.client.SystemVersion(r.Context(), cc, client.SystemVersionInput{})
 	if err != nil {
 		writeAPIError(w, err)
 		return

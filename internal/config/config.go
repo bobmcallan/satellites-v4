@@ -210,6 +210,14 @@ type Config struct {
 	// default. Env override: SATELLITES_EMBEDDINGS_DIMENSION.
 	EmbeddingsDimension int `toml:"embeddings_dimension"`
 
+	// ManifestURL is the GitHub Release manifest URL the system_version
+	// verb fetches to surface the latest published satellites-client
+	// build stamp. Default points at the "latest" alias on the
+	// satellites GitHub Releases surface; tests override this via the
+	// SATELLITES_MANIFEST_URL env var (or TOML key) to point at a fake
+	// httptest server. sty_64e69db8.
+	ManifestURL string `toml:"manifest_url"`
+
 	// loadedTOMLPath is set by Load() to the absolute path of the TOML
 	// file that was actually read (empty when defaults+env supplied the
 	// whole config). Read via the LoadedTOMLPath() accessor — the field
@@ -283,6 +291,7 @@ var describeTable = []FieldDoc{
 	{Field: "EmbeddingsAPIKey", Env: "SATELLITES_EMBEDDINGS_API_KEY", Default: "(empty — required for provider=gemini)", Description: "Embeddings provider API key. Never logged."},
 	{Field: "EmbeddingsBaseURL", Env: "SATELLITES_EMBEDDINGS_BASE_URL", Default: "(empty — provider canonical endpoint)", Description: "Embeddings provider HTTP base URL override."},
 	{Field: "EmbeddingsDimension", Env: "SATELLITES_EMBEDDINGS_DIMENSION", Default: "0 (provider default)", Description: "Optional embeddings vector dimensionality override."},
+	{Field: "ManifestURL", Env: "SATELLITES_MANIFEST_URL", Default: "https://github.com/bobmcallan/satellites/releases/latest/download/manifest.json", Description: "GitHub Release manifest URL fetched by the system_version verb."},
 }
 
 // Describe returns the canonical (Field, Env, Default, ProdRecommended,
@@ -439,6 +448,7 @@ type tomlOverlay struct {
 	EmbeddingsAPIKey     *string   `toml:"embeddings_api_key"`
 	EmbeddingsBaseURL    *string   `toml:"embeddings_base_url"`
 	EmbeddingsDimension  *int      `toml:"embeddings_dimension"`
+	ManifestURL          *string   `toml:"manifest_url"`
 }
 
 // applyTo copies overlay values into cfg for every non-nil field. Returns
@@ -570,6 +580,9 @@ func (o tomlOverlay) applyTo(cfg *Config, warnings *[]string) bool {
 	if o.EmbeddingsDimension != nil {
 		cfg.EmbeddingsDimension = *o.EmbeddingsDimension
 	}
+	if o.ManifestURL != nil {
+		cfg.ManifestURL = *o.ManifestURL
+	}
 	return devModeSet
 }
 
@@ -621,6 +634,7 @@ func defaults() *Config {
 		OAuthCodeTTL:         10 * time.Minute,
 		GeminiReviewModel:    "gemini-2.5-flash",
 		EmbeddingsProvider:   "none",
+		ManifestURL:          "https://github.com/bobmcallan/satellites/releases/latest/download/manifest.json",
 	}
 }
 
@@ -784,6 +798,9 @@ func applyEnvOverrides(cfg *Config, warnings *[]string) {
 		} else {
 			cfg.EmbeddingsDimension = d
 		}
+	}
+	if v := os.Getenv("SATELLITES_MANIFEST_URL"); v != "" {
+		cfg.ManifestURL = v
 	}
 }
 

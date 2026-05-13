@@ -60,6 +60,11 @@ type Deps struct {
 	StartedAt        time.Time
 	DefaultProjectID string
 	Logger           arbor.ILogger
+	// ManifestURL is the GitHub Release manifest URL the
+	// SystemVersion typed method fetches at boot/refresh. Empty
+	// disables the verb (returns an error). Set by the wire layer
+	// from cfg.ManifestURL. sty_64e69db8.
+	ManifestURL string
 }
 
 // Client carries the typed business surface that callers (MCP, CLI,

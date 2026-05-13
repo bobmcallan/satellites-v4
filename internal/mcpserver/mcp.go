@@ -178,6 +178,15 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	)
 	s.mcp.AddTool(execTool, s.handleSatellitesExec)
 
+	// sty_64e69db8: system_version surfaces the GitHub Release
+	// manifest stamp so satellites-client boots can detect version
+	// drift. Thin forwarder onto *client.Client.SystemVersion per
+	// pr_mcp_cli_shared_path.
+	systemVersionTool := mcpgo.NewTool("system_version",
+		mcpgo.WithDescription("Return the latest published satellites-client release stamp by fetching the configured GitHub Release manifest. Cached server-side for 60s. Read-only."),
+	)
+	s.mcp.AddTool(systemVersionTool, s.handleSystemVersion)
+
 	if s.deps.Documents != nil {
 		// document_ingest_file MCP registration removed in sty_4db0e025
 		// slice B3 — operator-only verb, now reachable through /api/v1 +

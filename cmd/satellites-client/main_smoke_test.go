@@ -129,7 +129,7 @@ func TestNounGroupsRegistered(t *testing.T) {
 		"skill":     6,
 		"changelog": 5,
 		"session":   2,
-		"system":    1,
+		"system":    2,
 		"portal":    1,
 		"auth":      1,
 	}

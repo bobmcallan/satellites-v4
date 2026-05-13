@@ -16,7 +16,7 @@ var writesOperatorHappy = []struct {
 	tool  string
 	reply map[string]any
 }{
-	{"story create", []string{"story", "create", "--project-id", "proj_x", "--title", "T"}, "story_create", map[string]any{"id": "sty_x"}},
+	{"story add", []string{"story", "add", "--project-id", "proj_x", "--title", "T"}, "story_add", map[string]any{"id": "sty_x"}},
 	{"story update", []string{"story", "update", "--id", "sty_x", "--title", "T2"}, "story_update", map[string]any{"id": "sty_x"}},
 	{"story delete", []string{"story", "delete", "sty_x"}, "story_delete", map[string]any{"id": "sty_x", "deleted": true}},
 	{"project create", []string{"project", "create", "--name", "proj"}, "project_create", map[string]any{"id": "proj_x"}},

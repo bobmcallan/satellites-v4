@@ -41,7 +41,7 @@ import (
 
 // registerOperatorWriteRoutes wires the Tier A mutating routes.
 func (a *APIRegistrar) registerOperatorWriteRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/v1/story/create", a.handleStoryCreate)
+	mux.HandleFunc("POST /api/v1/story/add", a.handleStoryAdd)
 	mux.HandleFunc("POST /api/v1/story/update", a.handleStoryUpdate)
 	mux.HandleFunc("POST /api/v1/story/delete", a.handleStoryDelete)
 
@@ -90,7 +90,7 @@ func (a *APIRegistrar) registerOperatorWriteRoutes(mux *http.ServeMux) {
 
 // ----- story -----
 
-func (a *APIRegistrar) handleStoryCreate(w http.ResponseWriter, r *http.Request) {
+func (a *APIRegistrar) handleStoryAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ProjectID          string   `json:"project_id"`
 		Title              string   `json:"title"`

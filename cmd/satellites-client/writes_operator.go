@@ -20,15 +20,15 @@ func unmarshalJSON(raw string, dst any) error { return json.Unmarshal([]byte(raw
 
 // ----- story -----
 
-func newStoryCreateCmd() *cobra.Command {
+func newStoryAddCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new story.",
-		RunE: writeHandler("story_create", func(cmd *cobra.Command, args []string) (any, error) {
+		Use:   "add",
+		Short: "Add a new story.",
+		RunE: writeHandler("story_add", func(cmd *cobra.Command, args []string) (any, error) {
 			projectID, _ := cmd.Flags().GetString("project-id")
 			title, _ := cmd.Flags().GetString("title")
 			if projectID == "" || title == "" {
-				return nil, cliexit.Newf(cliexit.Usage, "story create: --project-id and --title are required")
+				return nil, cliexit.Newf(cliexit.Usage, "story add: --project-id and --title are required")
 			}
 			out := map[string]any{"project_id": projectID, "title": title}
 			if v, _ := cmd.Flags().GetString("description"); v != "" {

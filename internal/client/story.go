@@ -30,12 +30,12 @@ var errStoryStoreNotConfigured = errors.New("story store not configured")
 // callers can map "story_not_found" envelope tags consistently.
 var errStoryNotFoundForUpdate = errors.New("story not found")
 
-// ErrStoryProjectIDRequired is returned when StoryCreate is called
+// ErrStoryProjectIDRequired is returned when StoryAdd is called
 // without a project id. Mirrors the historical "project_id is required"
 // envelope produced by the MCP RequireString path.
 var ErrStoryProjectIDRequired = errors.New("project_id is required")
 
-// ErrStoryTitleRequired is returned when StoryCreate is called without
+// ErrStoryTitleRequired is returned when StoryAdd is called without
 // a title. Mirrors the historical "title is required" envelope.
 var ErrStoryTitleRequired = errors.New("title is required")
 
@@ -44,7 +44,7 @@ var ErrStoryTitleRequired = errors.New("title is required")
 var ErrStoryIDRequired = errors.New("id is required")
 
 // validStoryCategories enumerates the categories accepted by
-// StoryCreate / StoryUpdate. Kept on the typed surface because the
+// StoryAdd / StoryUpdate. Kept on the typed surface because the
 // store layer is intentionally schema-free on category strings.
 var validStoryCategories = map[string]struct{}{
 	"feature":        {},
@@ -243,13 +243,13 @@ func (c *Client) StoryGet(ctx context.Context, caller Caller, in StoryGetInput) 
 	return out, nil
 }
 
-// StoryCreateInput captures the story_create request shape. The wire
+// StoryAddInput captures the story_add request shape. The wire
 // layer pre-resolves project + workspace ids (the MCP handler runs
 // resolveProjectID + resolveProjectWorkspaceID before calling); the
 // typed method requires those to be supplied so it stays free of
 // wire-only request context. Now overrides the timestamp for
 // deterministic tests; zero falls back to time.Now().UTC().
-type StoryCreateInput struct {
+type StoryAddInput struct {
 	ProjectID          string
 	WorkspaceID        string
 	Title              string
@@ -261,12 +261,12 @@ type StoryCreateInput struct {
 	Now                time.Time
 }
 
-// StoryCreate mints a new story row owned by caller.UserID. Returns
+// StoryAdd mints a new story row owned by caller.UserID. Returns
 // the freshly-persisted story.Story; the wire layer marshals it
 // unchanged. Default priority is "medium"; default category is
 // "feature" — mirrors the historical MCP handler defaults so the
 // JSON wire shape is byte-identical for omitted fields.
-func (c *Client) StoryCreate(ctx context.Context, caller Caller, in StoryCreateInput) (story.Story, error) {
+func (c *Client) StoryAdd(ctx context.Context, caller Caller, in StoryAddInput) (story.Story, error) {
 	if c.deps.Stories == nil {
 		return story.Story{}, errStoryStoreNotConfigured
 	}

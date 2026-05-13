@@ -1,6 +1,6 @@
 // Package mcpserver exposes the satellites MCP surface over Streamable HTTP.
 // v4 currently registers: satellites_info, document_ingest_file, document_get,
-// project_create/get/list, ledger_append/list, story_create/get/list/update_status,
+// project_create/get/list, ledger_append/list, story_get/list/update,
 // workspace_create/get/list. Subsequent epics add more.
 package mcpserver
 
@@ -335,18 +335,11 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	}
 
 	if s.deps.Stories != nil {
-		createStoryTool := mcpgo.NewTool("story_create",
-			mcpgo.WithDescription("Create a new story in a project the caller owns."),
-			mcpgo.WithString("project_id", mcpgo.Required(), mcpgo.Description("Project scope.")),
-			mcpgo.WithString("title", mcpgo.Required(), mcpgo.Description("Short story title.")),
-			mcpgo.WithString("description", mcpgo.Description("Full description.")),
-			mcpgo.WithString("acceptance_criteria", mcpgo.Description("What done looks like.")),
-			mcpgo.WithString("priority", mcpgo.Description("critical | high | medium | low")),
-			mcpgo.WithString("category", mcpgo.Description("feature | bug | improvement | infrastructure | documentation")),
-			mcpgo.WithArray("tags", mcpgo.Description("Free-form tags (e.g. epic:v4-stories)."),
-				mcpgo.Items(map[string]any{"type": "string"})),
-		)
-		s.mcp.AddTool(createStoryTool, s.handleStoryCreate)
+		// story_add MCP registration removed in sty_4db0e025 slice C1+B2 —
+		// operator authoring per sty_3dc39a5c "Removed from MCP" list.
+		// Reachable through /api/v1/story/add + the satellites-client CLI
+		// only. handleStoryAdd remains so the typed method on *client.Client
+		// continues to back the HTTP route and CLI verb.
 
 		updateStoryTool := mcpgo.NewTool("story_update",
 			mcpgo.WithDescription("Update a story's mutable non-status fields. Pass only the fields you want to change; omitted fields are left untouched. Tags replace wholesale (V3 parity) — pass an empty array to clear. Status transitions go through story_update_status."),
@@ -392,16 +385,12 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		)
 		s.mcp.AddTool(fieldSetTool, s.handleStoryFieldSet)
 
-		templateGetTool := mcpgo.NewTool("story_template_get",
-			mcpgo.WithDescription("Return the parsed story template for a given category. Convenience over document_get with type=story_template."),
-			mcpgo.WithString("category", mcpgo.Required(), mcpgo.Description("Category name: bug | feature | improvement | infrastructure | documentation.")),
-		)
-		s.mcp.AddTool(templateGetTool, s.handleStoryTemplateGet)
-
-		templateListTool := mcpgo.NewTool("story_template_list",
-			mcpgo.WithDescription("List every registered story template. Convenience over document_list with type=story_template."),
-		)
-		s.mcp.AddTool(templateListTool, s.handleStoryTemplateList)
+		// story_template_get / story_template_list MCP registrations removed
+		// in sty_4db0e025 slice C1+B2 — operator authoring per sty_3dc39a5c
+		// "Removed from MCP" list. Reachable through /api/v1 + the
+		// satellites-client CLI only. handleStoryTemplateGet /
+		// handleStoryTemplateList remain so the typed methods on
+		// *client.Client continue to back the HTTP routes and CLI verbs.
 	}
 
 	if s.deps.Stories != nil && s.deps.Ledger != nil && s.deps.Documents != nil && s.deps.Projects != nil {
@@ -643,16 +632,11 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		)
 		s.mcp.AddTool(taskWalkTool, s.handleTaskWalk)
 
-		// sty_a248f4df: story_export_walk renders the same walk projection
-		// as paste-ready markdown for PR descriptions, delivery reports,
-		// and stakeholder hand-offs. Currently markdown-only; other
-		// formats are out of scope.
-		exportWalkTool := mcpgo.NewTool("story_export_walk",
-			mcpgo.WithDescription("Render a story's contract walk as paste-ready markdown. Returns {filename, content, format}. Iteration loops collapse under a single H2 header (\"## develop ×3 (loop)\"); each CI in the loop becomes an H3 subsection with role, outcome, timestamps, claimer, and ledger anchor counts. Sty_a248f4df."),
-			mcpgo.WithString("story_id", mcpgo.Required(), mcpgo.Description("Story whose walk should be exported.")),
-			mcpgo.WithString("format", mcpgo.Description("Output format. Currently only \"markdown\" (default).")),
-		)
-		s.mcp.AddTool(exportWalkTool, s.handleStoryExportWalk)
+		// story_export_walk MCP registration removed in sty_4db0e025 slice
+		// C1+B2 — operator authoring per sty_3dc39a5c "Removed from MCP"
+		// list. Reachable through /api/v1 + the satellites-client CLI only.
+		// handleStoryExportWalk remains so the typed method on
+		// *client.Client continues to back the HTTP route and CLI verb.
 
 	}
 
@@ -1627,10 +1611,10 @@ func buildLedgerListArgs(req mcpgo.CallToolRequest) client.LedgerListArgs {
 	return out
 }
 
-// handleStoryCreate is the thin wire adapter for story_create. Resolves
+// handleStoryAdd is the thin wire adapter for story_add. Resolves
 // the caller's project + workspace scope, delegates to
-// client.StoryCreate, marshals the freshly-persisted row unchanged.
-func (s *Server) handleStoryCreate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+// client.StoryAdd, marshals the freshly-persisted row unchanged.
+func (s *Server) handleStoryAdd(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
@@ -1638,7 +1622,7 @@ func (s *Server) handleStoryCreate(ctx context.Context, req mcpgo.CallToolReques
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	st, err := s.cli().StoryCreate(ctx, toClientCaller(caller), client.StoryCreateInput{
+	st, err := s.cli().StoryAdd(ctx, toClientCaller(caller), client.StoryAddInput{
 		ProjectID: resolvedID, WorkspaceID: s.resolveProjectWorkspaceID(ctx, resolvedID),
 		Title: req.GetString("title", ""), Description: req.GetString("description", ""),
 		AcceptanceCriteria: req.GetString("acceptance_criteria", ""),
@@ -1649,7 +1633,7 @@ func (s *Server) handleStoryCreate(ctx context.Context, req mcpgo.CallToolReques
 		return mcpgo.NewToolResultError(storyErrMessage(err)), nil
 	}
 	body, _ := json.Marshal(st)
-	s.logger.Info().Str("method", "tools/call").Str("tool", "story_create").
+	s.logger.Info().Str("method", "tools/call").Str("tool", "story_add").
 		Str("project_id", resolvedID).Str("story_id", st.ID).
 		Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
@@ -1718,7 +1702,7 @@ func buildStoryUpdateInput(req mcpgo.CallToolRequest, id string, memberships []s
 }
 
 // storyErrMessage maps typed sentinels from internal/client into the
-// wire-error envelopes the story_create/update handlers historically
+// wire-error envelopes the story_add/update handlers historically
 // produced. Mirrors the projectErrMessage pattern (slice 1) so each
 // adapter stays inside the ≤25-line floor.
 func storyErrMessage(err error) string {

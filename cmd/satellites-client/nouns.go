@@ -54,7 +54,7 @@ func verbStub(use, full, short string) *cobra.Command {
 func registerStoryNoun(root *cobra.Command) {
 	noun := nounStub("story", "Stories — units of deliverable work.")
 	noun.AddCommand(
-		newStoryCreateCmd(),       // sty_f38bd573
+		newStoryAddCmd(),          // sty_4db0e025 (was newStoryCreateCmd)
 		newStoryGetCmd(),          // order:04
 		newStoryListCmd(),         // sty_ef248ab2
 		newStoryUpdateCmd(),       // sty_f38bd573

@@ -100,8 +100,10 @@ func TestAgentCompose_FullStack(t *testing.T) {
 	})
 	skillID, _ := skillDoc["id"].(string)
 
-	// Create a story scoped to the project.
-	storyResp := callTool(t, ctx, mcpURL, "key_agentcompose", "story_create", map[string]any{
+	// Create a story scoped to the project. story_add was removed
+	// from MCP in sty_4db0e025 C1+B2 (operator authoring per
+	// sty_3dc39a5c "Removed from MCP"); route via /api/v1.
+	storyResp := callAPIv1(t, ctx, baseURL, "key_agentcompose", "story_add", map[string]any{
 		"project_id": projectID,
 		"title":      "story for agent compose",
 	})

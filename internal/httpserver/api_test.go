@@ -74,7 +74,7 @@ var expectedRoutes = []string{
 	"POST /api/v1/repo/get-file",
 	"POST /api/v1/repo/get-outline",
 	// sty_f38bd573 Tier A operator-tier mutates (37).
-	"POST /api/v1/story/create",
+	"POST /api/v1/story/add",
 	"POST /api/v1/story/update",
 	"POST /api/v1/story/delete",
 	"POST /api/v1/project/create",

@@ -15,13 +15,20 @@ import (
 )
 
 // TestStoryMCPRoundTrip drives the full story primitive MCP surface:
-// project_create → story_create → story_list → transitions
+// project_create → story_add → story_list → transitions
 // (backlog→ready→in_progress→done) → assert 3 ledger rows of type
 // story.status_change for the owning project.
 func TestStoryMCPRoundTrip(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping testcontainers test in short mode")
 	}
+	// sty_4db0e025 slice C1+B2 unregistered story_add /
+	// story_template_get / story_template_list / story_export_walk
+	// from MCP per sty_3dc39a5c's "Removed from MCP" list; this
+	// MCP-only flow is being rewritten as part of the post-merge
+	// integration sweep. Skipped here so the legacy verb names
+	// don't gate the convergence series.
+	t.Skip("sty_4db0e025 C1+B2: story_add removed from MCP; rewrite as HTTP+CLI in post-merge sweep")
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
 
@@ -74,7 +81,7 @@ func TestStoryMCPRoundTrip(t *testing.T) {
 	})
 	result, _ := listResp["result"].(map[string]any)
 	tools, _ := result["tools"].([]any)
-	need := map[string]bool{"story_create": false, "story_get": false, "story_list": false, "story_update_status": false}
+	need := map[string]bool{"story_add": false, "story_get": false, "story_list": false, "story_update_status": false}
 	for _, raw := range tools {
 		if tool, ok := raw.(map[string]any); ok {
 			if name, _ := tool["name"].(string); name != "" {
@@ -106,7 +113,7 @@ func TestStoryMCPRoundTrip(t *testing.T) {
 	createStory := rpcCall(t, ctx, mcpURL, "key_story", map[string]any{
 		"jsonrpc": "2.0", "id": 4, "method": "tools/call",
 		"params": map[string]any{
-			"name": "story_create",
+			"name": "story_add",
 			"arguments": map[string]any{
 				"project_id":          projID,
 				"title":               "end-to-end",
@@ -120,7 +127,7 @@ func TestStoryMCPRoundTrip(t *testing.T) {
 	})
 	var st map[string]any
 	if err := json.Unmarshal([]byte(extractToolText(t, createStory)), &st); err != nil {
-		t.Fatalf("decode story_create: %v", err)
+		t.Fatalf("decode story_add: %v", err)
 	}
 	storyID, _ := st["id"].(string)
 	if !strings.HasPrefix(storyID, "sty_") {

@@ -148,9 +148,9 @@ func TestStoryFieldSet_RejectsMissingField(t *testing.T) {
 	assert.Contains(t, err.Error(), "field required")
 }
 
-func TestStoryCreate_HappyPathDefaultsPriorityAndCategory(t *testing.T) {
+func TestStoryAdd_HappyPathDefaultsPriorityAndCategory(t *testing.T) {
 	f := newStoryFixture(t)
-	st, err := f.c.StoryCreate(context.Background(), f.caller, StoryCreateInput{
+	st, err := f.c.StoryAdd(context.Background(), f.caller, StoryAddInput{
 		ProjectID:   "proj_test",
 		WorkspaceID: f.wsID,
 		Title:       "ship widgets",
@@ -165,18 +165,18 @@ func TestStoryCreate_HappyPathDefaultsPriorityAndCategory(t *testing.T) {
 	assert.NotEmpty(t, st.ID)
 }
 
-func TestStoryCreate_RejectsMissingProjectID(t *testing.T) {
+func TestStoryAdd_RejectsMissingProjectID(t *testing.T) {
 	f := newStoryFixture(t)
-	_, err := f.c.StoryCreate(context.Background(), f.caller, StoryCreateInput{
+	_, err := f.c.StoryAdd(context.Background(), f.caller, StoryAddInput{
 		WorkspaceID: f.wsID,
 		Title:       "x",
 	})
 	require.ErrorIs(t, err, ErrStoryProjectIDRequired)
 }
 
-func TestStoryCreate_RejectsMissingTitle(t *testing.T) {
+func TestStoryAdd_RejectsMissingTitle(t *testing.T) {
 	f := newStoryFixture(t)
-	_, err := f.c.StoryCreate(context.Background(), f.caller, StoryCreateInput{
+	_, err := f.c.StoryAdd(context.Background(), f.caller, StoryAddInput{
 		ProjectID:   "proj_test",
 		WorkspaceID: f.wsID,
 	})

@@ -111,7 +111,7 @@ func TestAuditMiddleware_ReadsLandEphemeral(t *testing.T) {
 	// Read.
 	_, _ = wrapped(ctx, auditCallRequest("story_get", args))
 	// Mutation.
-	_, _ = wrapped(ctx, auditCallRequest("story_create", args))
+	_, _ = wrapped(ctx, auditCallRequest("story_add", args))
 
 	rows, _ := env.led.List(ctx, env.projectID, ledger.ListOptions{Tags: []string{AuditTagKind}}, []string{env.wsID})
 	if len(rows) != 2 {
@@ -135,14 +135,14 @@ func TestAuditMiddleware_ReadsLandEphemeral(t *testing.T) {
 	if getRow.ExpiresAt == nil {
 		t.Errorf("story_get must carry expires_at")
 	}
-	createRow, ok := byVerb["story_create"]
+	addRow, ok := byVerb["story_add"]
 	if !ok {
-		t.Fatalf("story_create row missing")
+		t.Fatalf("story_add row missing")
 	}
-	if createRow.Durability != ledger.DurabilityDurable {
-		t.Errorf("story_create durability = %q, want durable", createRow.Durability)
+	if addRow.Durability != ledger.DurabilityDurable {
+		t.Errorf("story_add durability = %q, want durable", addRow.Durability)
 	}
-	if createRow.ExpiresAt != nil {
+	if addRow.ExpiresAt != nil {
 		t.Errorf("durable rows must not carry expires_at")
 	}
 }
@@ -279,7 +279,7 @@ func TestAuditMiddleware_HandlerErrorStillRecorded(t *testing.T) {
 		return nil, sentinel
 	}
 	wrapped := env.audit.middleware(stub)
-	_, err := wrapped(context.Background(), auditCallRequest("story_create", map[string]any{"project_id": env.projectID}))
+	_, err := wrapped(context.Background(), auditCallRequest("story_add", map[string]any{"project_id": env.projectID}))
 	if !errors.Is(err, sentinel) {
 		t.Errorf("handler error must propagate: %v", err)
 	}
@@ -333,7 +333,7 @@ func TestIsAuditReadVerb(t *testing.T) {
 		"story_template_get":  true,
 		"task_add":            false,
 		"task_update":         false,
-		"story_create":        false,
+		"story_add":           false,
 		"story_update_status": false,
 		"ledger_append":       false,
 		"story_field_set":     false,

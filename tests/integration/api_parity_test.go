@@ -248,7 +248,10 @@ func bootstrapParityFixtures(t *testing.T, ctx context.Context, ff *parityFixtur
 	}
 	ff.projectID = pid
 
-	storyResp := callTool(t, ctx, ff.mcpURL, bearer, "story_create", map[string]any{
+	// story_add was removed from MCP in sty_4db0e025 slice C1+B2
+	// (operator authoring per sty_3dc39a5c "Removed from MCP" list);
+	// route through /api/v1/story/add instead.
+	storyResp := callAPIv1(t, ctx, ff.baseURL, bearer, "story_add", map[string]any{
 		"project_id":          pid,
 		"title":               "parity-test story",
 		"description":         "fixture",
@@ -257,7 +260,7 @@ func bootstrapParityFixtures(t *testing.T, ctx context.Context, ff *parityFixtur
 	})
 	sid, _ := storyResp["id"].(string)
 	if sid == "" {
-		t.Fatalf("story_create returned no id: %+v", storyResp)
+		t.Fatalf("story_add returned no id: %+v", storyResp)
 	}
 	ff.storyID = sid
 

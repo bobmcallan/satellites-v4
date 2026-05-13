@@ -12,7 +12,7 @@
 # sty_38bec58f (ldg_<8hex>); see story_get(id=sty_38bec58f).
 #
 # Usage:
-#   1. Mint a test story (`story_create`) and a `task_add(agent_id=
+#   1. Mint a test story (`story_add`) and a `task_add(agent_id=
 #      developer_agent, action=contract:develop, prompt=<canonical>)`
 #      task on it. Capture <task_id>.
 #   2. Create a per-task worktree at `.satellites-agents/<task_id>`

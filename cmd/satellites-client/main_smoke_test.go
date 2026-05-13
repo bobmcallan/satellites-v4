@@ -46,7 +46,7 @@ func TestRootVersion(t *testing.T) {
 
 func TestStoryHelpListsVerbs(t *testing.T) {
 	helpsExitZero(t, []string{"story", "--help"},
-		"create",
+		"add",
 		"get",
 		"list",
 		"update-status",

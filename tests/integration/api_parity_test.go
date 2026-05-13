@@ -250,9 +250,9 @@ func bootstrapParityFixtures(t *testing.T, ctx context.Context, ff *parityFixtur
 	}
 	ff.projectID = pid
 
-	// story_add was removed from MCP in sty_4db0e025 slice C1+B2
-	// (operator authoring per sty_3dc39a5c "Removed from MCP" list);
-	// route through /api/v1/story/add instead.
+	// story_add is reachable on both transports (sty_ed6b8a51 reinstated
+	// the MCP registration); the bootstrap fixture uses /api/v1 for a
+	// single deterministic call before downstream cases run.
 	storyResp := callAPIv1(t, ctx, ff.baseURL, bearer, "story_add", map[string]any{
 		"project_id":          pid,
 		"title":               "parity-test story",
@@ -446,6 +446,21 @@ func buildParityCases() []parityCase {
 					"prompt":   "parity task_plan",
 					"action":   "contract:story_close",
 					"origin":   "story_stage",
+				}
+			},
+		},
+		{
+			// story_add is invoked twice (one MCP, one /api/v1) per the parity
+			// matrix; the title must be unique per call to avoid colliding
+			// with the bootstrap fixture or the first-leg invocation.
+			name: "story_add",
+			args: func(_ *testing.T, _ context.Context, ff *parityFixtures) map[string]any {
+				return map[string]any{
+					"project_id":          ff.projectID,
+					"title":               fmt.Sprintf("parity-story-add-%d", time.Now().UnixNano()),
+					"description":         "parity case fixture",
+					"acceptance_criteria": "ac",
+					"category":            "feature",
 				}
 			},
 		},

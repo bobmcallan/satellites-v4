@@ -333,7 +333,6 @@ func TestIsAuditReadVerb(t *testing.T) {
 		"story_template_get": true,
 		"task_add":           false,
 		"task_update":        false,
-		"story_add":          false,
 		"story_update":       false, // sty_4db0e025 D1 folded update_status + field_set into story_update
 		"ledger_append":      false,
 	}

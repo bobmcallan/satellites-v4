@@ -345,11 +345,18 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	}
 
 	if s.deps.Stories != nil {
-		// story_add MCP registration removed in sty_4db0e025 slice C1+B2 —
-		// operator authoring per sty_3dc39a5c "Removed from MCP" list.
-		// Reachable through /api/v1/story/add + the satellites-client CLI
-		// only. handleStoryAdd remains so the typed method on *client.Client
-		// continues to back the HTTP route and CLI verb.
+		addStoryTool := mcpgo.NewTool("story_add",
+			mcpgo.WithDescription("Mint a new story row in the named project. Returns the freshly-persisted story.Story. Defaults: priority=medium, category=feature. project_id and title are required; everything else is optional."),
+			mcpgo.WithString("project_id", mcpgo.Required(), mcpgo.Description("Owning project id (proj_<8hex>).")),
+			mcpgo.WithString("title", mcpgo.Required(), mcpgo.Description("Story title.")),
+			mcpgo.WithString("description", mcpgo.Description("Story body / why this work matters.")),
+			mcpgo.WithString("acceptance_criteria", mcpgo.Description("Per-AC pass/fail conditions.")),
+			mcpgo.WithString("priority", mcpgo.Description("critical | high | medium | low (default medium).")),
+			mcpgo.WithString("category", mcpgo.Description("feature | bug | improvement | infrastructure | documentation (default feature).")),
+			mcpgo.WithArray("tags", mcpgo.Description("Tags/labels."),
+				mcpgo.Items(map[string]any{"type": "string"})),
+		)
+		s.mcp.AddTool(addStoryTool, s.handleStoryAdd)
 
 		updateStoryTool := mcpgo.NewTool("story_update",
 			mcpgo.WithDescription("Update a story. Pass only the keys you want to change; omitted keys are left untouched. Tags replace wholesale — pass an empty array to clear. Status moves the story through the lifecycle (ready | in_progress | done | cancelled); the substrate's pr_story_terminal_gate rejects done/cancelled with open work tasks. Fields writes template-declared values (e.g. repro, fix_commit, root_cause); unknown field names are rejected against the category template. Sty_4db0e025 D1 folded story_update_status + story_field_set into this single verb."),

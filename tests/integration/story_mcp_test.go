@@ -22,13 +22,6 @@ func TestStoryMCPRoundTrip(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping testcontainers test in short mode")
 	}
-	// sty_4db0e025 slice C1+B2 unregistered story_add /
-	// story_template_get / story_template_list / story_export_walk
-	// from MCP per sty_3dc39a5c's "Removed from MCP" list; this
-	// MCP-only flow is being rewritten as part of the post-merge
-	// integration sweep. Skipped here so the legacy verb names
-	// don't gate the convergence series.
-	t.Skip("sty_4db0e025 C1+B2: story_add removed from MCP; rewrite as HTTP+CLI in post-merge sweep")
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
 
@@ -97,16 +90,9 @@ func TestStoryMCPRoundTrip(t *testing.T) {
 		}
 	}
 
-	// Create project.
-	createProj := rpcCall(t, ctx, mcpURL, "key_story", map[string]any{
-		"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-		"params": map[string]any{
-			"name":      "project_add",
-			"arguments": map[string]any{"name": "story-smoke"},
-		},
-	})
-	var proj map[string]any
-	_ = json.Unmarshal([]byte(extractToolText(t, createProj)), &proj)
+	// project_add was removed from MCP in sty_4db0e025 C9 (operator
+	// authoring per sty_3dc39a5c "Removed from MCP"); route via /api/v1.
+	proj := callAPIv1(t, ctx, baseURL, "key_story", "project_add", map[string]any{"name": "story-smoke"})
 	projID, _ := proj["id"].(string)
 
 	// Create story.

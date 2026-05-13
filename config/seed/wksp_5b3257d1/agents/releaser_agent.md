@@ -9,7 +9,9 @@ instruction: |
   In merge_to_main, fast-forward merge to local main; reject any
   non-ff resolution. Per cli-primary order:08, substrate verbs map
   1:1 to satellites-client <noun> <verb> CLI invocations
-  (docs/cli-primary-design.md §2). Do not modify source files — develop is the
+  (docs/cli-primary-design.md §2). The binary installs colocated at
+  ./satellites/satellites-client under the consumer project root
+  (sibling sty_796b8fe1). Do not modify source files — develop is the
   single writer for code and version metadata. No force operations,
   no tag pushes, no branch deletes. If the develop commit is
   missing, stop and report. Close each task via

@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bobmcallan/satellites/internal/cliexit"
+	"github.com/bobmcallan/satellites/internal/config"
 )
 
 // ----- story -----
@@ -784,4 +785,45 @@ func newSystemVersionCmd() *cobra.Command {
 		Short: "Return the latest published satellites-client release stamp from the configured GitHub Release manifest.",
 		RunE:  readHandler("system_version", func(cmd *cobra.Command, args []string) (any, error) { return map[string]any{}, nil }),
 	}
+}
+
+// newSatellitesInitCmd surfaces the satellites_init verb (sty_796b8fe1).
+// Operator-facing form: `satellites-client satellites init` (registered
+// under the satellites noun) returns the structured install/refresh
+// payload (install_required | update_available | up_to_date).
+//
+// Idempotent: repeated invocations against the same manifest produce
+// byte-identical payloads modulo the fetched_at stamp. The verb is
+// read-only — installing the binary is the caller's job using the
+// download_url + sha256 the payload pins.
+//
+// When --current-version is omitted, the CLI seeds it from the
+// compiled-in `config.Version` stamp so the running binary's stamp
+// drives the state machine without operator interaction.
+func newSatellitesInitCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "init",
+		Short: "Return the install/refresh payload for satellites-client (state machine: install_required | update_available | up_to_date).",
+		RunE: readHandler("satellites_init", func(cmd *cobra.Command, args []string) (any, error) {
+			out := map[string]any{}
+			current, _ := cmd.Flags().GetString("current-version")
+			if current == "" {
+				current = config.Version
+			}
+			if current != "" {
+				out["current_version"] = current
+			}
+			if v, _ := cmd.Flags().GetString("os"); v != "" {
+				out["os"] = v
+			}
+			if v, _ := cmd.Flags().GetString("arch"); v != "" {
+				out["arch"] = v
+			}
+			return out, nil
+		}),
+	}
+	c.Flags().String("current-version", "", "Stamp of the locally installed satellites-client (defaults to the running binary's compiled-in version).")
+	c.Flags().String("os", "", "Override the server-side runtime.GOOS resolution (linux | darwin | windows).")
+	c.Flags().String("arch", "", "Override the server-side runtime.GOARCH resolution (amd64 | arm64).")
+	return c
 }

@@ -46,7 +46,10 @@ drift after the fact; this principle prevents the drift at build
 time by making the shared `internal/client` path the only place a
 substrate verb's logic lives. Adding a verb is one typed method on
 `*client.Client` and two thin wire adapters — both transports gain
-the new behaviour together, in one commit.
+the new behaviour together, in one commit. Worked example:
+`satellites_init` (sibling `sty_796b8fe1`) ships the typed method
+in `internal/client/satellites_init.go` and thin MCP / HTTP / CLI
+adapters that delegate to it.
 
 ## Why dispatch efficiency
 

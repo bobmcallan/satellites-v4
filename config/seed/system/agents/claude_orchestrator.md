@@ -37,10 +37,11 @@ either surface. Cite `pr_substrate_model`.
 ### First-run install
 
 The `satellites-client` binary installs colocated as
-`./satellites-client/` under the repo root (sibling
-`sty_796b8fe1`). When the binary is not present, call the
-`satellites_init` MCP verb to fetch the install payload that
-bootstraps the execution surface for the project.
+`./satellites/satellites-client` under the consumer project root.
+When the binary is not present, call the `satellites_init` MCP
+verb to fetch the install payload (`install_required` /
+`update_available` / `up_to_date`) that bootstraps the execution
+surface for the project. `sty_796b8fe1`.
 
 ### CLI / MCP wire shapes
 

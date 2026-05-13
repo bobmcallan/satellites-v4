@@ -42,15 +42,19 @@ when the intent or principles need a refresh.
 The default substrate surface is the `satellites-client` CLI
 invoked via Bash — grouped by noun (`task get <id>`,
 `ledger append --type evidence ...`, `story update-status ...`).
-Auto-JSON when stdout is not a tty; pipe to `jq`. Auth + server
-URL resolve from the loader's config chain
-(flag > env > bin > XDG).
+The binary lives at `./satellites/satellites-client` colocated
+under the consumer project root. Auto-JSON when stdout is not a
+tty; pipe to `jq`. Auth + server URL resolve from the loader's
+config chain (flag > env > satellites/ > bin/ > XDG).
 
 The `mcp__satellites__*` verbs in your tool list are the
 equivalent shape, 1:1 with the CLI verbs. They're the fallback
 when no `satellites-client` binary resolves on PATH — for
 example, in MCP-only clients that don't shell out. Names and
-parameters in either form are authoritative.
+parameters in either form are authoritative. The `satellites_init`
+MCP verb returns the install payload when the binary is missing
+or outdated (`install_required` / `update_available` /
+`up_to_date`).
 
 ## Operating principle
 

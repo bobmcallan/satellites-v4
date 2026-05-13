@@ -30,8 +30,8 @@ after.
 ## Worktree + branch shape
 
 Develop work runs in a per-task git worktree at
-`.satellites-agents/<task_id>` on a private branch named
-`agent-<task_id>-from-<base_sha>`. The orchestrator (or operator)
+`./satellites/worktree/<task_id>` on a private branch named
+`client-{task_id}-from-{base_sha}`. The orchestrator (or operator)
 creates the worktree before dispatch; the develop agent's commits
 land on that branch. The substrate stores no copy of branch state —
 git is the audit-of-record for code, the ledger is the

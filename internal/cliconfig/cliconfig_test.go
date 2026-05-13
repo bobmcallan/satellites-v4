@@ -27,8 +27,12 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Server != "" || cfg.Token != "" {
 		t.Fatalf("expected empty auth defaults, got %s", cfg)
 	}
-	if cfg.RepoPath != "." {
-		t.Fatalf("expected repo_path default '.', got %q", cfg.RepoPath)
+	// sty_796b8fe1: RepoPath is the parent of the exe dir. The
+	// strict-equality assertion against the exe-dir-derived default is
+	// in TestLoad_Defaults_RepoPathTracksExeDirParent; here we only
+	// require a non-empty value.
+	if cfg.RepoPath == "" {
+		t.Fatalf("expected non-empty repo_path default, got %q", cfg.RepoPath)
 	}
 	// sty_29d2dc1d: default WorktreeRoot is an absolute path under
 	// <exe_dir>/worktree (or the legacy ".satellites-clients/" fallback
@@ -141,6 +145,129 @@ func TestLoad_Defaults_WorktreeRootTracksExeDirNotCwd(t *testing.T) {
 	want := filepath.Join(filepath.Dir(real), "worktree")
 	if cfg.WorktreeRoot != want {
 		t.Fatalf("WorktreeRoot = %q, want %q (exe=%q)", cfg.WorktreeRoot, want, real)
+	}
+}
+
+// TestLoad_Defaults_RepoPathTracksExeDirParent locks in the
+// sty_796b8fe1 AC3 default: defaults().RepoPath resolves to the parent
+// of the exe dir. When the binary lives at
+// <consumer>/satellites/satellites-client, RepoPath = <consumer>.
+// Mirrors the LogPath / WorktreeRoot chdir-resilience pattern. The
+// fixture cwd is a tempdir distinct from the satellites repo per AC3
+// wording.
+func TestLoad_Defaults_RepoPathTracksExeDirParent(t *testing.T) {
+	t.Setenv("SATELLITES_CLIENT_CONFIG", "")
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	chdirToEmpty(t)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+
+	cfg, _, err := cliconfig.Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RepoPath == "" {
+		t.Fatal("RepoPath empty; expected exe-dir-parent-based default")
+	}
+	if cfg.RepoPath == "." {
+		t.Fatalf("RepoPath = %q; expected exe-dir-parent value, not cwd literal", cfg.RepoPath)
+	}
+	if strings.HasPrefix(cfg.RepoPath, cwd) {
+		t.Fatalf("RepoPath %q anchored on cwd %q — should track exe dir parent", cfg.RepoPath, cwd)
+	}
+	if !filepath.IsAbs(cfg.RepoPath) {
+		t.Fatalf("RepoPath %q is not absolute", cfg.RepoPath)
+	}
+	// Sanity: the resolved path must be the parent of the exe dir.
+	exe, err := os.Executable()
+	if err != nil {
+		t.Skipf("os.Executable unavailable: %v", err)
+	}
+	real, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		real = exe
+	}
+	want := filepath.Dir(filepath.Dir(real))
+	if cfg.RepoPath != want {
+		t.Fatalf("RepoPath = %q, want %q (exe=%q)", cfg.RepoPath, want, real)
+	}
+}
+
+// TestLoad_WalkUp_SatellitesPath: the canonical
+// `<root>/satellites/satellites-client.toml` is consulted ahead of the
+// legacy `<root>/bin/satellites-client.toml` during the repo-root
+// walk-up. sty_796b8fe1.
+//
+// Layout under <root>:
+//
+//	.git/
+//	satellites/satellites-client.toml  ← canonical, must win
+//	bin/satellites-client.toml         ← legacy, must NOT resolve
+//	sub/deep/                          ← test chdirs here
+func TestLoad_WalkUp_SatellitesPath(t *testing.T) {
+	t.Setenv("SATELLITES_CLIENT_CONFIG", "")
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	satDir := filepath.Join(root, "satellites")
+	if err := os.MkdirAll(satDir, 0o755); err != nil {
+		t.Fatalf("mkdir satellites: %v", err)
+	}
+	satToml := filepath.Join(satDir, "satellites-client.toml")
+	if err := os.WriteFile(satToml, []byte(`server = "https://canonical.example/api"
+token = "canonical-token"
+`), 0o600); err != nil {
+		t.Fatalf("write satellites toml: %v", err)
+	}
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "satellites-client.toml"),
+		[]byte(`server = "https://legacy.example/api"
+token = "legacy-token"
+`), 0o600); err != nil {
+		t.Fatalf("write bin toml: %v", err)
+	}
+	deep := filepath.Join(root, "sub", "deep")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatalf("mkdir deep: %v", err)
+	}
+
+	prevWD, _ := os.Getwd()
+	if err := os.Chdir(deep); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prevWD) })
+
+	cfg, warnings, err := cliconfig.Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	resolveSymlinks := func(p string) string {
+		out, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			return p
+		}
+		return out
+	}
+	gotPath := resolveSymlinks(cfg.LoadedTOMLPath())
+	wantPath := resolveSymlinks(satToml)
+	if gotPath != wantPath {
+		t.Fatalf("loaded path mismatch: got %q want %q (canonical satellites/ should win over legacy bin/)", gotPath, wantPath)
+	}
+	if cfg.Token != "canonical-token" {
+		t.Fatalf("token: got %q, want canonical-token", cfg.Token)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings: %v", warnings)
 	}
 }
 

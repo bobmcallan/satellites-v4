@@ -16,7 +16,9 @@ instruction: |
   accepted verdict the story status reconciler walks the story
   to done. Per cli-primary order:08, all verb-call references in
   this doc map 1:1 to satellites-client invocations
-  (docs/cli-primary-design.md §2).
+  (docs/cli-primary-design.md §2). The binary installs colocated
+  at ./satellites/satellites-client under the consumer project
+  root (sibling sty_796b8fe1).
 permission_patterns:
   - "Read:**"
   - "mcp__satellites__satellites_*"

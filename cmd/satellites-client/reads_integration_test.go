@@ -138,6 +138,51 @@ func TestReads_StoryGetCompactProjection(t *testing.T) {
 	// in the integration suite.
 }
 
+// TestReads_SatellitesInitHappyPath_RootAlias exercises the root-level
+// `satellites-client init` form against a stub server. sty_796b8fe1.
+//
+// Stdout assertion lives in the integration suite — the CLI writes to
+// os.Stdout, not Cobra's writer, so this smoke asserts the run is
+// clean (matches the TestReads_StoryGetCompactProjection convention).
+func TestReads_SatellitesInitHappyPath_RootAlias(t *testing.T) {
+	resetCLIState(t)
+	srv := stubHTTPAPIServer(t, map[string]any{
+		"satellites_init": map[string]any{
+			"state":               "install_required",
+			"target_install_path": "./satellites/satellites-client",
+		},
+	})
+	root := newRootCmd()
+	out := &bytes.Buffer{}
+	root.SetOut(out)
+	root.SetErr(out)
+	root.SetArgs([]string{"--server", srv.URL, "--token", "fake", "--json", "init"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+}
+
+// TestReads_SatellitesInitHappyPath_NounForm exercises the
+// `satellites-client satellites init` form (URL-parity) against the
+// same stub. sty_796b8fe1.
+func TestReads_SatellitesInitHappyPath_NounForm(t *testing.T) {
+	resetCLIState(t)
+	srv := stubHTTPAPIServer(t, map[string]any{
+		"satellites_init": map[string]any{
+			"state":               "up_to_date",
+			"target_install_path": "./satellites/satellites-client",
+		},
+	})
+	root := newRootCmd()
+	out := &bytes.Buffer{}
+	root.SetOut(out)
+	root.SetErr(out)
+	root.SetArgs([]string{"--server", srv.URL, "--token", "fake", "--json", "satellites", "init"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+}
+
 func TestReads_NotFoundEnvelopeMapsTo3(t *testing.T) {
 	resetCLIState(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

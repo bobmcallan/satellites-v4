@@ -48,6 +48,7 @@ var auditReadVerbSuffixes = []string{
 // suffix rule (e.g. `satellites_info`, `system_seed_run`).
 var auditReadVerbsExact = map[string]struct{}{
 	"satellites_info":         {},
+	"satellites_init":         {},
 	"task_walk":               {},
 	"task_log_list":           {},
 	"system_list_mcp_tools":   {},

@@ -55,19 +55,25 @@ type Config struct {
 	OAuthEnabled bool `toml:"oauth_enabled"`
 
 	// RepoPath is the path to the operator's git working tree the
-	// runtime drives (sty_3b3e4e66 Layer E first consumer). Default "."
-	// resolves to the CLI's working directory.
+	// runtime drives (sty_3b3e4e66 Layer E first consumer). The
+	// default is the parent directory of the exe — when the binary
+	// lives at `<consumer>/satellites/satellites-client`, this
+	// resolves to `<consumer>` without operator configuration
+	// (sty_796b8fe1, AC3). Falls back to "." when the exe directory
+	// can't be resolved (test environments without a real binary).
 	RepoPath string `toml:"repo_path"`
 
 	// WorktreeRoot is the directory where per-task worktrees live.
-	// Mirrors satellites-agent's worktree_root. Default
-	// ".satellites-agents/" — matches the heavy-path convention.
+	// Default is `<exe_dir>/worktree` (sty_29d2dc1d) — alongside the
+	// binary, so worktree state is co-located with the installed
+	// satellites-client rather than the operator's cwd.
 	WorktreeRoot string `toml:"worktree_root"`
 
 	// BranchTemplate names the branch convention the runtime stamps
 	// on per-task worktrees. Substitutions: {task_id}, {base_sha}.
-	// Default "agent-{task_id}-from-{base_sha}" matches the
-	// satellites-agent default.
+	// Default "client-{task_id}-from-{base_sha}" keeps a `client-`
+	// prefix so satellites-client per-task branches don't collide with
+	// satellites-agent's `agent-…` shape (sty_b1345841).
 	BranchTemplate string `toml:"branch_template"`
 
 	// ExecuteTimeout is the hard ceiling on in-process runner
@@ -104,11 +110,18 @@ type Config struct {
 // TOML file when not using --config.
 const configPathEnv = "SATELLITES_CLIENT_CONFIG"
 
-// defaultBinFile is the repo-relative file the loader checks when no
-// flag or env var resolves. Sits alongside the built binary at
-// bin/satellites-client (created by scripts/build-client.sh) so the
-// operator can drop a TOML next to the binary without rebuilding.
+// defaultBinFile is the legacy repo-relative file the loader checks
+// when no flag or env var resolves. Sits alongside the built binary
+// at bin/satellites-client (created by scripts/build-client.sh).
+// Pre-sty_796b8fe1 install layout.
 const defaultBinFile = "bin/satellites-client.toml"
+
+// defaultSatellitesFile is the canonical repo-relative file the
+// loader checks ahead of defaultBinFile. Operators who installed
+// via the `satellites_init` payload drop the TOML at
+// <consumer>/satellites/satellites-client.toml — co-located with
+// the binary the verb's payload pins. sty_796b8fe1 AC3.
+const defaultSatellitesFile = "satellites/satellites-client.toml"
 
 // LoadedTOMLPath returns the path Load actually read, or "" when
 // defaults supplied the whole config.
@@ -166,7 +179,8 @@ func defaultExeDir() string {
 func defaults() *Config {
 	// LogPath defaults to <exe_dir>/logs/ — matches satellites-agent's
 	// default in internal/config/agent_config.go::defaultsAgent. With the
-	// binary at bin/satellites-client, this resolves to bin/logs/.
+	// binary at <consumer>/satellites/satellites-client, this resolves
+	// to <consumer>/satellites/logs/.
 	// sty_ef4eedaa, exe-dir resolution fixed in sty_1f942fc6.
 	exeDir := defaultExeDir()
 	logDir := ""
@@ -174,7 +188,7 @@ func defaults() *Config {
 		logDir = filepath.Join(exeDir, "logs")
 	}
 	// WorktreeRoot anchors per-task git worktrees alongside the
-	// satellites-client binary (e.g. <repo>/bin/worktree/<task_id>/)
+	// satellites-client binary (e.g. <consumer>/satellites/worktree/<task_id>/)
 	// rather than under the operator's cwd, so worktree state isn't
 	// co-mingled with the repo's working tree. sty_29d2dc1d. Falls
 	// back to the legacy ".satellites-clients/" path only when the
@@ -184,14 +198,19 @@ func defaults() *Config {
 	if exeDir != "" {
 		worktreeRoot = filepath.Join(exeDir, "worktree")
 	}
+	// RepoPath defaults to the parent directory of the exe dir —
+	// when the binary lives at <consumer>/satellites/satellites-client,
+	// this resolves to <consumer>. sty_796b8fe1 AC3. Falls back to
+	// "." when the exe directory can't be resolved.
+	repoPath := "."
+	if exeDir != "" {
+		repoPath = filepath.Dir(exeDir)
+	}
 	return &Config{
-		Server:       "",
-		Token:        "",
-		OAuthEnabled: false,
-		RepoPath:     ".",
-		// BranchTemplate keeps the "client-" prefix so
-		// satellites-client's per-task branches don't collide with
-		// satellites-agent's (which uses "agent-…"). sty_b1345841.
+		Server:         "",
+		Token:          "",
+		OAuthEnabled:   false,
+		RepoPath:       repoPath,
 		WorktreeRoot:   worktreeRoot,
 		BranchTemplate: "client-{task_id}-from-{base_sha}",
 		ExecuteTimeout: 30 * time.Minute,
@@ -279,10 +298,11 @@ func Load(explicitPath string) (*Config, []string, error) {
 
 // config path source markers used in warnings + error messages.
 const (
-	sourceFlag = "flag"
-	sourceEnv  = "env"
-	sourceBin  = "bin"
-	sourceXDG  = "xdg"
+	sourceFlag       = "flag"
+	sourceEnv        = "env"
+	sourceBin        = "bin"
+	sourceSatellites = "satellites"
+	sourceXDG        = "xdg"
 )
 
 // resolveConfigPath walks the precedence chain and returns the first
@@ -302,16 +322,23 @@ func resolveConfigPath(explicit string) (string, string, error) {
 		}
 		return p, sourceEnv, nil
 	}
-	// Walk-up: search CWD and its ancestors for bin/satellites-client.toml.
-	// Stops at the filesystem root or a .git directory (repo boundary), so
-	// a dispatched subprocess whose CWD is <repo>/.satellites-agents/<task_id>/
-	// finds the operator's repo-root TOML without leaking out of the repo.
+	// Walk-up: search CWD and its ancestors for the canonical
+	// `satellites/satellites-client.toml` first, then the legacy
+	// `bin/satellites-client.toml`. Stops at the filesystem root or a
+	// .git directory (repo boundary), so a dispatched subprocess
+	// whose CWD is <repo>/satellites/worktree/<task_id>/ finds the
+	// operator's repo-root TOML without leaking out of the repo.
+	// sty_796b8fe1 AC3 — canonical path wins on tie.
 	if cwd, err := os.Getwd(); err == nil {
 		dir := cwd
 		for {
-			candidate := filepath.Join(dir, defaultBinFile)
-			if _, err := os.Stat(candidate); err == nil {
-				return candidate, sourceBin, nil
+			satCandidate := filepath.Join(dir, defaultSatellitesFile)
+			if _, err := os.Stat(satCandidate); err == nil {
+				return satCandidate, sourceSatellites, nil
+			}
+			binCandidate := filepath.Join(dir, defaultBinFile)
+			if _, err := os.Stat(binCandidate); err == nil {
+				return binCandidate, sourceBin, nil
 			}
 			if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 				break

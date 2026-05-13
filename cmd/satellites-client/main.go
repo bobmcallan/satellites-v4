@@ -183,6 +183,11 @@ func newRootCmd() *cobra.Command {
 	// parity with `satellites_info`. Uses the concrete handler from
 	// reads.go (order:04).
 	root.AddCommand(newInfoCmd())
+	// sty_796b8fe1: `init` is the root-level alias for the
+	// `satellites init` subcommand. The story body names the operator
+	// form as `satellites-client init`; the noun-grouped form
+	// (`satellites-client satellites init`) is the URL-parity surface.
+	root.AddCommand(newSatellitesInitCmd())
 
 	return root
 }

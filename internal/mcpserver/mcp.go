@@ -187,6 +187,21 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	)
 	s.mcp.AddTool(systemVersionTool, s.handleSystemVersion)
 
+	// sty_796b8fe1: satellites_init returns the structured install /
+	// refresh payload for the canonical `./satellites/` install layout.
+	// Read-only — performs no disk writes. Thin forwarder onto
+	// *client.Client.SatellitesInit per pr_mcp_cli_shared_path.
+	satellitesInitTool := mcpgo.NewTool("satellites_init",
+		mcpgo.WithDescription("Return the structured install/refresh payload for satellites-client (state machine: install_required / update_available / up_to_date). Optionally accepts current_version, os, arch to refine the state + artifact selection. Read-only."),
+		mcpgo.WithString("current_version",
+			mcpgo.Description("Operator-supplied stamp of the locally installed satellites-client; empty drives install_required.")),
+		mcpgo.WithString("os",
+			mcpgo.Description("Override server-side runtime.GOOS (linux | darwin | windows).")),
+		mcpgo.WithString("arch",
+			mcpgo.Description("Override server-side runtime.GOARCH (amd64 | arm64).")),
+	)
+	s.mcp.AddTool(satellitesInitTool, s.handleSatellitesInit)
+
 	if s.deps.Documents != nil {
 		// document_ingest_file MCP registration removed in sty_4db0e025
 		// slice B3 — operator-only verb, now reachable through /api/v1 +

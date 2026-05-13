@@ -22,6 +22,8 @@ import (
 var expectedRoutes = []string{
 	// Order:07a anchor (21).
 	"POST /api/v1/satellites/info",
+	// sty_796b8fe1: satellites_init returns the install/refresh payload.
+	"POST /api/v1/satellites/init",
 	"POST /api/v1/system/version",
 	"POST /api/v1/session/whoami",
 	"POST /api/v1/session/register",
@@ -147,8 +149,8 @@ var expectedRoutes = []string{
 // /api/v1/story/field-set (folded into /api/v1/story/update), so the
 // expected count is 105 → 103.
 func TestAPI_RoutesRegistered(t *testing.T) {
-	if got := len(expectedRoutes); got != 107 {
-		t.Fatalf("expected 107 routes, got %d (update the slice as the verb set grows)", got)
+	if got := len(expectedRoutes); got != 108 {
+		t.Fatalf("expected 108 routes, got %d (update the slice as the verb set grows)", got)
 	}
 
 	reg := NewAPIRegistrar(client.New(client.Deps{StartedAt: time.Now().UTC()}))
@@ -275,6 +277,71 @@ func TestAPI_SystemVersion_HappyPath(t *testing.T) {
 	}
 	if len(got.Artifacts) != 1 {
 		t.Errorf("artifacts len = %d, want 1", len(got.Artifacts))
+	}
+}
+
+// TestAPI_SatellitesInit_HappyPath asserts the handler forwards to
+// client.SatellitesInit and returns the install payload. Wires an
+// httptest.Server as the upstream manifest source via client.Deps.
+// sty_796b8fe1.
+func TestAPI_SatellitesInit_HappyPath(t *testing.T) {
+	client.ResetSystemVersionCacheForTest()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+		    "version":"0.0.300",
+		    "build":"2026-05-13-15-00-00",
+		    "commit":"abc12345",
+		    "artifacts":[
+		      {"os":"linux","arch":"amd64","filename":"satellites-client-linux-amd64","sha256":"aaaa","download_url":"https://example.invalid/a"},
+		      {"os":"linux","arch":"arm64","filename":"satellites-client-linux-arm64","sha256":"bbbb","download_url":"https://example.invalid/b"}
+		    ]
+		}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	reg := NewAPIRegistrar(client.New(client.Deps{
+		StartedAt:   time.Now().UTC(),
+		ManifestURL: upstream.URL,
+	}))
+	mux := http.NewServeMux()
+	reg.Register(mux)
+
+	body := []byte(`{"current_version":"0.0.299","os":"linux","arch":"amd64"}`)
+	req := httptest.NewRequest("POST", "/api/v1/satellites/init", bytes.NewReader(body))
+	req = req.WithContext(auth.WithCaller(req.Context(), auth.CallerIdentity{
+		Email:  "operator@example.com",
+		UserID: "u_test",
+		Source: "apikey",
+	}))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		State             string `json:"state"`
+		TargetInstallPath string `json:"target_install_path"`
+		TargetConfigPath  string `json:"target_config_path"`
+		Install           struct {
+			Filename    string `json:"filename"`
+			DownloadURL string `json:"download_url"`
+		} `json:"install"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.State != "update_available" {
+		t.Errorf("state = %q, want update_available", got.State)
+	}
+	if got.TargetInstallPath != "./satellites/satellites-client" {
+		t.Errorf("target_install_path = %q", got.TargetInstallPath)
+	}
+	if got.TargetConfigPath != "./satellites/satellites-client.toml" {
+		t.Errorf("target_config_path = %q", got.TargetConfigPath)
+	}
+	if got.Install.Filename != "satellites-client-linux-amd64" {
+		t.Errorf("install.filename = %q", got.Install.Filename)
 	}
 }
 

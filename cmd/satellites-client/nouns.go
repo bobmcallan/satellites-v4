@@ -27,6 +27,7 @@ var satellitesClientNouns = []func(*cobra.Command){
 	registerChangelogNoun,
 	registerSessionNoun,
 	registerSystemNoun,
+	registerSatellitesNoun,
 	registerPortalNoun,
 	registerAuthNoun,
 }
@@ -274,6 +275,14 @@ func registerSystemNoun(root *cobra.Command) {
 	noun.AddCommand(
 		newSystemSeedRunCmd(), // sty_0b419d98
 		newSystemVersionCmd(), // sty_64e69db8
+	)
+	root.AddCommand(noun)
+}
+
+func registerSatellitesNoun(root *cobra.Command) {
+	noun := nounStub("satellites", "Satellites — install / refresh entry-points.")
+	noun.AddCommand(
+		newSatellitesInitCmd(), // sty_796b8fe1
 	)
 	root.AddCommand(noun)
 }

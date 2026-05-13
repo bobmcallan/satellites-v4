@@ -117,3 +117,27 @@ func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	}
 	return hj.Hijack()
 }
+
+// Flush delegates to the underlying ResponseWriter when it implements
+// http.Flusher, mirroring the Hijack passthrough above. Without this the
+// statusRecorder shadows http.Flusher for any SSE handler doing the
+// standard `w.(http.Flusher)` type-assertion — the symptom is a 500
+// ("streaming not supported") on /api/v1/task/log/stream against the
+// production middleware chain even though the chain runs on net/http,
+// whose response writer is a Flusher.
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap exposes the wrapped ResponseWriter so http.NewResponseController
+// (Go 1.20+) can walk the chain to locate optional interfaces — Flusher,
+// Hijacker, ReadDeadline, etc — without each middleware having to
+// re-export every interface explicitly. Any future SSE / streaming /
+// upgrade route can rely on http.NewResponseController(w).Flush() instead
+// of bespoke type-assertions; this is the single hook that makes the
+// chain composable.
+func (s *statusRecorder) Unwrap() http.ResponseWriter {
+	return s.ResponseWriter
+}

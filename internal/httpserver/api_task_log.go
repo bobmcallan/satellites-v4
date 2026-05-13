@@ -120,11 +120,13 @@ func (a *APIRegistrar) handleTaskLogStream(w http.ResponseWriter, r *http.Reques
 	cc := a.clientCaller(r)
 	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeAPIStatus(w, http.StatusInternalServerError, "streaming not supported")
-		return
-	}
+	// http.NewResponseController walks the middleware Unwrap() chain to
+	// locate the underlying Flusher, so this handler stays correct even
+	// when the production chain (SecurityHeaders → requestID → accessLog)
+	// wraps the writer. The pre-1.20 pattern `w.(http.Flusher)` only
+	// looked one level deep and silently broke under accessLog's
+	// *statusRecorder — see middleware.go's Flush/Unwrap passthroughs.
+	rc := http.NewResponseController(w)
 
 	// Subscribe BEFORE replay so live rows arriving between the
 	// replay query and the subscription set up are not lost. The
@@ -155,7 +157,7 @@ func (a *APIRegistrar) handleTaskLogStream(w http.ResponseWriter, r *http.Reques
 		// We've already committed to SSE framing; surface the error as
 		// a single data frame and stop.
 		fmt.Fprintf(w, "event: error\ndata: %q\n\n", err.Error())
-		flusher.Flush()
+		_ = rc.Flush()
 		return
 	}
 	lastSeq := startSeq - 1
@@ -167,7 +169,7 @@ func (a *APIRegistrar) handleTaskLogStream(w http.ResponseWriter, r *http.Reques
 		if werr := writeSSEFrame(w, e); werr != nil {
 			return
 		}
-		flusher.Flush()
+		_ = rc.Flush()
 		lastSeq = e.Seq
 		if e.Kind == "stop" {
 			sawStop = true
@@ -193,7 +195,7 @@ func (a *APIRegistrar) handleTaskLogStream(w http.ResponseWriter, r *http.Reques
 			if werr := writeSSEFrame(w, e); werr != nil {
 				return
 			}
-			flusher.Flush()
+			_ = rc.Flush()
 			lastSeq = e.Seq
 			if e.Kind == "stop" {
 				return

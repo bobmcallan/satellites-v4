@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -257,6 +258,84 @@ func TestRequestIDMiddlewarePreservesInbound(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if seen != "req_supplied" {
 		t.Errorf("seen = %q, want req_supplied", seen)
+	}
+}
+
+// TestAccessLogPreservesFlusher is the regression for sty_8c17b89d iter-2.
+// Iter-1 shipped the SSE endpoint /api/v1/task/log/stream and its
+// integration test (TestTaskLogStream_EndToEnd) passed in CI, but pprod
+// returned 500 ("streaming not supported") because the accessLog
+// middleware wraps the ResponseWriter in *statusRecorder, which shadowed
+// http.Flusher in exactly the same way it shadowed http.Hijacker before
+// story_fb6ac2d8. Two callsite shapes must succeed after the fix:
+//
+//   - The legacy `w.(http.Flusher)` type-assertion — covered by the
+//     explicit Flush() method on statusRecorder.
+//   - The Go 1.20+ http.NewResponseController(w).Flush() — covered by
+//     the Unwrap() method, which lets the controller walk the chain.
+//
+// This test exercises both against the production handler chain
+// (SecurityHeaders → requestID → accessLog → mux) constructed via
+// httpserver.New so the chain shape exactly matches cmd/satellites-server.
+func TestAccessLogPreservesFlusher(t *testing.T) {
+	t.Parallel()
+
+	const probePath = "/__flusher_probe"
+
+	// SSE-style handler that exercises both Flusher discovery paths.
+	// The legacy `w.(http.Flusher)` assertion is checked first (before
+	// the response is committed) so a regression there surfaces as 500.
+	// The NewResponseController probe runs after headers are written —
+	// a regression there surfaces as an in-body `ERR:` frame so the
+	// assertion below catches it without losing the controller's error
+	// text.
+	probe := func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := w.(http.Flusher); !ok {
+			http.Error(w, "type-assert w.(http.Flusher) failed", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			_, _ = w.Write([]byte("data: ERR: " + err.Error() + "\n\n"))
+			return
+		}
+		_, _ = w.Write([]byte("id: 1\ndata: {\"ok\":true}\n\n"))
+		_ = http.NewResponseController(w).Flush()
+	}
+
+	cfg := &config.Config{Port: 0, Env: "dev", LogLevel: "info", DevMode: true}
+	s := New(cfg, satarbor.New("info"), time.Now())
+	s.Mount(probePath, http.HandlerFunc(probe))
+
+	srv := httptest.NewServer(s.http.Handler)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+probePath, nil)
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("probe GET failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("probe status = %d body=%q — production middleware chain dropped Flusher",
+			resp.StatusCode, string(body))
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Errorf("Content-Type = %q, want text/event-stream", ct)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), "ERR:") {
+		t.Errorf("body contains ResponseController.Flush error frame: %q", string(body))
+	}
+	if !strings.Contains(string(body), `"ok":true`) {
+		t.Errorf("body = %q, want SSE frame containing ok:true", string(body))
 	}
 }
 

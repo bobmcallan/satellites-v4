@@ -182,14 +182,14 @@ func newProjectDeleteCmd() *cobra.Command {
 
 // ----- workspace -----
 
-func newWorkspaceCreateCmd() *cobra.Command {
+func newWorkspaceAddCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:   "create",
-		Short: "Create a workspace [admin].",
-		RunE: writeHandler("workspace_create", func(cmd *cobra.Command, args []string) (any, error) {
+		Use:   "add",
+		Short: "Add a workspace [admin].",
+		RunE: writeHandler("workspace_add", func(cmd *cobra.Command, args []string) (any, error) {
 			name, _ := cmd.Flags().GetString("name")
 			if name == "" {
-				return nil, cliexit.Newf(cliexit.Usage, "workspace create: --name is required")
+				return nil, cliexit.Newf(cliexit.Usage, "workspace add: --name is required")
 			}
 			return map[string]any{"name": name}, nil
 		}),

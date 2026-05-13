@@ -113,7 +113,7 @@ func registerProjectNoun(root *cobra.Command) {
 func registerWorkspaceNoun(root *cobra.Command) {
 	noun := nounStub("workspace", "Workspaces — tenancy surface (admin).")
 	noun.AddCommand(
-		newWorkspaceCreateCmd(),           // sty_f38bd573
+		newWorkspaceAddCmd(),              // sty_4db0e025 (was newWorkspaceCreateCmd)
 		newWorkspaceGetCmd(),              // sty_ef248ab2
 		newWorkspaceListCmd(),             // sty_ef248ab2
 		newWorkspaceMemberAddCmd(),        // sty_f38bd573

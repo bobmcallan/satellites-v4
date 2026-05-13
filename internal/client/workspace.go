@@ -91,18 +91,18 @@ func (c *Client) WorkspaceMemberList(ctx context.Context, caller Caller, in Work
 	return c.deps.Workspaces.ListMembers(ctx, in.WorkspaceID)
 }
 
-// WorkspaceCreateInput captures the workspace_create request shape.
+// WorkspaceAddInput captures the workspace_add request shape.
 // Now overrides the timestamp the store stamps onto CreatedAt /
 // UpdatedAt — tests inject a deterministic value; the wire layer
 // leaves it zero so the typed method falls back to time.Now().UTC().
-type WorkspaceCreateInput struct {
+type WorkspaceAddInput struct {
 	Name string
 	Now  time.Time
 }
 
-// WorkspaceCreate persists a new workspace and records the caller as
+// WorkspaceAdd persists a new workspace and records the caller as
 // the founding admin. Returns the workspace row verbatim.
-func (c *Client) WorkspaceCreate(ctx context.Context, caller Caller, in WorkspaceCreateInput) (workspace.Workspace, error) {
+func (c *Client) WorkspaceAdd(ctx context.Context, caller Caller, in WorkspaceAddInput) (workspace.Workspace, error) {
 	if c.deps.Workspaces == nil {
 		return workspace.Workspace{}, ErrWorkspaceStoreNotConfigured
 	}

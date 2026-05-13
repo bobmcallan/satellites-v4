@@ -1,7 +1,7 @@
 // Package mcpserver exposes the satellites MCP surface over Streamable HTTP.
 // v4 currently registers: satellites_info, document_ingest_file, document_get,
 // project_create/get/list, ledger_append/list, story_get/list/update,
-// workspace_create/get/list. Subsequent epics add more.
+// workspace_add/get/list. Subsequent epics add more.
 package mcpserver
 
 import (
@@ -503,11 +503,11 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	}
 
 	if s.deps.Workspaces != nil {
-		createWsTool := mcpgo.NewTool("workspace_create",
-			mcpgo.WithDescription("Create a new workspace and add the caller as admin. The caller must be authenticated."),
+		addWsTool := mcpgo.NewTool("workspace_add",
+			mcpgo.WithDescription("Add a new workspace and record the caller as admin. The caller must be authenticated."),
 			mcpgo.WithString("name", mcpgo.Required(), mcpgo.Description("Workspace display name.")),
 		)
-		s.mcp.AddTool(createWsTool, s.handleWorkspaceCreate)
+		s.mcp.AddTool(addWsTool, s.handleWorkspaceAdd)
 
 		getWsTool := mcpgo.NewTool("workspace_get",
 			mcpgo.WithDescription("Return a workspace the caller is a member of. Non-member access returns not-found."),
@@ -1875,21 +1875,21 @@ func (s *Server) handleStoryTemplateList(ctx context.Context, req mcpgo.CallTool
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
-// handleWorkspaceCreate parses the request, calls the typed
-// WorkspaceCreate surface, and marshals the workspace row verbatim.
-func (s *Server) handleWorkspaceCreate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+// handleWorkspaceAdd parses the request, calls the typed
+// WorkspaceAdd surface, and marshals the workspace row verbatim.
+func (s *Server) handleWorkspaceAdd(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
 	name, err := req.RequireString("name")
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	w, err := s.cli().WorkspaceCreate(ctx, toClientCaller(caller), client.WorkspaceCreateInput{Name: name, Now: s.nowUTC()})
+	w, err := s.cli().WorkspaceAdd(ctx, toClientCaller(caller), client.WorkspaceAddInput{Name: name, Now: s.nowUTC()})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	body, _ := json.Marshal(w)
-	s.logger.Info().Str("method", "tools/call").Str("tool", "workspace_create").Str("workspace_id", w.ID).Str("owner_user_id", w.OwnerUserID).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+	s.logger.Info().Str("method", "tools/call").Str("tool", "workspace_add").Str("workspace_id", w.ID).Str("owner_user_id", w.OwnerUserID).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 

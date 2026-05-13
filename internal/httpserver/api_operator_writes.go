@@ -49,7 +49,7 @@ func (a *APIRegistrar) registerOperatorWriteRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/project/update", a.handleProjectUpdate)
 	mux.HandleFunc("POST /api/v1/project/delete", a.handleProjectDelete)
 
-	mux.HandleFunc("POST /api/v1/workspace/create", a.handleWorkspaceCreate)
+	mux.HandleFunc("POST /api/v1/workspace/add", a.handleWorkspaceAdd)
 	mux.HandleFunc("POST /api/v1/workspace/member-add", a.handleWorkspaceMemberAdd)
 	mux.HandleFunc("POST /api/v1/workspace/member-update-role", a.handleWorkspaceMemberUpdateRole)
 	mux.HandleFunc("POST /api/v1/workspace/member-remove", a.handleWorkspaceMemberRemove)
@@ -336,7 +336,7 @@ func (a *APIRegistrar) handleProjectDelete(w http.ResponseWriter, r *http.Reques
 
 // ----- workspace -----
 
-func (a *APIRegistrar) handleWorkspaceCreate(w http.ResponseWriter, r *http.Request) {
+func (a *APIRegistrar) handleWorkspaceAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
 	}

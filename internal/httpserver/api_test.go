@@ -80,7 +80,7 @@ var expectedRoutes = []string{
 	"POST /api/v1/project/create",
 	"POST /api/v1/project/update",
 	"POST /api/v1/project/delete",
-	"POST /api/v1/workspace/create",
+	"POST /api/v1/workspace/add",
 	"POST /api/v1/workspace/member-add",
 	"POST /api/v1/workspace/member-update-role",
 	"POST /api/v1/workspace/member-remove",

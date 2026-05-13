@@ -3,6 +3,9 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bobmcallan/satellites/internal/cliremote"
 	"github.com/bobmcallan/satellites/internal/config"
 )
 
@@ -204,8 +208,8 @@ func TestEnsureWorktree_RepoPathEmpty_Errors(t *testing.T) {
 // agent's auth token threaded as a Bearer header.
 func TestBuildMCPConfigJSON(t *testing.T) {
 	cfg := config.AgentConfig{
-		MCPURL:    "https://satellites-pprod.fly.dev/mcp?project_id=proj_x",
-		AuthToken: "sat_test123",
+		SpawnMCPURL: "https://satellites-pprod.fly.dev/mcp?project_id=proj_x",
+		AuthToken:   "sat_test123",
 	}
 	raw, err := buildMCPConfigJSON(cfg)
 	require.NoError(t, err)
@@ -222,18 +226,211 @@ func TestBuildMCPConfigJSON(t *testing.T) {
 	require.Contains(t, got.MCPServers, "satellites")
 	srv := got.MCPServers["satellites"]
 	assert.Equal(t, "http", srv.Type)
-	assert.Equal(t, cfg.MCPURL, srv.URL)
+	assert.Equal(t, cfg.SpawnMCPURL, srv.URL)
 	assert.Equal(t, "Bearer sat_test123", srv.Headers["Authorization"])
 	// strict-mcp-config must see ONLY the satellites server.
 	assert.Len(t, got.MCPServers, 1)
 }
 
 func TestBuildMCPConfigJSON_NoToken_OmitsAuthHeader(t *testing.T) {
-	cfg := config.AgentConfig{MCPURL: "http://localhost:8080/mcp"}
+	cfg := config.AgentConfig{SpawnMCPURL: "http://localhost:8080/mcp"}
 	raw, err := buildMCPConfigJSON(cfg)
 	require.NoError(t, err)
 	assert.NotContains(t, raw, "Authorization")
 	assert.NotContains(t, raw, "Bearer")
+}
+
+// TestFetchHelpers_RouteThroughAPIv1 drives each fetch helper plus
+// appendExecuteEvidence against a per-test httptest server, asserting
+// the request path + decoded request body shape. The cliremote client
+// posts to /api/v1/<noun>/<verb>; this test pins each helper's
+// noun/verb mapping + payload contract.
+func TestFetchHelpers_RouteThroughAPIv1(t *testing.T) {
+	type capture struct {
+		path string
+		body map[string]any
+	}
+
+	cases := []struct {
+		name     string
+		wantPath string
+		wantBody map[string]any
+		resp     string
+		run      func(t *testing.T, cc *claudeClient) any
+		assert   func(t *testing.T, got any)
+	}{
+		{
+			name:     "fetchTaskInfo",
+			wantPath: "/api/v1/task/get",
+			wantBody: map[string]any{"id": "task_x"},
+			resp:     `{"id":"task_x","story_id":"sty_a","project_id":"proj_p","workspace_id":"wksp_w","agent_id":"doc_dev","action":"contract:develop"}`,
+			run: func(t *testing.T, cc *claudeClient) any {
+				ti, err := cc.fetchTaskInfo(context.Background(), "task_x")
+				require.NoError(t, err)
+				return ti
+			},
+			assert: func(t *testing.T, got any) {
+				ti := got.(taskInfo)
+				assert.Equal(t, "task_x", ti.ID)
+				assert.Equal(t, "sty_a", ti.StoryID)
+				assert.Equal(t, "contract:develop", ti.Action)
+			},
+		},
+		{
+			name:     "fetchAgentInfo_uses_document_get",
+			wantPath: "/api/v1/document/get",
+			wantBody: map[string]any{"id": "doc_dev", "type": "agent"},
+			resp:     `{"id":"doc_dev","name":"developer_agent"}`,
+			run: func(t *testing.T, cc *claudeClient) any {
+				ai, err := cc.fetchAgentInfo(context.Background(), "doc_dev")
+				require.NoError(t, err)
+				return ai
+			},
+			assert: func(t *testing.T, got any) {
+				ai := got.(agentInfo)
+				assert.Equal(t, "doc_dev", ai.ID)
+				assert.Equal(t, "developer_agent", ai.Name)
+			},
+		},
+		{
+			name:     "fetchContractInfo_uses_document_get",
+			wantPath: "/api/v1/document/get",
+			wantBody: map[string]any{"name": "develop", "type": "contract", "project_id": "proj_p"},
+			resp:     `{"name":"develop","structured":"eyJjYXRlZ29yeSI6ImRldmVsb3AifQ=="}`,
+			run: func(t *testing.T, cc *claudeClient) any {
+				ci, err := cc.fetchContractInfo(context.Background(), "contract:develop", "proj_p")
+				require.NoError(t, err)
+				return ci
+			},
+			assert: func(t *testing.T, got any) {
+				ci := got.(contractInfo)
+				assert.Equal(t, "develop", ci.Name)
+				assert.NotEmpty(t, ci.Structured)
+			},
+		},
+		{
+			name:     "fetchStoryInfo",
+			wantPath: "/api/v1/story/get",
+			wantBody: map[string]any{"id": "sty_a"},
+			resp:     `{"story":{"id":"sty_a","title":"Example"}}`,
+			run: func(t *testing.T, cc *claudeClient) any {
+				si, err := cc.fetchStoryInfo(context.Background(), "sty_a")
+				require.NoError(t, err)
+				return si
+			},
+			assert: func(t *testing.T, got any) {
+				si := got.(storyInfo)
+				assert.Equal(t, "sty_a", si.ID)
+				assert.Equal(t, "Example", si.Title)
+			},
+		},
+		{
+			name:     "appendExecuteEvidence",
+			wantPath: "/api/v1/ledger/append",
+			// Compare just the keys with stable scalar values — content +
+			// tags are asserted via the captured raw body in the test
+			// body after the case loop.
+			wantBody: nil,
+			resp:     `{"id":"ldg_test"}`,
+			run: func(t *testing.T, cc *claudeClient) any {
+				return cc.appendExecuteEvidence(
+					context.Background(),
+					TaskEnvelope{ID: "task_x", ProjectID: "proj_p"},
+					taskInfo{StoryID: "sty_a", AgentID: "doc_dev", Action: "contract:develop"},
+					"prompt-body", 0, "/worktree/.log",
+				)
+			},
+			assert: func(t *testing.T, got any) {
+				if got == nil {
+					return
+				}
+				assert.NoError(t, got.(error))
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got capture
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				got.path = r.URL.Path
+				_ = json.Unmarshal(body, &got.body)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.resp))
+			}))
+			defer srv.Close()
+
+			cc := &claudeClient{
+				cfg: config.AgentConfig{},
+				api: cliremote.New(srv.URL, "tok", nil),
+			}
+			result := tc.run(t, cc)
+			tc.assert(t, result)
+			assert.Equal(t, tc.wantPath, got.path)
+			if tc.wantBody != nil {
+				for k, v := range tc.wantBody {
+					assert.Equal(t, v, got.body[k], "request body field %q", k)
+				}
+			}
+			if tc.name == "appendExecuteEvidence" {
+				// Verify the evidence row carries the required tag set
+				// + content marker the reviewer asserts on.
+				assert.Equal(t, "evidence", got.body["type"])
+				assert.Equal(t, "proj_p", got.body["project_id"])
+				assert.Equal(t, "sty_a", got.body["story_id"])
+				tags, _ := got.body["tags"].([]any)
+				var sawKind, sawTaskID bool
+				for _, tag := range tags {
+					s, _ := tag.(string)
+					if s == "kind:agent-execute-evidence" {
+						sawKind = true
+					}
+					if s == "task_id:task_x" {
+						sawTaskID = true
+					}
+				}
+				assert.True(t, sawKind, "missing kind:agent-execute-evidence tag")
+				assert.True(t, sawTaskID, "missing task_id:task_x tag")
+				content, _ := got.body["content"].(string)
+				assert.Contains(t, content, "agent-execute-evidence")
+				assert.Contains(t, content, "exit_code=0")
+			}
+		})
+	}
+}
+
+// TestFetchTaskInfo_EmptyResponseSurfacesAsError covers the "task_get
+// returned an empty row" guard the prompt composer depends on.
+func TestFetchTaskInfo_EmptyResponseSurfacesAsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	cc := &claudeClient{api: cliremote.New(srv.URL, "tok", nil)}
+	_, err := cc.fetchTaskInfo(context.Background(), "task_missing")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty response")
+}
+
+// TestFetchContractInfo_ErrorSurfacesNameOnly mirrors the
+// error-tolerant shape the prior callTool path had: a contract row
+// that fails to resolve degrades to the stripped name so the heavy-
+// path dispatcher still composes a valid prompt.
+func TestFetchContractInfo_ErrorSurfacesNameOnly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"not found"}`))
+	}))
+	defer srv.Close()
+
+	cc := &claudeClient{api: cliremote.New(srv.URL, "tok", nil)}
+	ci, err := cc.fetchContractInfo(context.Background(), "contract:freeform", "proj_p")
+	require.NoError(t, err)
+	assert.Equal(t, "freeform", ci.Name)
+	assert.Empty(t, ci.Structured)
 }
 
 // TestContractInfo_DispatchClass (sty_3b3e4e66 Layer A) — the

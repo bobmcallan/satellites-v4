@@ -58,8 +58,8 @@ func NewCLIClient(cfg config.AgentConfig, logger arbor.ILogger) Client {
 // --json inherited from cfg.
 func (c *cliClient) runCLI(ctx context.Context, argv []string) ([]byte, error) {
 	full := []string{}
-	if c.cfg.MCPURL != "" {
-		full = append(full, "--server", c.cfg.MCPURL)
+	if c.cfg.SpawnMCPURL != "" {
+		full = append(full, "--server", c.cfg.SpawnMCPURL)
 	}
 	if c.cfg.AuthToken != "" {
 		full = append(full, "--token", c.cfg.AuthToken)

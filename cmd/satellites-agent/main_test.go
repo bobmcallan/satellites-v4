@@ -70,7 +70,7 @@ func stubServers(t *testing.T) (cfgPath string, cliCalls func() []cliRecord, wsC
 	cfgPath = filepath.Join(tmp, "agent.toml")
 	body := []byte(`worker_id = "test-worker"
 workspace_ids = ["wksp_a"]
-mcp_url = "http://stub-unused"
+spawn_mcp_url = "http://stub-unused"
 cli_binary_path = "` + stubPath + `"
 auth_token = "tok-test"
 idle_backoff = "20ms"
@@ -269,7 +269,7 @@ func TestMain_Run_NoHubURL_PollingFallback(t *testing.T) {
 
 	cfgPath := filepath.Join(tmp, "agent.toml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(`worker_id = "p"
-mcp_url = "http://stub-unused"
+spawn_mcp_url = "http://stub-unused"
 cli_binary_path = "`+stubPath+`"
 hub_url = ""
 idle_backoff = "20ms"
@@ -308,7 +308,7 @@ func TestRun_StartupLogReflectsLoadedConfig(t *testing.T) {
 
 	cfgPath := filepath.Join(tmp, "agent.toml")
 	body := []byte(`worker_id = "smoke-startup-log"
-mcp_url = "http://stub-unused"
+spawn_mcp_url = "http://stub-unused"
 cli_binary_path = "` + stubPath + `"
 hub_url = ""
 idle_backoff = "20ms"
@@ -383,7 +383,7 @@ func TestRun_LogPath_WritesFile(t *testing.T) {
 	logDir := filepath.Join(tmp, "agent-logs")
 	cfgPath := filepath.Join(tmp, "agent.toml")
 	body := []byte(`worker_id = "smoke-logpath"
-mcp_url = "http://stub-unused"
+spawn_mcp_url = "http://stub-unused"
 cli_binary_path = "` + stubPath + `"
 hub_url = ""
 idle_backoff = "20ms"

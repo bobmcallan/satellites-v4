@@ -17,9 +17,11 @@ worker_id          = ""
 # subscribe_workspace_ids is unset.
 workspace_ids      = []
 
-# MCP HTTP endpoint the placeholder client posts tools/call requests
-# to. Defaults to the local-dev satellites server.
-mcp_url            = "http://localhost:8080/mcp"
+# MCP HTTP endpoint the dispatched claude subprocess connects to via
+# its per-worktree MCP config. The satellites-client CLI itself reaches
+# the substrate over /api/v1 (internal/cliremote.Client) and does not
+# consume this value — it flows only to the spawned subprocess.
+spawn_mcp_url      = "http://localhost:8080/mcp"
 
 # Bearer token presented to /mcp (Authorization header) and /ws
 # (Authorization header + ?token= query fallback). Never logged. Set

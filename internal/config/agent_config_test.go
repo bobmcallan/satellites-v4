@@ -53,7 +53,7 @@ func TestLoadAgent_DefaultsOnly(t *testing.T) {
 	cfg, warnings, err := LoadAgent("")
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
-	assert.Equal(t, "http://localhost:8080/mcp", cfg.MCPURL)
+	assert.Equal(t, "http://localhost:8080/mcp", cfg.SpawnMCPURL)
 	assert.Equal(t, 5*time.Second, cfg.IdleBackoff)
 	assert.Equal(t, "info", cfg.LogLevel)
 	assert.Equal(t, "ws://localhost:8080/ws", cfg.HubURL)
@@ -70,13 +70,13 @@ func TestLoadAgent_FlagOverridesEnv(t *testing.T) {
 
 	flagFile := filepath.Join(tmp, "flag.toml")
 	envFile := filepath.Join(tmp, "env.toml")
-	require.NoError(t, os.WriteFile(flagFile, []byte(`mcp_url = "http://flag/mcp"`), 0o600))
-	require.NoError(t, os.WriteFile(envFile, []byte(`mcp_url = "http://env/mcp"`), 0o600))
+	require.NoError(t, os.WriteFile(flagFile, []byte(`spawn_mcp_url = "http://flag/mcp"`), 0o600))
+	require.NoError(t, os.WriteFile(envFile, []byte(`spawn_mcp_url = "http://env/mcp"`), 0o600))
 	withEnv(t, agentConfigPathEnv, envFile)
 
 	cfg, _, err := LoadAgent(flagFile)
 	require.NoError(t, err)
-	assert.Equal(t, "http://flag/mcp", cfg.MCPURL)
+	assert.Equal(t, "http://flag/mcp", cfg.SpawnMCPURL)
 	assert.Equal(t, flagFile, cfg.LoadedTOMLPath())
 }
 
@@ -88,13 +88,13 @@ func TestLoadAgent_EnvOverridesBin(t *testing.T) {
 	envFile := filepath.Join(tmp, "env.toml")
 	binFile := filepath.Join(tmp, agentDefaultConfigFile)
 	require.NoError(t, os.MkdirAll(filepath.Dir(binFile), 0o700))
-	require.NoError(t, os.WriteFile(envFile, []byte(`mcp_url = "http://env/mcp"`), 0o600))
-	require.NoError(t, os.WriteFile(binFile, []byte(`mcp_url = "http://bin/mcp"`), 0o600))
+	require.NoError(t, os.WriteFile(envFile, []byte(`spawn_mcp_url = "http://env/mcp"`), 0o600))
+	require.NoError(t, os.WriteFile(binFile, []byte(`spawn_mcp_url = "http://bin/mcp"`), 0o600))
 	withEnv(t, agentConfigPathEnv, envFile)
 
 	cfg, _, err := LoadAgent("")
 	require.NoError(t, err)
-	assert.Equal(t, "http://env/mcp", cfg.MCPURL)
+	assert.Equal(t, "http://env/mcp", cfg.SpawnMCPURL)
 	assert.Equal(t, envFile, cfg.LoadedTOMLPath())
 }
 
@@ -109,12 +109,12 @@ func TestLoadAgent_BinOverridesXDG(t *testing.T) {
 	xdgDir := filepath.Join(tmp, ".config", "satellites-agent")
 	require.NoError(t, os.MkdirAll(xdgDir, 0o700))
 	xdgFile := filepath.Join(xdgDir, "config.toml")
-	require.NoError(t, os.WriteFile(binFile, []byte(`mcp_url = "http://bin/mcp"`), 0o600))
-	require.NoError(t, os.WriteFile(xdgFile, []byte(`mcp_url = "http://xdg/mcp"`), 0o600))
+	require.NoError(t, os.WriteFile(binFile, []byte(`spawn_mcp_url = "http://bin/mcp"`), 0o600))
+	require.NoError(t, os.WriteFile(xdgFile, []byte(`spawn_mcp_url = "http://xdg/mcp"`), 0o600))
 
 	cfg, _, err := LoadAgent("")
 	require.NoError(t, err)
-	assert.Equal(t, "http://bin/mcp", cfg.MCPURL)
+	assert.Equal(t, "http://bin/mcp", cfg.SpawnMCPURL)
 }
 
 func TestLoadAgent_XDGFallback(t *testing.T) {
@@ -126,11 +126,11 @@ func TestLoadAgent_XDGFallback(t *testing.T) {
 	xdgDir := filepath.Join(tmp, ".config", "satellites-agent")
 	require.NoError(t, os.MkdirAll(xdgDir, 0o700))
 	xdgFile := filepath.Join(xdgDir, "config.toml")
-	require.NoError(t, os.WriteFile(xdgFile, []byte(`mcp_url = "http://xdg/mcp"`), 0o600))
+	require.NoError(t, os.WriteFile(xdgFile, []byte(`spawn_mcp_url = "http://xdg/mcp"`), 0o600))
 
 	cfg, _, err := LoadAgent("")
 	require.NoError(t, err)
-	assert.Equal(t, "http://xdg/mcp", cfg.MCPURL)
+	assert.Equal(t, "http://xdg/mcp", cfg.SpawnMCPURL)
 	assert.Equal(t, xdgFile, cfg.LoadedTOMLPath())
 }
 
@@ -180,7 +180,7 @@ func TestLoadAgent_TOMLFieldRoundTrip(t *testing.T) {
 	body := `
 worker_id = "worker_x"
 workspace_ids = ["wksp_a", "wksp_b"]
-mcp_url = "http://srv:9000/mcp"
+spawn_mcp_url = "http://srv:9000/mcp"
 auth_token = "tok-secret"
 idle_backoff = "7s"
 heartbeat_interval = "30s"
@@ -206,7 +206,7 @@ ws_reconnect_max_backoff = "1m"
 
 	assert.Equal(t, "worker_x", cfg.WorkerID)
 	assert.Equal(t, []string{"wksp_a", "wksp_b"}, cfg.WorkspaceIDs)
-	assert.Equal(t, "http://srv:9000/mcp", cfg.MCPURL)
+	assert.Equal(t, "http://srv:9000/mcp", cfg.SpawnMCPURL)
 	assert.Equal(t, "tok-secret", cfg.AuthToken)
 	assert.Equal(t, 7*time.Second, cfg.IdleBackoff)
 	assert.Equal(t, 30*time.Second, cfg.HeartbeatInterval)
@@ -266,7 +266,7 @@ func TestLoadAgent_InvalidLogLevelDegrades(t *testing.T) {
 }
 
 func TestLoadAgent_AuthTokenNeverLogged(t *testing.T) {
-	cfg := &AgentConfig{AuthToken: "super-secret-deadbeef", MCPURL: "http://x/mcp"}
+	cfg := &AgentConfig{AuthToken: "super-secret-deadbeef", SpawnMCPURL: "http://x/mcp"}
 	rendered := cfg.String()
 	assert.NotContains(t, rendered, "super-secret-deadbeef")
 	assert.Contains(t, rendered, "auth_token=***")
@@ -285,7 +285,7 @@ func TestLoadAgent_AllFieldsPopulated(t *testing.T) {
 	body := `
 worker_id          = "worker-test-1"
 workspace_ids      = ["wksp_one", "wksp_two"]
-mcp_url            = "http://example/mcp"
+spawn_mcp_url      = "http://example/mcp"
 auth_token         = "sat_test_token"
 idle_backoff       = "11s"
 heartbeat_interval = "37s"
@@ -314,7 +314,7 @@ log_path                 = "/tmp/sty_92bfd9e6/agent-logs"
 
 	assert.Equal(t, "worker-test-1", cfg.WorkerID)
 	assert.Equal(t, []string{"wksp_one", "wksp_two"}, cfg.WorkspaceIDs)
-	assert.Equal(t, "http://example/mcp", cfg.MCPURL)
+	assert.Equal(t, "http://example/mcp", cfg.SpawnMCPURL)
 	assert.Equal(t, "sat_test_token", cfg.AuthToken)
 	assert.Equal(t, 11*time.Second, cfg.IdleBackoff)
 	assert.Equal(t, 37*time.Second, cfg.HeartbeatInterval)

@@ -125,7 +125,7 @@ func TestRunHotPath_DispatchesByContractName(t *testing.T) {
 	// Unknown contract → errHotUnimplemented sentinel so Execute
 	// falls back to the heavy path.
 	s := newHotpathStub(t)
-	cc := s.client(config.AgentConfig{MCPURL: "http://mock"})
+	cc := s.client(config.AgentConfig{SpawnMCPURL: "http://mock"})
 	outcome, err := cc.runHotPath(context.Background(),
 		TaskEnvelope{ID: "task_test"},
 		taskInfo{ID: "task_test", Action: "contract:bogus"},
@@ -154,7 +154,7 @@ func TestRunPushHotPath_HappyPath(t *testing.T) {
 	s.mcpResp["ledger_append"] = `{"id":"ldg_xxx"}`
 	s.mcpResp["task_update"] = `{"id":"task_push","status":"closed"}`
 
-	cc := s.client(config.AgentConfig{MCPURL: "http://mock", RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{SpawnMCPURL: "http://mock", RepoPath: "/repo"})
 
 	trigger, _ := json.Marshal(map[string]string{"branch": "agent-task_dev-from-833a28e"})
 	ti := taskInfo{
@@ -218,7 +218,7 @@ func TestRunPushHotPath_InferBranchFromChain(t *testing.T) {
 	s.mcpResp["ledger_append"] = `{"id":"ldg_y"}`
 	s.mcpResp["task_update"] = `{}`
 
-	cc := s.client(config.AgentConfig{MCPURL: "http://mock", RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{SpawnMCPURL: "http://mock", RepoPath: "/repo"})
 
 	ti := taskInfo{
 		ID: "task_push", StoryID: "sty_x", ProjectID: "proj_x",
@@ -263,7 +263,7 @@ func TestRunMergeToMainHotPath(t *testing.T) {
 	s.mcpResp["ledger_append"] = `{"id":"ldg_m"}`
 	s.mcpResp["task_update"] = `{}`
 
-	cc := s.client(config.AgentConfig{MCPURL: "http://mock", RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{SpawnMCPURL: "http://mock", RepoPath: "/repo"})
 
 	trigger, _ := json.Marshal(map[string]string{"branch": "agent-task_dev-from-833a28e"})
 	ti := taskInfo{
@@ -330,7 +330,7 @@ func TestRunStoryCloseHotPath_RefusesEmptyRequiredFields(t *testing.T) {
 	storyBytes, _ := json.Marshal(story)
 	s.mcpResp["story_get"] = string(storyBytes)
 
-	cc := s.client(config.AgentConfig{MCPURL: "http://mock", RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{SpawnMCPURL: "http://mock", RepoPath: "/repo"})
 
 	ti := taskInfo{
 		ID: "task_close", StoryID: "sty_close", ProjectID: "proj_x",
@@ -392,7 +392,7 @@ func TestRunStoryCloseHotPath_HappyPath(t *testing.T) {
 	s.mcpResp["ledger_append"] = `{"id":"ldg_c"}`
 	s.mcpResp["task_update"] = `{}`
 
-	cc := s.client(config.AgentConfig{MCPURL: "http://mock", RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{SpawnMCPURL: "http://mock", RepoPath: "/repo"})
 
 	trigger, _ := json.Marshal(map[string]string{"resolution": "delivered"})
 	ti := taskInfo{
@@ -505,7 +505,7 @@ func TestResolveLocalBranch_AmbiguousFails(t *testing.T) {
 	s.gitOutputs["branch --list agent-task_dev-from-*"] =
 		"  agent-task_dev-from-aaaaaaa\n  agent-task_dev-from-bbbbbbb\n"
 
-	cc := s.client(config.AgentConfig{MCPURL: "http://mock", RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{SpawnMCPURL: "http://mock", RepoPath: "/repo"})
 	_, err := cc.resolveLocalBranch(context.Background(), "task_dev")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "multiple matches")

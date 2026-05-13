@@ -4,7 +4,7 @@
 # baseline shape an operator copies into a real deployment.
 worker_id          = "test-worker"
 workspace_ids      = ["wksp_a"]
-mcp_url            = "http://127.0.0.1:8080/mcp"
+spawn_mcp_url      = "http://127.0.0.1:8080/mcp"
 auth_token         = ""
 idle_backoff       = "5s"
 heartbeat_interval = "60s"

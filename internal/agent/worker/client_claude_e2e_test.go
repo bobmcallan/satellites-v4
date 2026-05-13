@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,15 +19,23 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bobmcallan/satellites/internal/agent/worker"
+	"github.com/bobmcallan/satellites/internal/cliremote"
 	"github.com/bobmcallan/satellites/internal/config"
 )
 
 // TestClaudeClient_Execute_EndToEnd_StubBinary drives the seven-step
-// Execute flow with a stub `claude` script and a stub MCP server. It
-// is the AC's "end-to-end claim → execute → close" coverage minus
-// testcontainers — the substrate live dogfood (kind:dogfood-evidence)
-// is the canonical pprod-side proof, captured separately on the
-// story's ledger.
+// Execute flow with a stub `claude` script and a stub /api/v1 HTTP
+// server. It is the AC's "end-to-end claim → execute → close"
+// coverage minus testcontainers — the substrate live dogfood
+// (kind:dogfood-evidence) is the canonical pprod-side proof, captured
+// separately on the story's ledger.
+//
+// sty_74e67353 work#1 migration: the stub server now serves
+// /api/v1/<noun>/<verb> (no MCP JSON-RPC test doubles remain). Per-
+// helper request path + body shape are asserted in
+// client_claude_test.go's table-driven test; this case asserts the
+// end-to-end fan-out — which paths got hit and that the evidence row
+// carried the kind:agent-execute-evidence tag.
 func TestClaudeClient_Execute_EndToEnd_StubBinary(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("stub claude is a posix shell script")
@@ -42,10 +51,10 @@ func TestClaudeClient_Execute_EndToEnd_StubBinary(t *testing.T) {
 	//    so the test asserts what the orchestrator passed.
 	stubPath, captureDir := writeStubClaude(t)
 
-	// 3. Stub MCP server — responds to task_get / agent_get /
-	//    contract_get / story_get / ledger_append.
-	mcpCalls, mcpURL, mcpClose := stubMCP(t, "task_test_e2e")
-	defer mcpClose()
+	// 3. Stub /api/v1 HTTP server — responds to task/get,
+	//    document/get (×2: agent + contract), story/get, ledger/append.
+	apiCalls, apiURL, apiClose := stubAPI(t, "task_test_e2e")
+	defer apiClose()
 
 	// 4. Operator HOME — a controlled value the test asserts the
 	//    dispatched subprocess inherits. Satellites does not synthesise
@@ -58,7 +67,7 @@ func TestClaudeClient_Execute_EndToEnd_StubBinary(t *testing.T) {
 	worktreeRoot := filepath.Join(t.TempDir(), "wt")
 
 	cfg := config.AgentConfig{
-		MCPURL:           mcpURL,
+		SpawnMCPURL:      apiURL + "/mcp", // spawned subprocess config only — the test's HTTP stub serves /api/v1
 		AuthToken:        "tok-e2e",
 		ExecuteTimeout:   30 * time.Second,
 		RepoPath:         repoRoot,
@@ -71,7 +80,8 @@ func TestClaudeClient_Execute_EndToEnd_StubBinary(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	outcome, err := worker.RunDispatched(ctx, cfg, nil, worker.TaskEnvelope{
+	api := cliremote.New(apiURL, "tok-e2e", nil)
+	outcome, err := worker.RunDispatched(ctx, cfg, nil, api, worker.TaskEnvelope{
 		ID: "task_test_e2e", WorkspaceID: "wksp_e", ProjectID: "proj_e",
 	}, nil, nil)
 	require.NoError(t, err)
@@ -112,31 +122,43 @@ func TestClaudeClient_Execute_EndToEnd_StubBinary(t *testing.T) {
 	_, err = os.Stat(logPath)
 	require.NoError(t, err, "subprocess log file missing")
 
-	// MCP saw the four context fetches + a kind:agent-execute-evidence
-	// ledger_append.
-	calls := mcpCalls()
-	tools := make(map[string]bool)
+	// The dispatcher hit each /api/v1 route the prompt composer reads
+	// from + the evidence-row appender. agent + contract both flow
+	// through document/get per pr_mcp_cli_shared_path — the HTTP API
+	// registers only the typed document/get route; the MCP `agent_get`
+	// / `contract_get` wrappers delegate to the same client method.
+	calls := apiCalls()
+	paths := make(map[string]int)
 	for _, c := range calls {
-		tools[c.Tool] = true
+		paths[c.Path]++
 	}
-	for _, want := range []string{"task_get", "agent_get", "contract_get", "story_get", "ledger_append"} {
-		assert.True(t, tools[want], "missing MCP call %q (saw %v)", want, tools)
+	assert.GreaterOrEqual(t, paths["/api/v1/task/get"], 1, "missing /api/v1/task/get; saw %v", paths)
+	assert.GreaterOrEqual(t, paths["/api/v1/document/get"], 2, "expected ≥2 /api/v1/document/get hits (agent + contract); saw %v", paths)
+	assert.GreaterOrEqual(t, paths["/api/v1/story/get"], 1, "missing /api/v1/story/get; saw %v", paths)
+	assert.GreaterOrEqual(t, paths["/api/v1/ledger/append"], 1, "missing /api/v1/ledger/append; saw %v", paths)
+
+	// Zero MCP JSON-RPC requests should have landed on the stub —
+	// AC L1 transport mandate.
+	for _, c := range calls {
+		assert.False(t, strings.HasPrefix(c.Path, "/mcp"), "unexpected /mcp request: %s", c.Path)
+		assert.NotContains(t, c.RawBody, `"jsonrpc"`, "request body carried JSON-RPC payload: %s", c.RawBody)
+		assert.NotContains(t, c.RawBody, `"tools/call"`, "request body referenced tools/call: %s", c.RawBody)
 	}
 
 	// Evidence row carries the kind:agent-execute-evidence tag.
 	var sawEvidence bool
 	for _, c := range calls {
-		if c.Tool != "ledger_append" {
+		if c.Path != "/api/v1/ledger/append" {
 			continue
 		}
-		tagsAny, _ := c.Args["tags"].([]any)
+		tagsAny, _ := c.Body["tags"].([]any)
 		for _, tag := range tagsAny {
 			if s, _ := tag.(string); s == "kind:agent-execute-evidence" {
 				sawEvidence = true
 			}
 		}
 	}
-	assert.True(t, sawEvidence, "no ledger_append carried kind:agent-execute-evidence")
+	assert.True(t, sawEvidence, "no /api/v1/ledger/append carried kind:agent-execute-evidence")
 
 	// Worktree must be left in place on success (forensic policy).
 	_, err = os.Stat(expectedWorktree)
@@ -265,59 +287,66 @@ func joinArgs(args []string) string {
 	return out
 }
 
-// stubMCP returns an httptest server responding to the verbs the
-// claude client invokes. Calls are recorded and accessible via the
-// returned closure.
-type recordedMCPCall struct {
-	Tool string
-	Args map[string]any
+// stubAPI returns an httptest server responding to the /api/v1
+// routes the claude dispatcher posts to. Calls are recorded and
+// accessible via the returned closure.
+//
+// Per sty_74e67353 work#1 (L1 dispatcher rewrite): the worker's
+// pre-spawn fetches + evidence row route through internal/cliremote
+// → POST /api/v1/<noun>/<verb>. Replaces the prior MCP JSON-RPC
+// stub (stubMCP) wholesale — no transport selector, no fallback.
+type recordedAPICall struct {
+	Path    string
+	Body    map[string]any
+	RawBody string
 }
 
-func stubMCP(t *testing.T, taskID string) (func() []recordedMCPCall, string, func()) {
+func stubAPI(t *testing.T, taskID string) (func() []recordedAPICall, string, func()) {
 	t.Helper()
 	var mu sync.Mutex
-	var calls []recordedMCPCall
+	var calls []recordedAPICall
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
-		var req struct {
-			ID     int64 `json:"id"`
-			Params struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments"`
-			} `json:"params"`
-		}
-		require.NoError(t, json.Unmarshal(body, &req))
+		var parsed map[string]any
+		_ = json.Unmarshal(body, &parsed)
 		mu.Lock()
-		calls = append(calls, recordedMCPCall{Tool: req.Params.Name, Args: req.Params.Arguments})
+		calls = append(calls, recordedAPICall{
+			Path:    r.URL.Path,
+			Body:    parsed,
+			RawBody: string(body),
+		})
 		mu.Unlock()
 
-		var text string
-		switch req.Params.Name {
-		case "task_get":
-			text = `{"id":"` + taskID + `","story_id":"sty_e2e","project_id":"proj_e","workspace_id":"wksp_e","agent_id":"doc_dev","action":"contract:develop","description":"do work"}`
-		case "agent_get":
-			text = `{"id":"doc_dev","name":"developer_agent"}`
-		case "contract_get":
-			text = `{"name":"develop"}`
-		case "story_get":
-			text = `{"story":{"id":"sty_e2e","title":"E2E story"}}`
-		case "ledger_append":
-			text = `{"id":"ldg_test"}`
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/task/get":
+			_, _ = w.Write([]byte(`{"id":"` + taskID + `","story_id":"sty_e2e","project_id":"proj_e","workspace_id":"wksp_e","agent_id":"doc_dev","action":"contract:develop","description":"do work"}`))
+		case "/api/v1/document/get":
+			// Branch on the requested type — agent + contract share the
+			// same /api/v1/document/get route.
+			docType, _ := parsed["type"].(string)
+			switch docType {
+			case "agent":
+				_, _ = w.Write([]byte(`{"id":"doc_dev","name":"developer_agent"}`))
+			case "contract":
+				_, _ = w.Write([]byte(`{"name":"develop"}`))
+			default:
+				_, _ = w.Write([]byte(`{}`))
+			}
+		case "/api/v1/story/get":
+			_, _ = w.Write([]byte(`{"story":{"id":"sty_e2e","title":"E2E story"}}`))
+		case "/api/v1/ledger/append":
+			_, _ = w.Write([]byte(`{"id":"ldg_test"}`))
+		default:
+			http.Error(w, "unhandled "+r.URL.Path, http.StatusNotFound)
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"jsonrpc": "2.0",
-			"id":      req.ID,
-			"result": map[string]any{
-				"content": []map[string]any{{"type": "text", "text": text}},
-			},
-		})
 	}))
-	getCalls := func() []recordedMCPCall {
+	getCalls := func() []recordedAPICall {
 		mu.Lock()
 		defer mu.Unlock()
-		out := make([]recordedMCPCall, len(calls))
+		out := make([]recordedAPICall, len(calls))
 		copy(out, calls)
 		return out
 	}

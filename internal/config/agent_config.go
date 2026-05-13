@@ -1,6 +1,6 @@
 // AgentConfig is the runtime configuration for the satellites-agent
 // binary. The schema covers polling-fallback fields (worker_id,
-// workspace_ids, mcp_url, idle_backoff, heartbeat_interval,
+// workspace_ids, spawn_mcp_url, idle_backoff, heartbeat_interval,
 // execute_timeout, repo_path, branch_template, worktree_root,
 // claude_binary_path, log_level, auth_token) plus the WS-subscriber
 // fields (hub_url, subscribe_workspace_ids, subscribe_since_id,
@@ -35,9 +35,15 @@ import (
 // AgentConfig is the runtime configuration for the satellites-agent
 // binary.
 type AgentConfig struct {
-	WorkerID          string        `toml:"worker_id"`
-	WorkspaceIDs      []string      `toml:"workspace_ids"`
-	MCPURL            string        `toml:"mcp_url"`
+	WorkerID     string   `toml:"worker_id"`
+	WorkspaceIDs []string `toml:"workspace_ids"`
+	// SpawnMCPURL is the MCP endpoint URL written into the dispatched
+	// claude subprocess's per-worktree MCP config. The satellites-client
+	// CLI itself talks to /api/v1 via internal/cliremote.Client and does
+	// not consume this field — it flows only to the spawned subprocess
+	// (sty_74e67353 work#1: renamed from MCPURL to make the spawn-side
+	// role explicit and to retire the legacy MCP-rooted Go transport).
+	SpawnMCPURL       string        `toml:"spawn_mcp_url"`
 	AuthToken         string        `toml:"auth_token"`
 	IdleBackoff       time.Duration `toml:"idle_backoff"`
 	HeartbeatInterval time.Duration `toml:"heartbeat_interval"`
@@ -110,13 +116,13 @@ func (c AgentConfig) String() string {
 		mask = "***"
 	}
 	return fmt.Sprintf(
-		"AgentConfig{worker_id=%q workspace_ids=%v mcp_url=%q auth_token=%s "+
+		"AgentConfig{worker_id=%q workspace_ids=%v spawn_mcp_url=%q auth_token=%s "+
 			"idle_backoff=%s heartbeat_interval=%s execute_timeout=%s "+
 			"repo_path=%q branch_template=%q worktree_root=%q "+
 			"claude_binary_path=%q log_level=%q log_path=%q hub_url=%q "+
 			"subscribe_workspace_ids=%v subscribe_since_id=%q "+
 			"ws_reconnect_min_backoff=%s ws_reconnect_max_backoff=%s}",
-		c.WorkerID, c.WorkspaceIDs, c.MCPURL, mask,
+		c.WorkerID, c.WorkspaceIDs, c.SpawnMCPURL, mask,
 		c.IdleBackoff, c.HeartbeatInterval, c.ExecuteTimeout,
 		c.RepoPath, c.BranchTemplate, c.WorktreeRoot,
 		c.ClaudeBinaryPath, c.LogLevel, c.LogPath, c.HubURL,
@@ -137,7 +143,7 @@ func defaultsAgent() *AgentConfig {
 	return &AgentConfig{
 		WorkerID:              "",
 		WorkspaceIDs:          nil,
-		MCPURL:                "http://localhost:8080/mcp",
+		SpawnMCPURL:           "http://localhost:8080/mcp",
 		AuthToken:             "",
 		IdleBackoff:           5 * time.Second,
 		HeartbeatInterval:     60 * time.Second,
@@ -165,7 +171,7 @@ func defaultsAgent() *AgentConfig {
 type agentTOMLOverlay struct {
 	WorkerID          *string   `toml:"worker_id"`
 	WorkspaceIDs      []string  `toml:"workspace_ids"`
-	MCPURL            *string   `toml:"mcp_url"`
+	SpawnMCPURL       *string   `toml:"spawn_mcp_url"`
 	AuthToken         *string   `toml:"auth_token"`
 	IdleBackoff       *duration `toml:"idle_backoff"`
 	HeartbeatInterval *duration `toml:"heartbeat_interval"`
@@ -275,8 +281,8 @@ func (o agentTOMLOverlay) applyTo(cfg *AgentConfig, warnings *[]string) {
 	if o.WorkspaceIDs != nil {
 		cfg.WorkspaceIDs = append([]string(nil), o.WorkspaceIDs...)
 	}
-	if o.MCPURL != nil {
-		cfg.MCPURL = *o.MCPURL
+	if o.SpawnMCPURL != nil {
+		cfg.SpawnMCPURL = *o.SpawnMCPURL
 	}
 	if o.AuthToken != nil {
 		cfg.AuthToken = *o.AuthToken

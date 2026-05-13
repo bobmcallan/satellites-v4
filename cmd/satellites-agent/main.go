@@ -105,7 +105,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Str("build", config.Build).
 		Str("commit", config.GitCommit).
 		Str("config_path", cfg.LoadedTOMLPath()).
-		Str("mcp_url", cfg.MCPURL).
+		Str("spawn_mcp_url", cfg.SpawnMCPURL).
 		Str("hub_url", cfg.HubURL).
 		Str("repo_path", cfg.RepoPath).
 		Str("branch_template", cfg.BranchTemplate).

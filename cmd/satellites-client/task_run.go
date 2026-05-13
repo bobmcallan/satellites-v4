@@ -62,7 +62,12 @@ func runTaskCmd(cmd *cobra.Command, args []string) error {
 		BranchTemplate:   resolvedClientConfig.BranchTemplate,
 		WorktreeRoot:     resolvedClientConfig.WorktreeRoot,
 		ClaudeBinaryPath: "claude",
-		MCPURL:           effectiveServer(),
+		// SpawnMCPURL is the MCP endpoint the dispatched claude
+		// subprocess connects to via its per-worktree MCP config.
+		// effectiveServer() returns the base server URL (e.g.
+		// https://satellites-pprod.fly.dev); the dispatched claude
+		// expects the full /mcp endpoint.
+		SpawnMCPURL:      effectiveServer() + "/mcp",
 		AuthToken:        resolvedToken,
 		ExecuteTimeout:   resolvedClientConfig.ExecuteTimeout,
 		LogLevel:         resolvedClientConfig.LogLevel,
@@ -82,6 +87,17 @@ func runTaskCmd(cmd *cobra.Command, args []string) error {
 		logger = satarbor.New(cfg.LogLevel)
 	}
 
+	// Resolve the shared /api/v1 HTTP client. ensureRemote constructs
+	// (or returns the cached) cliremote.Client built around the same
+	// effectiveServer + bearer pair the CLI's own verb calls use, so
+	// the dispatcher's pre-spawn fetches + the
+	// kind:agent-execute-evidence row ride the same wire path as
+	// `satellites-client task get` etc. (pr_mcp_cli_shared_path).
+	api, err := ensureRemote()
+	if err != nil {
+		return cliexit.Wrap(cliexit.Server, fmt.Errorf("task run %s: api client: %w", taskID, err))
+	}
+
 	env := worker.TaskEnvelope{
 		ID:          taskID,
 		WorkspaceID: t.WorkspaceID,
@@ -91,7 +107,7 @@ func runTaskCmd(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "satellites-client task run: dispatching %s (workspace=%s project=%s)\n",
 		taskID, t.WorkspaceID, t.ProjectID)
-	outcome, runErr := worker.RunDispatched(cmd.Context(), cfg, logger, env, os.Stdout, os.Stderr)
+	outcome, runErr := worker.RunDispatched(cmd.Context(), cfg, logger, api, env, os.Stdout, os.Stderr)
 	fmt.Fprintf(os.Stderr, "\nsatellites-client task run: outcome=%s\n", outcome)
 	if runErr != nil {
 		return cliexit.Wrap(cliexit.Server, fmt.Errorf("task run %s: %w", taskID, runErr))

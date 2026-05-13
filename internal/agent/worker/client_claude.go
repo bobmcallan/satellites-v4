@@ -24,17 +24,17 @@
 //  6. Map exit code → Outcome (success | failure | timeout).
 //  7. Leave the worktree in place on terminal outcome (forensic).
 //
-// The dispatcher reads orchestrator-side metadata (task / agent /
-// contract / story) via the substrate's MCP tools/call surface — the
-// same JSON-RPC endpoint the dispatched claude subprocess itself uses
-// for substrate calls. The wire shape is the satellites server's /mcp
-// endpoint; the previous indirection through a separate placeholderClient
-// type was removed in sty_4db0e025 slice E1.
+// Transport: the dispatcher's pre-spawn fetches (task / agent /
+// contract / story) and the post-spawn evidence row issue HTTP POSTs
+// to /api/v1/<noun>/<verb> via internal/cliremote.Client — the same
+// shared client.Client typed surface the MCP and HTTP transports both
+// delegate to (pr_mcp_cli_shared_path). The hot-path runners
+// (hotpath.go) retain the legacy MCP `tools/call` shape until
+// sty_74e67353 work#2 migrates them onto the same cliremote surface.
 
 package worker
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -48,18 +48,32 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bobmcallan/satellites/internal/cliremote"
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/ternarybob/arbor"
 )
 
 // claudeClient drives the orchestrator-side dispatch flow: composing
 // the thin-pointer prompt, materialising the worktree, and spawning
-// the claude subprocess. callTool talks to the satellites server's MCP
-// endpoint (same wire as the dispatched subprocess).
+// the claude subprocess. The api field carries the shared /api/v1
+// HTTP client all pre-spawn fetches + appendExecuteEvidence route
+// through; the http + rpcID fields remain for the residual MCP
+// tools/call transport hotpath.go still uses (work#2 deletes them).
 type claudeClient struct {
 	cfg    config.AgentConfig
 	logger arbor.ILogger
-	http   *http.Client
+
+	// api is the shared /api/v1 HTTP client (internal/cliremote). All
+	// pre-spawn substrate fetches + the kind:agent-execute-evidence
+	// row route through it. nil is a programmer error on the dispatch
+	// path; hotpath tests that construct claudeClient directly leave
+	// it nil because the hot runners do not call api.
+	api *cliremote.Client
+
+	// http + rpcID are the legacy MCP tools/call transport hotpath.go
+	// still depends on. work#2 (sty_74e67353) deletes both fields
+	// when it migrates the hot runners onto cliremote.
+	http *http.Client
 
 	// rpcID generates monotonic JSON-RPC request ids for callTool.
 	rpcID atomic.Int64
@@ -78,9 +92,11 @@ type claudeClient struct {
 	stderrTee io.Writer
 }
 
-// newClaudeClient constructs the dispatcher bound to cfg.MCPURL. The
-// http client uses cfg.ExecuteTimeout/2 as its per-request bound (the
-// outer worker contexts already enforce per-call timeouts; this is a
+// newClaudeClient constructs the dispatcher. The legacy http client
+// powering hotpath.go's residual callTool transport is preserved
+// (work#2 retires it together with hotpath.go's MCP call sites). The
+// per-request timeout is derived from cfg.ExecuteTimeout/2 (the outer
+// worker contexts already enforce per-call timeouts; this is a
 // belt-and-braces transport-level cap).
 func newClaudeClient(cfg config.AgentConfig, logger arbor.ILogger) *claudeClient {
 	timeout := cfg.ExecuteTimeout / 2
@@ -101,104 +117,23 @@ func newClaudeClient(cfg config.AgentConfig, logger arbor.ILogger) *claudeClient
 // worktree log file. It is the orchestrator-invoked entry point used
 // by `satellites-client task run <task_id>` (sty_3e27a3f5).
 //
+// The api argument is the shared /api/v1 HTTP client the pre-spawn
+// fetches + appendExecuteEvidence row issue through. The caller
+// constructs it from the same effectiveServer + bearer pair the
+// satellites-client process uses for its own verb calls so the
+// dispatcher and the user-facing CLI share one transport.
+//
 // The caller owns the task lifecycle: RunDispatched does NOT Claim
 // (the task_id is supplied directly) and does NOT Close (the
 // dispatched claude session writes its own task_update via the
 // substrate; the returned Outcome + exit-code-derived error let the
 // caller surface the result).
-func RunDispatched(ctx context.Context, cfg config.AgentConfig, logger arbor.ILogger, env TaskEnvelope, stdout, stderr io.Writer) (Outcome, error) {
+func RunDispatched(ctx context.Context, cfg config.AgentConfig, logger arbor.ILogger, api *cliremote.Client, env TaskEnvelope, stdout, stderr io.Writer) (Outcome, error) {
 	c := newClaudeClient(cfg, logger)
+	c.api = api
 	c.stdoutTee = stdout
 	c.stderrTee = stderr
 	return c.Execute(ctx, env)
-}
-
-// jsonrpcReq is the wire shape sent to the MCP server.
-type jsonrpcReq struct {
-	JSONRPC string         `json:"jsonrpc"`
-	ID      int64          `json:"id"`
-	Method  string         `json:"method"`
-	Params  jsonrpcCallReq `json:"params"`
-}
-
-type jsonrpcCallReq struct {
-	Name      string         `json:"name"`
-	Arguments map[string]any `json:"arguments"`
-}
-
-// jsonrpcResp is the wire shape parsed back. The MCP tools/call shape
-// returns a `result.content[].text` payload that callTool surfaces as
-// raw bytes for caller-specific decoding.
-type jsonrpcResp struct {
-	JSONRPC string         `json:"jsonrpc"`
-	ID      int64          `json:"id"`
-	Result  *jsonrpcResult `json:"result,omitempty"`
-	Error   *jsonrpcErr    `json:"error,omitempty"`
-}
-
-type jsonrpcResult struct {
-	Content []jsonrpcContent `json:"content"`
-	IsError bool             `json:"isError,omitempty"`
-}
-
-type jsonrpcContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-type jsonrpcErr struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-// callTool issues an MCP tools/call request and returns the first
-// content text on success. A non-nil error covers transport, HTTP-
-// status, and JSON-RPC error envelopes. Used by Execute + the hot-path
-// runners to fetch orchestrator-side context (task / agent / contract /
-// story) and emit evidence + task_update rows.
-func (c *claudeClient) callTool(ctx context.Context, name string, args map[string]any) (string, error) {
-	id := c.rpcID.Add(1)
-	body, err := json.Marshal(jsonrpcReq{
-		JSONRPC: "2.0",
-		ID:      id,
-		Method:  "tools/call",
-		Params:  jsonrpcCallReq{Name: name, Arguments: args},
-	})
-	if err != nil {
-		return "", fmt.Errorf("callTool: marshal %s: %w", name, err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.MCPURL, bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("callTool: new request %s: %w", name, err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	if tok := c.cfg.AuthToken; tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("callTool: %s: %w", name, err)
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("callTool: read %s: %w", name, err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("callTool: %s: status %d body %s", name, resp.StatusCode, string(raw))
-	}
-	var parsed jsonrpcResp
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return "", fmt.Errorf("callTool: decode %s: %w", name, err)
-	}
-	if parsed.Error != nil {
-		return "", fmt.Errorf("callTool: %s: rpc error %d: %s", name, parsed.Error.Code, parsed.Error.Message)
-	}
-	if parsed.Result == nil || len(parsed.Result.Content) == 0 {
-		return "", nil
-	}
-	return parsed.Result.Content[0].Text, nil
 }
 
 // taskInfo captures the subset of task_get response the orchestrator
@@ -261,7 +196,7 @@ type storyInfo struct {
 	Title string `json:"title"`
 }
 
-// promptInputs bundles the four MCP fetches used to populate the
+// promptInputs bundles the four fetches used to populate the
 // thin-pointer prompt template.
 type promptInputs struct {
 	Task     taskInfo
@@ -313,7 +248,7 @@ Begin.
 `
 
 // composePrompt renders the thin-pointer prompt for the dispatched
-// agent. Pure: takes the four MCP-fetch results + the runtime paths.
+// agent. Pure: takes the four fetch results + the runtime paths.
 // Tested directly in client_claude_test.go.
 func composePrompt(in promptInputs) string {
 	r := strings.NewReplacer(
@@ -329,83 +264,89 @@ func composePrompt(in promptInputs) string {
 	return r.Replace(promptTemplate)
 }
 
-// fetchTaskInfo calls task_get(id) and decodes the row into taskInfo.
+// fetchTaskInfo POSTs to /api/v1/task/get and decodes the row into
+// taskInfo. The HTTP route returns the task row directly (no envelope
+// wrapper) per internal/httpserver/api.go:handleTaskGet.
 func (c *claudeClient) fetchTaskInfo(ctx context.Context, id string) (taskInfo, error) {
-	text, err := c.callTool(ctx, "task_get", map[string]any{"id": id})
-	if err != nil {
-		return taskInfo{}, fmt.Errorf("task_get: %w", err)
-	}
-	if text == "" {
-		return taskInfo{}, fmt.Errorf("task_get: empty response for %s", id)
+	if id == "" {
+		return taskInfo{}, errors.New("task_get: empty id")
 	}
 	var t taskInfo
-	if err := json.Unmarshal([]byte(text), &t); err != nil {
-		return taskInfo{}, fmt.Errorf("task_get decode: %w", err)
+	if err := c.api.Call(ctx, "task_get", map[string]any{"id": id}, &t); err != nil {
+		return taskInfo{}, fmt.Errorf("task_get: %w", err)
+	}
+	if t.ID == "" {
+		return taskInfo{}, fmt.Errorf("task_get: empty response for %s", id)
 	}
 	return t, nil
 }
 
-// fetchAgentInfo calls agent_get(id=...) and decodes the row.
-// task.AgentID is the doc id (doc_<8hex>); agent_get accepts id.
+// fetchAgentInfo POSTs to /api/v1/document/get with type=agent and
+// the supplied doc id. The HTTP /api/v1 surface registers a single
+// document_get route (internal/httpserver/api.go:handleDocumentGet);
+// the MCP wrappers `agent_get` / `contract_get` are thin type-pinned
+// helpers on top of the same client.DocumentGet method, so the
+// dispatcher routes through document_get directly (the shared client
+// path — pr_mcp_cli_shared_path).
 func (c *claudeClient) fetchAgentInfo(ctx context.Context, id string) (agentInfo, error) {
 	if id == "" {
-		return agentInfo{}, errors.New("agent_get: empty id")
+		return agentInfo{}, errors.New("document_get: empty agent id")
 	}
-	text, err := c.callTool(ctx, "agent_get", map[string]any{"id": id})
-	if err != nil {
-		return agentInfo{}, fmt.Errorf("agent_get: %w", err)
+	var doc struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
 	}
-	var a agentInfo
-	if text != "" {
-		_ = json.Unmarshal([]byte(text), &a)
+	if err := c.api.Call(ctx, "document_get", map[string]any{"id": id, "type": "agent"}, &doc); err != nil {
+		return agentInfo{}, fmt.Errorf("document_get(agent): %w", err)
 	}
+	a := agentInfo{ID: doc.ID, Name: doc.Name}
 	if a.ID == "" {
 		a.ID = id
 	}
 	return a, nil
 }
 
-// fetchContractInfo calls contract_get(name=action, project_id=...).
-// task.Action is shaped contract:<name>; the leading prefix is stripped.
+// fetchContractInfo POSTs to /api/v1/document/get with type=contract.
+// task.Action is shaped `contract:<name>`; the leading prefix is
+// stripped. A free-form action (no contract row) surfaces as a
+// contractInfo carrying just the resolved name — the heavy-path
+// fallthrough is preserved per the prior callTool error-tolerant
+// shape.
 func (c *claudeClient) fetchContractInfo(ctx context.Context, action, projectID string) (contractInfo, error) {
 	name := strings.TrimPrefix(action, "contract:")
 	if name == "" {
 		return contractInfo{Name: action}, nil
 	}
-	args := map[string]any{"name": name}
+	args := map[string]any{"name": name, "type": "contract"}
 	if projectID != "" {
 		args["project_id"] = projectID
 	}
-	text, err := c.callTool(ctx, "contract_get", args)
-	if err != nil {
-		// A free-form action (no contract row) is valid per the agent
-		// model. Surface the configured name and continue.
+	var doc struct {
+		Name       string `json:"name"`
+		Structured []byte `json:"structured"`
+	}
+	if err := c.api.Call(ctx, "document_get", args, &doc); err != nil {
 		return contractInfo{Name: name}, nil
 	}
-	var co contractInfo
-	if text != "" {
-		_ = json.Unmarshal([]byte(text), &co)
-	}
+	co := contractInfo{Name: doc.Name, Structured: doc.Structured}
 	if co.Name == "" {
 		co.Name = name
 	}
 	return co, nil
 }
 
-// fetchStoryInfo calls story_get(id=...).
+// fetchStoryInfo POSTs to /api/v1/story/get. The route returns the
+// orientation envelope (StoryGetOutput): the story row is at .story —
+// the dispatcher only reads ID + Title to compose the prompt.
 func (c *claudeClient) fetchStoryInfo(ctx context.Context, id string) (storyInfo, error) {
 	if id == "" {
 		return storyInfo{}, nil
 	}
-	text, err := c.callTool(ctx, "story_get", map[string]any{"id": id})
-	if err != nil {
-		return storyInfo{ID: id}, nil
-	}
 	var raw struct {
 		Story storyInfo `json:"story"`
 	}
-	if text != "" {
-		_ = json.Unmarshal([]byte(text), &raw)
+	if err := c.api.Call(ctx, "story_get", map[string]any{"id": id}, &raw); err != nil {
+		return storyInfo{ID: id}, nil
 	}
 	if raw.Story.ID == "" {
 		raw.Story.ID = id
@@ -514,7 +455,7 @@ func worktreeExists(path string) (string, bool) {
 func buildMCPConfigJSON(cfg config.AgentConfig) (string, error) {
 	server := map[string]any{
 		"type": "http",
-		"url":  cfg.MCPURL,
+		"url":  cfg.SpawnMCPURL,
 	}
 	if cfg.AuthToken != "" {
 		server["headers"] = map[string]string{
@@ -679,9 +620,8 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 
 // appendExecuteEvidence writes the kind:agent-execute-evidence ledger
 // row that records the orchestrator-side metadata for the dispatch:
-// prompt sent (literal — small), exit code, log path. The dispatched
-// agent itself writes the substantive evidence rows; this row is the
-// orchestrator's frame.
+// prompt sent (literal — small), exit code, log path. Routes through
+// /api/v1/ledger/append.
 func (c *claudeClient) appendExecuteEvidence(ctx context.Context, env TaskEnvelope, ti taskInfo, prompt string, exitCode int, logPath string) error {
 	content := fmt.Sprintf(
 		"# agent-execute-evidence\n\ntask=%s\nstory=%s\nagent_id=%s\naction=%s\nworktree=%s\nlog=%s\nexit_code=%d\n\n## prompt\n\n%s\n",
@@ -700,6 +640,5 @@ func (c *claudeClient) appendExecuteEvidence(ctx context.Context, env TaskEnvelo
 	if ti.StoryID != "" {
 		args["story_id"] = ti.StoryID
 	}
-	_, err := c.callTool(ctx, "ledger_append", args)
-	return err
+	return c.api.Call(ctx, "ledger_append", args, nil)
 }

@@ -62,7 +62,7 @@ func main() { os.Exit(3) }
 func TestCLIClient_ClaimHappy(t *testing.T) {
 	bin := buildStubCLI(t, stubClaimHappy)
 	cfg := config.AgentConfig{
-		MCPURL:        "http://stub",
+		SpawnMCPURL:   "http://stub",
 		AuthToken:     "fake",
 		CLIBinaryPath: bin,
 	}
@@ -78,7 +78,7 @@ func TestCLIClient_ClaimHappy(t *testing.T) {
 
 func TestCLIClient_ClaimEmptyQueue(t *testing.T) {
 	bin := buildStubCLI(t, stubClaimEmpty)
-	cfg := config.AgentConfig{MCPURL: "http://stub", CLIBinaryPath: bin}
+	cfg := config.AgentConfig{SpawnMCPURL: "http://stub", CLIBinaryPath: bin}
 	client := NewCLIClient(cfg, arbor.GetLogger())
 	env, err := client.Claim(context.Background(), "worker-x", nil)
 	if err != nil {
@@ -91,7 +91,7 @@ func TestCLIClient_ClaimEmptyQueue(t *testing.T) {
 
 func TestCLIClient_ClaimExitNotFound(t *testing.T) {
 	bin := buildStubCLI(t, stubExitNotFound)
-	cfg := config.AgentConfig{MCPURL: "http://stub", CLIBinaryPath: bin}
+	cfg := config.AgentConfig{SpawnMCPURL: "http://stub", CLIBinaryPath: bin}
 	client := NewCLIClient(cfg, arbor.GetLogger())
 	_, err := client.Claim(context.Background(), "worker-x", nil)
 	if err == nil {
@@ -103,7 +103,7 @@ func TestCLIClient_ClaimExitNotFound(t *testing.T) {
 }
 
 func TestCLIClient_CloseEmptyTaskID(t *testing.T) {
-	cfg := config.AgentConfig{MCPURL: "http://stub", CLIBinaryPath: "/does/not/exist"}
+	cfg := config.AgentConfig{SpawnMCPURL: "http://stub", CLIBinaryPath: "/does/not/exist"}
 	client := NewCLIClient(cfg, arbor.GetLogger())
 	err := client.Close(context.Background(), "", "worker-x", OutcomeSuccess)
 	if err == nil {
@@ -127,7 +127,7 @@ func main() {
 }
 `
 	bin := buildStubCLI(t, stub)
-	cfg := config.AgentConfig{MCPURL: "http://stub", CLIBinaryPath: bin}
+	cfg := config.AgentConfig{SpawnMCPURL: "http://stub", CLIBinaryPath: bin}
 	client := NewCLIClient(cfg, arbor.GetLogger())
 	if err := client.Heartbeat(context.Background(), "worker-x", "task_x", "wksp_a"); err != nil {
 		t.Fatalf("Heartbeat: %v", err)

@@ -439,7 +439,7 @@ func (c *claudeClient) runStoryCloseHotPath(ctx context.Context, env TaskEnvelop
 
 	missing := requiredClosingFieldsMissing(storyRaw)
 	if len(missing) > 0 {
-		return OutcomeFailure, fmt.Errorf("story_close: closing fields not populated on story: %s — call story_field_set before dispatching", strings.Join(missing, ", "))
+		return OutcomeFailure, fmt.Errorf("story_close: closing fields not populated on story: %s — call story_update with a fields={…} payload before dispatching", strings.Join(missing, ", "))
 	}
 
 	resolution := parseTrigger(ti.Trigger).Resolution
@@ -524,7 +524,7 @@ func (c *claudeClient) fetchStoryRaw(ctx context.Context, id string) (storyRaw, 
 //
 // Two field-source paths are checked:
 //  1. The template's `hooks.done.structured` list (field_present checks).
-//     This is the load-bearing gate for `story_update_status(done)`.
+//     This is the load-bearing gate for `story_update(status=done)`.
 //  2. As a fallback (templates that haven't declared a `done` hook),
 //     every `Required` field on the template.
 //

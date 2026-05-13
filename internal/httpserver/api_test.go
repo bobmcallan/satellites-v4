@@ -39,8 +39,8 @@ var expectedRoutes = []string{
 	"POST /api/v1/task/add",
 	"POST /api/v1/task/plan",
 	"POST /api/v1/story/get",
-	"POST /api/v1/story/update-status",
-	"POST /api/v1/story/field-set",
+	// /api/v1/story/update-status + /api/v1/story/field-set folded into
+	// /api/v1/story/update in sty_4db0e025 slice D1.
 	"POST /api/v1/project/set",
 	// sty_ef248ab2 operator-tier reads (28).
 	"POST /api/v1/story/list",
@@ -133,13 +133,17 @@ var expectedRoutes = []string{
 	"POST /api/v1/portal/replicate",
 }
 
-// TestAPI_RoutesRegistered asserts the registrar attaches all 105
+// TestAPI_RoutesRegistered asserts the registrar attaches all 103
 // verb routes to the supplied mux. Routes that respond 404 indicate
 // missing registration; any other status (400/500/200) proves the
 // handler was hit.
+//
+// Sty_4db0e025 slice D1 dropped /api/v1/story/update-status and
+// /api/v1/story/field-set (folded into /api/v1/story/update), so the
+// expected count is 105 → 103.
 func TestAPI_RoutesRegistered(t *testing.T) {
-	if got := len(expectedRoutes); got != 105 {
-		t.Fatalf("expected 105 routes, got %d (update the slice as the verb set grows)", got)
+	if got := len(expectedRoutes); got != 103 {
+		t.Fatalf("expected 103 routes, got %d (update the slice as the verb set grows)", got)
 	}
 
 	reg := NewAPIRegistrar(client.New(client.Deps{StartedAt: time.Now().UTC()}))

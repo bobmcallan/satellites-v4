@@ -287,59 +287,12 @@ func newLedgerAppendCmd() *cobra.Command {
 	return c
 }
 
-// story update-status
-func newStoryUpdateStatusCmd() *cobra.Command {
-	c := &cobra.Command{
-		Use:   "update-status",
-		Short: "Transition the story's status.",
-		RunE: writeHandler("story_update_status", func(cmd *cobra.Command, args []string) (any, error) {
-			id, _ := cmd.Flags().GetString("id")
-			status, _ := cmd.Flags().GetString("status")
-			if id == "" || status == "" {
-				return nil, cliexit.Newf(cliexit.Usage, "story update-status: --id and --status are required")
-			}
-			return map[string]any{"id": id, "status": status}, nil
-		}),
-	}
-	c.Flags().String("id", "", "Story id (required).")
-	c.Flags().String("status", "", "Target: ready | in_progress | done | cancelled (required).")
-	_ = c.MarkFlagRequired("id")
-	_ = c.MarkFlagRequired("status")
-	return c
-}
-
-// story field-set
-func newStoryFieldSetCmd() *cobra.Command {
-	c := &cobra.Command{
-		Use:   "field-set",
-		Short: "Set a single template-defined field on a story.",
-		RunE: writeHandler("story_field_set", func(cmd *cobra.Command, args []string) (any, error) {
-			id, _ := cmd.Flags().GetString("id")
-			field, _ := cmd.Flags().GetString("field")
-			value, _ := cmd.Flags().GetString("value")
-			if id == "" || field == "" {
-				return nil, cliexit.Newf(cliexit.Usage, "story field-set: --id and --field are required")
-			}
-			if pf.Stdin {
-				if value != "" {
-					return nil, cliexit.Newf(cliexit.Usage, "story field-set: --stdin and --value are mutually exclusive")
-				}
-				body, err := readBodyFromStdin()
-				if err != nil {
-					return nil, err
-				}
-				value = body
-			}
-			return map[string]any{"id": id, "field": field, "value": value}, nil
-		}),
-	}
-	c.Flags().String("id", "", "Story id (required).")
-	c.Flags().String("field", "", "Field name as declared by the category template (required).")
-	c.Flags().String("value", "", "Field value (use --stdin to read from stdin).")
-	_ = c.MarkFlagRequired("id")
-	_ = c.MarkFlagRequired("field")
-	return c
-}
+// story update-status + story field-set CLI subcommands were removed
+// in sty_4db0e025 slice D1. Their flags fold into `satellites-client
+// story update --id <id> --status <s>` and `satellites-client story
+// update --id <id> --fields '<json>'` against the consolidated
+// story_update verb. pr_story_terminal_gate continues to fire from the
+// substrate when status moves to done/cancelled with open tasks.
 
 // project set
 func newProjectSetCmd() *cobra.Command {

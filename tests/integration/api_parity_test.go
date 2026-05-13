@@ -451,16 +451,20 @@ func buildParityCases() []parityCase {
 		},
 		{name: "story_get", args: idFromFixture("id", func(ff *parityFixtures) string { return ff.storyID })},
 		{
-			name: "story_update_status",
-			skip: "story_update_status mutates the story to a terminal state; running it twice would require a fresh story per call. Parity is preserved by construction (both transports call client.Client.StoryUpdateStatus).",
-		},
-		{
-			name: "story_field_set",
+			// sty_4db0e025 D1 folded story_update_status + story_field_set
+			// into story_update. The mutating-field arm is exercised here
+			// (deterministic, idempotent against the parity fixture).
+			// Status-transition parity is preserved by construction:
+			// both transports route through client.StoryUpdate, which
+			// routes through MemoryStore.UpdateStatus (the same path the
+			// terminal gate fires on).
+			name: "story_update",
 			args: func(_ *testing.T, _ context.Context, ff *parityFixtures) map[string]any {
 				return map[string]any{
-					"id":    ff.storyID,
-					"field": "user_story",
-					"value": "as an operator, I want to verify parity, so that 07d is safe to ship.",
+					"id": ff.storyID,
+					"fields": map[string]any{
+						"user_story": "as an operator, I want to verify parity, so that 07d is safe to ship.",
+					},
 				}
 			},
 		},

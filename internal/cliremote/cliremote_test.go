@@ -208,8 +208,9 @@ func TestCall_PathMappingViaServer(t *testing.T) {
 		{"document_get", "/api/v1/document/get"},
 		{"document_list", "/api/v1/document/list"},
 		{"story_get", "/api/v1/story/get"},
-		{"story_update_status", "/api/v1/story/update-status"},
-		{"story_field_set", "/api/v1/story/field-set"},
+		// story_update_status + story_field_set folded into story_update
+		// in sty_4db0e025 slice D1.
+		{"story_update", "/api/v1/story/update"},
 		{"project_set", "/api/v1/project/set"},
 	}
 	for _, tc := range cases {

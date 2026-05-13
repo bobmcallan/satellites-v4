@@ -348,7 +348,7 @@ func TestRunStoryCloseHotPath_RefusesEmptyRequiredFields(t *testing.T) {
 	assert.Equal(t, OutcomeFailure, outcome)
 	assert.Contains(t, err.Error(), "rollout_plan")
 	assert.Contains(t, err.Error(), "fix_commit")
-	assert.Contains(t, err.Error(), "story_field_set")
+	assert.Contains(t, err.Error(), "story_update")
 }
 
 // TestRunStoryCloseHotPath_HappyPath: every required field populated,

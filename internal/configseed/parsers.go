@@ -65,7 +65,7 @@ func agentToInput(fm Frontmatter, body []byte, workspaceID, actor string) (docum
 //     with a cleansed HOME + per-task worktree. Used for plan + develop +
 //     review contracts where LLM judgment is load-bearing.
 //   - "hot": satellites-agent runs the action in-process via an embedded
-//     hot-path runner (git push, ff-only merge, story_field_set + close).
+//     hot-path runner (git push, ff-only merge, story_update fields + close).
 //     ~10s vs ~90s for the heavy path. Used for execution-shape
 //     contracts: push, merge_to_main, story_close.
 //

@@ -118,7 +118,7 @@ func (c TemplateStructuredCheck) evaluate(ctx context.Context, st Story, ev Eval
 		}
 		v, ok := st.Fields[c.Field]
 		if !ok || isBlank(v) {
-			return c.messageOr(fmt.Sprintf("required field %q is empty — set it via story_field_set before this transition", c.Field))
+			return c.messageOr(fmt.Sprintf("required field %q is empty — set it via story_update (fields={%q:…}) before this transition", c.Field, c.Field))
 		}
 		return ""
 	case "regex_match":
@@ -184,8 +184,8 @@ func isBlank(v any) bool {
 	return false
 }
 
-// TemplateLookup is the abstraction story_update_status calls to
-// resolve a category → Template. Implementations look up the
+// TemplateLookup is the abstraction story_update (status branch) calls
+// to resolve a category → Template. Implementations look up the
 // system-scope document with type=story_template + name=category.
 // nil-safe consumers (no template for a given category just means no
 // hooks) keep the substrate functional even when the seed didn't run.

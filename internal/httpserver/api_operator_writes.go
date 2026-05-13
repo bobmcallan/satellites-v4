@@ -142,13 +142,15 @@ func (a *APIRegistrar) handleStoryAdd(w http.ResponseWriter, r *http.Request) {
 
 func (a *APIRegistrar) handleStoryUpdate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID                 string    `json:"id"`
-		Title              *string   `json:"title,omitempty"`
-		Description        *string   `json:"description,omitempty"`
-		AcceptanceCriteria *string   `json:"acceptance_criteria,omitempty"`
-		Category           *string   `json:"category,omitempty"`
-		Priority           *string   `json:"priority,omitempty"`
-		Tags               *[]string `json:"tags,omitempty"`
+		ID                 string             `json:"id"`
+		Title              *string            `json:"title,omitempty"`
+		Description        *string            `json:"description,omitempty"`
+		AcceptanceCriteria *string            `json:"acceptance_criteria,omitempty"`
+		Category           *string            `json:"category,omitempty"`
+		Priority           *string            `json:"priority,omitempty"`
+		Tags               *[]string          `json:"tags,omitempty"`
+		Status             *string            `json:"status,omitempty"`
+		Fields             map[string]*string `json:"fields,omitempty"`
 	}
 	if err := decodeJSONBody(r, &req); err != nil {
 		writeAPIError(w, err)
@@ -160,29 +162,19 @@ func (a *APIRegistrar) handleStoryUpdate(w http.ResponseWriter, r *http.Request)
 	}
 	cc := a.clientCaller(r)
 	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
-	stores := a.client.Stores()
-	if stores.Stories == nil {
-		writeAPIError(w, errors.New("story store not configured"))
-		return
-	}
-	existing, err := stores.Stories.GetByID(r.Context(), req.ID, cc.Memberships)
-	if err != nil {
-		writeAPIStatus(w, http.StatusNotFound, "story not found")
-		return
-	}
-	if _, err := a.client.ResolveProjectID(r.Context(), existing.ProjectID, "", cc, cc.Memberships); err != nil {
-		writeAPIStatus(w, http.StatusNotFound, "story not found")
-		return
-	}
-	fields := story.UpdateFields{
+	updated, err := a.client.StoryUpdate(r.Context(), cc, client.StoryUpdateInput{
+		ID:                 req.ID,
 		Title:              req.Title,
 		Description:        req.Description,
 		AcceptanceCriteria: req.AcceptanceCriteria,
 		Category:           req.Category,
 		Priority:           req.Priority,
 		Tags:               req.Tags,
-	}
-	updated, err := stores.Stories.Update(r.Context(), req.ID, fields, cc.UserID, time.Now().UTC(), cc.Memberships)
+		Status:             req.Status,
+		Fields:             req.Fields,
+		Memberships:        cc.Memberships,
+		Now:                time.Now().UTC(),
+	})
 	if err != nil {
 		writeAPIError(w, err)
 		return
@@ -209,9 +201,10 @@ func (a *APIRegistrar) handleStoryDelete(w http.ResponseWriter, r *http.Request)
 		writeAPIError(w, errors.New("story store not configured"))
 		return
 	}
-	updated, err := a.client.StoryUpdateStatus(r.Context(), cc, client.StoryUpdateStatusInput{
+	cancelled := "cancelled"
+	updated, err := a.client.StoryUpdate(r.Context(), cc, client.StoryUpdateInput{
 		ID:          req.ID,
-		Status:      "cancelled",
+		Status:      &cancelled,
 		Memberships: cc.Memberships,
 		Now:         time.Now().UTC(),
 	})

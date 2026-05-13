@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -62,11 +63,16 @@ func newStoryFixture(t *testing.T) *storyFixture {
 	}
 }
 
-func TestStoryUpdateStatus_BacklogToReady(t *testing.T) {
+// TestStoryUpdate_StatusBacklogToReady exercises the status-transition
+// path through the consolidated verb (sty_4db0e025 slice D1). The same
+// store.UpdateStatus call fires under the hood — pr_story_terminal_gate
+// is preserved.
+func TestStoryUpdate_StatusBacklogToReady(t *testing.T) {
 	f := newStoryFixture(t)
-	got, err := f.c.StoryUpdateStatus(context.Background(), f.caller, StoryUpdateStatusInput{
+	target := story.StatusReady
+	got, err := f.c.StoryUpdate(context.Background(), f.caller, StoryUpdateInput{
 		ID:          f.storyID,
-		Status:      story.StatusReady,
+		Status:      &target,
 		Memberships: f.caller.Memberships,
 		Now:         f.now.Add(time.Minute),
 	})
@@ -74,36 +80,39 @@ func TestStoryUpdateStatus_BacklogToReady(t *testing.T) {
 	assert.Equal(t, story.StatusReady, got.Status)
 }
 
-func TestStoryUpdateStatus_RejectsMissingStatus(t *testing.T) {
+func TestStoryUpdate_RejectsEmptyStatus(t *testing.T) {
 	f := newStoryFixture(t)
-	_, err := f.c.StoryUpdateStatus(context.Background(), f.caller, StoryUpdateStatusInput{
+	empty := ""
+	_, err := f.c.StoryUpdate(context.Background(), f.caller, StoryUpdateInput{
 		ID:          f.storyID,
+		Status:      &empty,
 		Memberships: f.caller.Memberships,
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "status is required")
 }
 
-func TestStoryUpdateStatus_StoryNotFoundOnCrossWorkspace(t *testing.T) {
+func TestStoryUpdate_StatusCrossWorkspaceHides(t *testing.T) {
 	f := newStoryFixture(t)
-	_, err := f.c.StoryUpdateStatus(context.Background(), f.caller, StoryUpdateStatusInput{
+	target := story.StatusReady
+	_, err := f.c.StoryUpdate(context.Background(), f.caller, StoryUpdateInput{
 		ID:          f.storyID,
-		Status:      story.StatusReady,
+		Status:      &target,
 		Memberships: []string{"wksp_other"},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "story not found")
 }
 
-func TestStoryFieldSet_WritesValueWhenNoTemplate(t *testing.T) {
+func TestStoryUpdate_FieldsWriteWhenNoTemplate(t *testing.T) {
 	f := newStoryFixture(t)
 	// No story_template seeded for "improvement" category — template
 	// gate is pass-through, the store accepts the field as a free-form
 	// k/v on the story row.
-	got, err := f.c.StoryFieldSet(context.Background(), f.caller, StoryFieldSetInput{
+	val := "test scope"
+	got, err := f.c.StoryUpdate(context.Background(), f.caller, StoryUpdateInput{
 		ID:          f.storyID,
-		Field:       "scope",
-		Value:       "test scope",
+		Fields:      map[string]*string{"scope": &val},
 		Memberships: f.caller.Memberships,
 		Now:         f.now.Add(time.Minute),
 	})
@@ -111,7 +120,7 @@ func TestStoryFieldSet_WritesValueWhenNoTemplate(t *testing.T) {
 	assert.Equal(t, "test scope", got.Fields["scope"])
 }
 
-func TestStoryFieldSet_RejectsUnknownFieldWithTemplate(t *testing.T) {
+func TestStoryUpdate_FieldsRejectsUnknownWithTemplate(t *testing.T) {
 	f := newStoryFixture(t)
 	// Seed a story_template with only "scope" declared so any other
 	// field gets rejected with the typed message.
@@ -128,24 +137,51 @@ func TestStoryFieldSet_RejectsUnknownFieldWithTemplate(t *testing.T) {
 	}, f.now)
 	require.NoError(t, err)
 
-	_, err = f.c.StoryFieldSet(context.Background(), f.caller, StoryFieldSetInput{
+	val := "anything"
+	_, err = f.c.StoryUpdate(context.Background(), f.caller, StoryUpdateInput{
 		ID:          f.storyID,
-		Field:       "nonsense_field",
-		Value:       "anything",
+		Fields:      map[string]*string{"nonsense_field": &val},
 		Memberships: f.caller.Memberships,
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not declared by the")
 }
 
-func TestStoryFieldSet_RejectsMissingField(t *testing.T) {
+// TestStoryUpdate_OpenTasksGateFiresOnConsolidatedPath verifies
+// pr_story_terminal_gate (the load-bearing substrate invariant)
+// continues to fire when story_update is called with status=done while
+// a published/planned task is open. Folding story_update_status into
+// story_update preserves the gate by routing the call through the same
+// MemoryStore.UpdateStatus method that holds the check. Sty_4db0e025 D1.
+func TestStoryUpdate_OpenTasksGateFiresOnConsolidatedPath(t *testing.T) {
 	f := newStoryFixture(t)
-	_, err := f.c.StoryFieldSet(context.Background(), f.caller, StoryFieldSetInput{
+	f.c.deps.Stories.(*story.MemoryStore).SetOpenTasksFunc(func(ctx context.Context, storyID string, memberships []string) ([]string, error) {
+		return []string{"task_open1"}, nil
+	})
+	// Walk to a state from which `done` is a valid transition target so
+	// the gate (not ValidTransition) is the failure mode under test.
+	for _, target := range []string{story.StatusReady, story.StatusInProgress} {
+		tgt := target
+		_, err := f.c.StoryUpdate(context.Background(), f.caller, StoryUpdateInput{
+			ID:          f.storyID,
+			Status:      &tgt,
+			Memberships: f.caller.Memberships,
+			Now:         f.now.Add(time.Minute),
+		})
+		require.NoError(t, err)
+	}
+	target := story.StatusDone
+	_, err := f.c.StoryUpdate(context.Background(), f.caller, StoryUpdateInput{
 		ID:          f.storyID,
+		Status:      &target,
 		Memberships: f.caller.Memberships,
+		Now:         f.now.Add(2 * time.Minute),
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "field required")
+	require.True(t, errors.Is(err, story.ErrStoryHasOpenTasks), "expected ErrStoryHasOpenTasks, got %v", err)
+	var openErr *story.StoryHasOpenTasksError
+	require.True(t, errors.As(err, &openErr), "error must unwrap to *StoryHasOpenTasksError, got %T", err)
+	assert.Equal(t, []string{"task_open1"}, openErr.OpenTaskIDs)
 }
 
 func TestStoryAdd_HappyPathDefaultsPriorityAndCategory(t *testing.T) {

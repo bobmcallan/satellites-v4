@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -327,7 +328,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		// continues to back the HTTP route and CLI verb.
 
 		updateStoryTool := mcpgo.NewTool("story_update",
-			mcpgo.WithDescription("Update a story's mutable non-status fields. Pass only the fields you want to change; omitted fields are left untouched. Tags replace wholesale (V3 parity) — pass an empty array to clear. Status transitions go through story_update_status."),
+			mcpgo.WithDescription("Update a story. Pass only the keys you want to change; omitted keys are left untouched. Tags replace wholesale — pass an empty array to clear. Status moves the story through the lifecycle (ready | in_progress | done | cancelled); the substrate's pr_story_terminal_gate rejects done/cancelled with open work tasks. Fields writes template-declared values (e.g. repro, fix_commit, root_cause); unknown field names are rejected against the category template. Sty_4db0e025 D1 folded story_update_status + story_field_set into this single verb."),
 			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Story id (sty_<8hex>).")),
 			mcpgo.WithString("title", mcpgo.Description("New title.")),
 			mcpgo.WithString("description", mcpgo.Description("New description.")),
@@ -336,6 +337,8 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("priority", mcpgo.Description("critical | high | medium | low")),
 			mcpgo.WithArray("tags", mcpgo.Description("Tags/labels (replaces existing tags). Empty array clears."),
 				mcpgo.Items(map[string]any{"type": "string"})),
+			mcpgo.WithString("status", mcpgo.Description("Target status: ready | in_progress | done | cancelled. Transitions are validated; pr_story_terminal_gate blocks done/cancelled while open tasks remain.")),
+			mcpgo.WithObject("fields", mcpgo.Description("Template-declared field writes as {name: value}. Empty string clears the field. Unknown field names are rejected against the resolved category template.")),
 		)
 		s.mcp.AddTool(updateStoryTool, s.handleStoryUpdate)
 
@@ -355,21 +358,12 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		)
 		s.mcp.AddTool(listStoryTool, s.handleStoryList)
 
-		updateStatusTool := mcpgo.NewTool("story_update_status",
-			mcpgo.WithDescription("Transition a story to a new status. Emits a story.status_change ledger row. Valid transitions: backlog→ready→in_progress→done, or ←→cancelled from any non-terminal. The story's category template (if registered) gates the transition — failed structured hooks are returned as a natural-language explanation."),
-			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Story id.")),
-			mcpgo.WithString("status", mcpgo.Required(), mcpgo.Description("Target status: ready | in_progress | done | cancelled.")),
-		)
-		s.mcp.AddTool(updateStatusTool, s.handleStoryUpdateStatus)
-
-		fieldSetTool := mcpgo.NewTool("story_field_set",
-			mcpgo.WithDescription("Set a single template-defined field on a story (e.g. repro, fix_commit, root_cause). The field must be declared by the story's category template; unknown fields are rejected. Pass an empty value to clear a field."),
-			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Story id (sty_<8hex>).")),
-			mcpgo.WithString("field", mcpgo.Required(), mcpgo.Description("Field name as declared by the category template.")),
-			mcpgo.WithString("value", mcpgo.Description("Field value. Empty string clears the field.")),
-		)
-		s.mcp.AddTool(fieldSetTool, s.handleStoryFieldSet)
-
+		// story_update_status + story_field_set MCP registrations removed
+		// in sty_4db0e025 slice D1 — both folded into story_update above
+		// (status + fields arguments). pr_story_terminal_gate is preserved:
+		// status transitions still route through MemoryStore.UpdateStatus
+		// via client.StoryUpdate.
+		//
 		// story_template_get / story_template_list MCP registrations removed
 		// in sty_4db0e025 slice C1+B2 — operator authoring per sty_3dc39a5c
 		// "Removed from MCP" list. Reachable through /api/v1 + the
@@ -1624,11 +1618,13 @@ func (s *Server) handleStoryAdd(ctx context.Context, req mcpgo.CallToolRequest) 
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
-// handleStoryUpdate updates a story's mutable non-status fields. The
-// per-call surface (sty_330cc4ab, V3 parity) accepts title, description,
-// acceptance_criteria, category, priority, and tags. Omitted fields are
-// left untouched; tags replace wholesale — an empty array clears the
-// list. Status transitions remain on story_update_status.
+// handleStoryUpdate applies the consolidated story_update verb. The
+// per-call surface accepts title, description, acceptance_criteria,
+// category, priority, tags, status, and fields. Omitted keys are left
+// untouched; tags replace wholesale — an empty array clears the list.
+// Sty_4db0e025 slice D1 folded story_update_status + story_field_set
+// into this verb; pr_story_terminal_gate is preserved by routing the
+// status transition through client.StoryUpdate → MemoryStore.UpdateStatus.
 func (s *Server) handleStoryUpdate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	start := time.Now()
 	caller, _ := auth.UserFrom(ctx)
@@ -1652,7 +1648,9 @@ func (s *Server) handleStoryUpdate(ctx context.Context, req mcpgo.CallToolReques
 // argument-map presence semantics (a key present with an empty value
 // clears the field; an omitted key leaves it untouched). The category
 // validation lives on client.StoryUpdate so the typed surface owns the
-// allowed-set rule.
+// allowed-set rule. Sty_4db0e025 slice D1 extended this with status +
+// fields after folding story_update_status and story_field_set into
+// the same verb.
 func buildStoryUpdateInput(req mcpgo.CallToolRequest, id string, memberships []string, now time.Time) client.StoryUpdateInput {
 	args := req.GetArguments()
 	in := client.StoryUpdateInput{ID: id, Memberships: memberships, Now: now}
@@ -1682,6 +1680,28 @@ func buildStoryUpdateInput(req mcpgo.CallToolRequest, id string, memberships []s
 			v = []string{}
 		}
 		in.Tags = &v
+	}
+	if _, ok := args["status"]; ok {
+		v := req.GetString("status", "")
+		in.Status = &v
+	}
+	if raw, ok := args["fields"]; ok {
+		if m, ok := raw.(map[string]any); ok && len(m) > 0 {
+			in.Fields = make(map[string]*string, len(m))
+			for k, v := range m {
+				switch val := v.(type) {
+				case string:
+					s := val
+					in.Fields[k] = &s
+				case nil:
+					empty := ""
+					in.Fields[k] = &empty
+				default:
+					s := fmt.Sprintf("%v", val)
+					in.Fields[k] = &s
+				}
+			}
+		}
 	}
 	return in
 }
@@ -1741,80 +1761,11 @@ func (s *Server) handleStoryList(ctx context.Context, req mcpgo.CallToolRequest)
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 
-// handleStoryUpdateStatus implements story_update_status. Thin
-// forwarder per cli-primary order:07a-layer-2 (sty_df1cb227 Slice B).
-// The wire layer pre-resolves project access; client.StoryUpdateStatus
-// owns template-hook evaluation + the UpdateStatus call.
-func (s *Server) handleStoryUpdateStatus(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	start := time.Now()
-	caller, _ := auth.UserFrom(ctx)
-	id, err := req.RequireString("id")
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	status, err := req.RequireString("status")
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	memberships := s.resolveCallerMemberships(ctx, caller)
-	updated, err := s.cli().StoryUpdateStatus(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.StoryUpdateStatusInput{
-		ID:          id,
-		Status:      status,
-		Memberships: memberships,
-		Now:         s.nowUTC(),
-	})
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	body, _ := json.Marshal(updated)
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "story_update_status").
-		Str("story_id", id).
-		Str("new_status", status).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
-	return mcpgo.NewToolResultText(string(body)), nil
-}
-
-// handleStoryFieldSet writes a single template-defined value onto a
-// story. Validates the field name against the resolved category
-// template — fields not declared by the template are rejected with a
-// list of what the template does declare. Sty_d2a03cea.
-// handleStoryFieldSet implements story_field_set. Thin forwarder per
-// cli-primary order:07a-layer-2 (sty_df1cb227 Slice B).
-func (s *Server) handleStoryFieldSet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	start := time.Now()
-	caller, _ := auth.UserFrom(ctx)
-	id, err := req.RequireString("id")
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	field, err := req.RequireString("field")
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	memberships := s.resolveCallerMemberships(ctx, caller)
-	updated, err := s.cli().StoryFieldSet(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.StoryFieldSetInput{
-		ID:          id,
-		Field:       field,
-		Value:       req.GetString("value", ""),
-		Memberships: memberships,
-		Now:         s.nowUTC(),
-	})
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	body, _ := json.Marshal(updated)
-	s.logger.Info().
-		Str("method", "tools/call").
-		Str("tool", "story_field_set").
-		Str("story_id", id).
-		Str("field", field).
-		Int64("duration_ms", time.Since(start).Milliseconds()).
-		Msg("mcp tool call")
-	return mcpgo.NewToolResultText(string(body)), nil
-}
+// handleStoryUpdateStatus + handleStoryFieldSet were removed in
+// sty_4db0e025 slice D1. Their behaviour is folded into handleStoryUpdate
+// (status + fields arguments) and the consolidated client.StoryUpdate
+// method routes status transitions through MemoryStore.UpdateStatus,
+// preserving pr_story_terminal_gate.
 
 // handleStoryTemplateGet returns the parsed Template for the given
 // category. Convenience over document_get with name=category +

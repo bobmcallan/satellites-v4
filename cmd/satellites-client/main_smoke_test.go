@@ -45,11 +45,13 @@ func TestRootVersion(t *testing.T) {
 }
 
 func TestStoryHelpListsVerbs(t *testing.T) {
+	// sty_4db0e025 D1 folded story_update_status + story_field_set
+	// into the consolidated `story update` verb.
 	helpsExitZero(t, []string{"story", "--help"},
 		"add",
 		"get",
 		"list",
-		"update-status",
+		"update",
 		"export-walk",
 	)
 }
@@ -111,7 +113,7 @@ func TestNounGroupsRegistered(t *testing.T) {
 	// total grows as stubs are migrated; the value reflects the
 	// noun-group shape after sty_0b419d98 Tier B.
 	expected := map[string]int{
-		"story":     10, // sty_f38bd573 added story_delete
+		"story":     8, // sty_4db0e025 D1 folded update_status + field_set into update
 		"task":      8,
 		"ledger":    6,
 		"project":   7,

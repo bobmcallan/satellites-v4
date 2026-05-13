@@ -12,7 +12,7 @@ A story cannot transition to `done` or `cancelled` while its task chain has open
 
 ## What the invariant says
 
-When the operator (or any caller of `story_update_status`) targets the terminal states `done` or `cancelled`, the substrate looks up tasks scoped to the story whose status is `published` or `planned`. If any exist, the transition is rejected with `ErrStoryHasOpenTasks` and the open task ids are returned in the error payload.
+When the operator (or any caller of `story_update` with a `status` argument) targets the terminal states `done` or `cancelled`, the substrate looks up tasks scoped to the story whose status is `published` or `planned`. If any exist, the transition is rejected with `ErrStoryHasOpenTasks` and the open task ids are returned in the error payload.
 
 The reconciler path (`UpdateStatusDerived`) is exempt: derivation-driven flips are themselves the consequence of an observed terminal task event, so by construction the chain is consistent with the target.
 
@@ -28,7 +28,7 @@ The substrate has no "transition gate document" primitive today. Building one (a
 
 ## How to apply
 
-- **Operator.** When a `story_update_status(done)` call returns 422 with `{"error": ..., "open_task_ids": [...]}`, do not retry the transition. Reconcile the listed tasks first — close them via `task_update(status=closed)`, cancel them, or cancel the story instead. Then retry.
+- **Operator.** When a `story_update(status=done)` call returns 422 with `{"error": ..., "open_task_ids": [...]}`, do not retry the transition. Reconcile the listed tasks first — close them via `task_update(status=closed)`, cancel them, or cancel the story instead. Then retry.
 - **Orchestrator.** Same as the operator. The pre-flight rule "do not bypass the chain by transitioning to done while open tasks remain" (cited from `pr_pipeline_authority`) is now enforced; the rule is no longer honour-system.
 - **Substrate authors.** Internal flows that legitimately need to bypass the gate (the storystatus reconciler) call `UpdateStatusDerived`, which skips both `ValidTransition` and this gate. Adding a new internal flow goes through the same path.
 

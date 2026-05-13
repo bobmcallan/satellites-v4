@@ -54,108 +54,13 @@ var validStoryCategories = map[string]struct{}{
 	"documentation":  {},
 }
 
-// StoryUpdateStatusInput names the transition target. ID + Status
-// are required. Memberships scope the GetByID + UpdateStatus
-// lookups. Now is overridable for testing; zero falls through to
-// time.Now().UTC().
-type StoryUpdateStatusInput struct {
-	ID          string
-	Status      string
-	Memberships []string
-	Now         time.Time
-}
-
-// StoryUpdateStatus transitions a story to a new status. When the
-// resolved category has a story_template, its lifecycle hooks for the
-// target status are evaluated against the existing row; failures
-// block the transition with a natural-language explanation. Missing
-// template → no hooks → pass-through (forward-compat for categories
-// without a template yet).
-//
-// Propagates story.ErrStoryHasOpenTasks unwrapped so wire-layer
-// callers (the HTTP layer, Layer 3) can errors.Is on it and map to
-// the documented 422 envelope.
-func (c *Client) StoryUpdateStatus(ctx context.Context, caller Caller, in StoryUpdateStatusInput) (story.Story, error) {
-	if c.deps.Stories == nil {
-		return story.Story{}, errStoryStoreNotConfigured
-	}
-	if in.ID == "" {
-		return story.Story{}, errors.New("id required")
-	}
-	if in.Status == "" {
-		return story.Story{}, errors.New("status is required")
-	}
-	existing, err := c.deps.Stories.GetByID(ctx, in.ID, in.Memberships)
-	if err != nil {
-		return story.Story{}, errStoryNotFoundForUpdate
-	}
-	if t, ok := c.loadStoryTemplate(ctx, existing.Category); ok {
-		ev := story.EvaluationContext{
-			LedgerEntriesForStory: func(ctx context.Context, storyID string) ([]ledger.LedgerEntry, error) {
-				if c.deps.Ledger == nil {
-					return nil, nil
-				}
-				return c.deps.Ledger.List(ctx, existing.ProjectID, ledger.ListOptions{StoryID: storyID, Limit: 50}, in.Memberships)
-			},
-		}
-		if failures := t.EvaluateTransition(ctx, in.Status, existing, ev); len(failures) > 0 {
-			return story.Story{}, fmt.Errorf("transition blocked by %s story template:\n  - %s", existing.Category, strings.Join(failures, "\n  - "))
-		}
-	}
-	now := in.Now
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	return c.deps.Stories.UpdateStatus(ctx, in.ID, in.Status, caller.UserID, now, in.Memberships)
-}
-
-// StoryFieldSetInput names a single template-defined field write.
-type StoryFieldSetInput struct {
-	ID          string
-	Field       string
-	Value       string
-	Memberships []string
-	Now         time.Time
-}
-
-// StoryFieldSet writes a single template-defined value onto a story.
-// Validates the field name against the resolved category template —
-// fields not declared by the template are rejected with a list of
-// what the template DOES declare.
-func (c *Client) StoryFieldSet(ctx context.Context, caller Caller, in StoryFieldSetInput) (story.Story, error) {
-	if c.deps.Stories == nil {
-		return story.Story{}, errStoryStoreNotConfigured
-	}
-	if in.ID == "" {
-		return story.Story{}, errors.New("id required")
-	}
-	if in.Field == "" {
-		return story.Story{}, errors.New("field required")
-	}
-	existing, err := c.deps.Stories.GetByID(ctx, in.ID, in.Memberships)
-	if err != nil {
-		return story.Story{}, errStoryNotFoundForUpdate
-	}
-	if t, ok := c.loadStoryTemplate(ctx, existing.Category); ok {
-		known := false
-		names := make([]string, 0, len(t.Fields))
-		for _, f := range t.Fields {
-			names = append(names, f.Name)
-			if f.Name == in.Field {
-				known = true
-				break
-			}
-		}
-		if !known {
-			return story.Story{}, fmt.Errorf("field %q is not declared by the %q story template (declared: %s)", in.Field, existing.Category, strings.Join(names, ", "))
-		}
-	}
-	now := in.Now
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	return c.deps.Stories.SetField(ctx, in.ID, in.Field, in.Value, caller.UserID, now, in.Memberships)
-}
+// (StoryUpdateStatusInput / StoryUpdateStatus / StoryFieldSetInput /
+// StoryFieldSet removed sty_4db0e025 slice D1 — folded into the
+// consolidated StoryUpdate verb below. Status transitions still flow
+// through *MemoryStore.UpdateStatus, preserving pr_story_terminal_gate.
+// Template-field writes still flow through *MemoryStore.SetField with
+// the same unknown-field rejection rule story_field_set used to
+// enforce.)
 
 // StoryGetInput identifies the story to retrieve. Memberships scope
 // the GetByID lookup; cross-workspace stories return errStoryNotFoundForUpdate.
@@ -308,6 +213,20 @@ func (c *Client) StoryAdd(ctx context.Context, caller Caller, in StoryAddInput) 
 // pointer to an empty value clears the field on the story row. This
 // mirrors the wire-layer GetArguments()-presence test the MCP
 // handler historically used.
+//
+// Status + Fields fold the prior story_update_status and
+// story_field_set verbs into this single mutation surface
+// (sty_4db0e025 slice D1):
+//
+//   - Status (non-nil) triggers a status transition. The store's
+//     UpdateStatus enforces ValidTransition + pr_story_terminal_gate
+//     (open-tasks check on done|cancelled); template lifecycle hooks
+//     run before the store call, same as story_update_status did.
+//   - Fields keys name template-declared field names; values follow
+//     the same pointer-to-string presence semantics — an empty-string
+//     value clears the field (the SetField "" → delete idiom), and
+//     unknown field names are rejected against the resolved template
+//     (the gate story_field_set used to apply).
 type StoryUpdateInput struct {
 	ID                 string
 	Title              *string
@@ -316,6 +235,8 @@ type StoryUpdateInput struct {
 	Category           *string
 	Priority           *string
 	Tags               *[]string
+	Status             *string
+	Fields             map[string]*string
 	Memberships        []string
 	Now                time.Time
 }
@@ -323,8 +244,24 @@ type StoryUpdateInput struct {
 // StoryUpdate applies the input's optional fields to the story.
 // Resolves the existing row first (workspace-scoped via memberships)
 // to surface a "story not found" envelope on cross-workspace access,
-// then delegates to the store's narrow Update verb. Status
-// transitions remain on StoryUpdateStatus per the V3 surface split.
+// then applies the requested mutations in a defined order:
+//
+//  1. Template-field writes (Fields). Unknown fields are rejected
+//     against the resolved category template — same rule
+//     story_field_set enforced.
+//  2. Non-status field updates (title, description, ...). Delegated
+//     to the store's narrow Update verb.
+//  3. Status transition (Status). Delegated to the store's
+//     UpdateStatus verb, which fires ValidTransition +
+//     pr_story_terminal_gate; template lifecycle hooks for the target
+//     status run first.
+//
+// On any failure the call returns early — preceding mutations remain
+// (the substrate has no transaction primitive across these three
+// store calls), matching the prior verb-set behaviour where each
+// verb was its own atomic store operation. Propagates
+// story.ErrStoryHasOpenTasks unwrapped so wire-layer callers can
+// errors.Is on it and map to the documented 422 envelope.
 func (c *Client) StoryUpdate(ctx context.Context, caller Caller, in StoryUpdateInput) (story.Story, error) {
 	if c.deps.Stories == nil {
 		return story.Story{}, errStoryStoreNotConfigured
@@ -332,7 +269,8 @@ func (c *Client) StoryUpdate(ctx context.Context, caller Caller, in StoryUpdateI
 	if in.ID == "" {
 		return story.Story{}, ErrStoryIDRequired
 	}
-	if _, err := c.deps.Stories.GetByID(ctx, in.ID, in.Memberships); err != nil {
+	existing, err := c.deps.Stories.GetByID(ctx, in.ID, in.Memberships)
+	if err != nil {
 		return story.Story{}, errStoryNotFoundForUpdate
 	}
 	if in.Category != nil && *in.Category != "" {
@@ -344,15 +282,84 @@ func (c *Client) StoryUpdate(ctx context.Context, caller Caller, in StoryUpdateI
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	fields := story.UpdateFields{
-		Title:              in.Title,
-		Description:        in.Description,
-		AcceptanceCriteria: in.AcceptanceCriteria,
-		Category:           in.Category,
-		Priority:           in.Priority,
-		Tags:               in.Tags,
+
+	updated := existing
+	// 1. Template fields (folded from story_field_set).
+	if len(in.Fields) > 0 {
+		var template story.Template
+		var hasTemplate bool
+		if t, ok := c.loadStoryTemplate(ctx, existing.Category); ok {
+			template = t
+			hasTemplate = true
+		}
+		for name, value := range in.Fields {
+			if name == "" {
+				return story.Story{}, errors.New("field name required")
+			}
+			if value == nil {
+				continue
+			}
+			if hasTemplate {
+				known := false
+				declared := make([]string, 0, len(template.Fields))
+				for _, f := range template.Fields {
+					declared = append(declared, f.Name)
+					if f.Name == name {
+						known = true
+					}
+				}
+				if !known {
+					return story.Story{}, fmt.Errorf("field %q is not declared by the %q story template (declared: %s)", name, existing.Category, strings.Join(declared, ", "))
+				}
+			}
+			updated, err = c.deps.Stories.SetField(ctx, in.ID, name, *value, caller.UserID, now, in.Memberships)
+			if err != nil {
+				return story.Story{}, err
+			}
+		}
 	}
-	return c.deps.Stories.Update(ctx, in.ID, fields, caller.UserID, now, in.Memberships)
+
+	// 2. Non-status field updates (folded from the prior StoryUpdate body).
+	if in.Title != nil || in.Description != nil || in.AcceptanceCriteria != nil || in.Category != nil || in.Priority != nil || in.Tags != nil {
+		fields := story.UpdateFields{
+			Title:              in.Title,
+			Description:        in.Description,
+			AcceptanceCriteria: in.AcceptanceCriteria,
+			Category:           in.Category,
+			Priority:           in.Priority,
+			Tags:               in.Tags,
+		}
+		updated, err = c.deps.Stories.Update(ctx, in.ID, fields, caller.UserID, now, in.Memberships)
+		if err != nil {
+			return story.Story{}, err
+		}
+	}
+
+	// 3. Status transition (folded from story_update_status).
+	if in.Status != nil {
+		if *in.Status == "" {
+			return story.Story{}, errors.New("status is required")
+		}
+		if t, ok := c.loadStoryTemplate(ctx, updated.Category); ok {
+			ev := story.EvaluationContext{
+				LedgerEntriesForStory: func(ctx context.Context, storyID string) ([]ledger.LedgerEntry, error) {
+					if c.deps.Ledger == nil {
+						return nil, nil
+					}
+					return c.deps.Ledger.List(ctx, updated.ProjectID, ledger.ListOptions{StoryID: storyID, Limit: 50}, in.Memberships)
+				},
+			}
+			if failures := t.EvaluateTransition(ctx, *in.Status, updated, ev); len(failures) > 0 {
+				return story.Story{}, fmt.Errorf("transition blocked by %s story template:\n  - %s", updated.Category, strings.Join(failures, "\n  - "))
+			}
+		}
+		updated, err = c.deps.Stories.UpdateStatus(ctx, in.ID, *in.Status, caller.UserID, now, in.Memberships)
+		if err != nil {
+			return story.Story{}, err
+		}
+	}
+
+	return updated, nil
 }
 
 // loadStoryTemplate resolves a category → story.Template by reading

@@ -125,7 +125,11 @@ func TestWrites_LedgerAppendHappy(t *testing.T) {
 	}
 }
 
-func TestWrites_StoryUpdateStatusHappy(t *testing.T) {
+// TestWrites_StoryUpdateStatusHappy renamed to
+// TestWrites_StoryUpdateStatusFolded after sty_4db0e025 D1 folded
+// story_update_status into story_update. The CLI surface is now
+// `story update --status <s>` — status rides the same verb.
+func TestWrites_StoryUpdateStatusFolded(t *testing.T) {
 	resetCLIState(t)
 	srv, cap := stubMutateServer(t, `{"id":"sty_x","status":"done"}`)
 	root := newRootCmd()
@@ -133,13 +137,16 @@ func TestWrites_StoryUpdateStatusHappy(t *testing.T) {
 	root.SetOut(out)
 	root.SetErr(out)
 	root.SetArgs([]string{"--server", srv.URL, "--token", "fake", "--json",
-		"story", "update-status", "--id", "sty_x", "--status", "done"})
+		"story", "update", "--id", "sty_x", "--status", "done"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	args := cap.args
 	if args["status"] != "done" {
 		t.Fatalf("status not forwarded: %+v", args)
+	}
+	if args["id"] != "sty_x" {
+		t.Fatalf("id not forwarded: %+v", args)
 	}
 }
 

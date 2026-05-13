@@ -81,7 +81,7 @@ func TestStoryMCPRoundTrip(t *testing.T) {
 	})
 	result, _ := listResp["result"].(map[string]any)
 	tools, _ := result["tools"].([]any)
-	need := map[string]bool{"story_add": false, "story_get": false, "story_list": false, "story_update_status": false}
+	need := map[string]bool{"story_add": false, "story_get": false, "story_list": false, "story_update": false}
 	for _, raw := range tools {
 		if tool, ok := raw.(map[string]any); ok {
 			if name, _ := tool["name"].(string); name != "" {
@@ -137,33 +137,29 @@ func TestStoryMCPRoundTrip(t *testing.T) {
 		t.Errorf("initial status = %q, want backlog", status)
 	}
 
-	// sty_de9f10f9 — fill the feature template's required fields BEFORE
-	// walking the lifecycle. Root cause of the prior failure: the
-	// `feature` category template gates `in_progress` on
-	// field_present:user_story and `done` on acceptance_demo +
-	// fix_commit + regression_test_path + post_deploy_check. With those
-	// missing, story_update_status returned the gate-failure text as
-	// the tool's plain text content, and extractToolText handed
-	// json.Unmarshal a non-JSON string ("invalid character 'a' in
-	// literal true" — the 'a' in the explanation prose).
-	for _, field := range []struct{ name, value string }{
-		{"user_story", "As an integration test I want a complete feature story so that the in_progress gate passes."},
-		{"acceptance_demo", "Walk the story lifecycle backlog→ready→in_progress→done via MCP."},
-		{"fix_commit", "tests/integration/story_mcp_test.go"},
-		{"regression_test_path", "tests/integration/story_mcp_test.go"},
-		{"post_deploy_check", "Re-run TestStoryMCPRoundTrip against the live instance."},
-	} {
-		setResp := rpcCall(t, ctx, mcpURL, "key_story", map[string]any{
-			"jsonrpc": "2.0", "id": 6, "method": "tools/call",
-			"params": map[string]any{
-				"name":      "story_field_set",
-				"arguments": map[string]any{"id": storyID, "field": field.name, "value": field.value},
-			},
-		})
-		setResult, _ := setResp["result"].(map[string]any)
-		if isErr, _ := setResult["isError"].(bool); isErr {
-			t.Fatalf("story_field_set %q failed: %s", field.name, extractToolText(t, setResp))
-		}
+	// sty_de9f10f9 / sty_4db0e025 D1 — fill the feature template's
+	// required fields BEFORE walking the lifecycle. The `feature`
+	// category template gates `in_progress` on field_present:user_story
+	// and `done` on acceptance_demo + fix_commit + regression_test_path
+	// + post_deploy_check. After the D1 consolidation these flow through
+	// story_update with a fields object.
+	templateFields := map[string]any{
+		"user_story":           "As an integration test I want a complete feature story so that the in_progress gate passes.",
+		"acceptance_demo":      "Walk the story lifecycle backlog→ready→in_progress→done via MCP.",
+		"fix_commit":           "tests/integration/story_mcp_test.go",
+		"regression_test_path": "tests/integration/story_mcp_test.go",
+		"post_deploy_check":    "Re-run TestStoryMCPRoundTrip against the live instance.",
+	}
+	setResp := rpcCall(t, ctx, mcpURL, "key_story", map[string]any{
+		"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+		"params": map[string]any{
+			"name":      "story_update",
+			"arguments": map[string]any{"id": storyID, "fields": templateFields},
+		},
+	})
+	setResult, _ := setResp["result"].(map[string]any)
+	if isErr, _ := setResult["isError"].(bool); isErr {
+		t.Fatalf("story_update fields write failed: %s", extractToolText(t, setResp))
 	}
 
 	// story_list via tag filter must surface it.
@@ -191,6 +187,8 @@ func TestStoryMCPRoundTrip(t *testing.T) {
 
 	// Transition lifecycle with a sleep between calls so ledger rows have
 	// distinct created_at values (surrealdb time precision workaround).
+	// Sty_4db0e025 D1 — status transitions now ride the consolidated
+	// story_update verb.
 	for i, next := range []string{"ready", "in_progress", "done"} {
 		if i > 0 {
 			time.Sleep(1200 * time.Millisecond)
@@ -198,13 +196,13 @@ func TestStoryMCPRoundTrip(t *testing.T) {
 		resp := rpcCall(t, ctx, mcpURL, "key_story", map[string]any{
 			"jsonrpc": "2.0", "id": 10 + i, "method": "tools/call",
 			"params": map[string]any{
-				"name":      "story_update_status",
+				"name":      "story_update",
 				"arguments": map[string]any{"id": storyID, "status": next},
 			},
 		})
 		var updated map[string]any
 		if err := json.Unmarshal([]byte(extractToolText(t, resp)), &updated); err != nil {
-			t.Fatalf("decode update_status %q: %v", next, err)
+			t.Fatalf("decode story_update status=%q: %v", next, err)
 		}
 		if gs, _ := updated["status"].(string); gs != next {
 			t.Errorf("transition to %q: got status %q", next, gs)
@@ -215,7 +213,7 @@ func TestStoryMCPRoundTrip(t *testing.T) {
 	bad := rpcCall(t, ctx, mcpURL, "key_story", map[string]any{
 		"jsonrpc": "2.0", "id": 20, "method": "tools/call",
 		"params": map[string]any{
-			"name":      "story_update_status",
+			"name":      "story_update",
 			"arguments": map[string]any{"id": storyID, "status": "ready"},
 		},
 	})

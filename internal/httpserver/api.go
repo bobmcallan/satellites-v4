@@ -67,8 +67,10 @@ func (a *APIRegistrar) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/task/add", a.handleTaskAdd)
 	mux.HandleFunc("POST /api/v1/task/plan", a.handleTaskPlan)
 	mux.HandleFunc("POST /api/v1/story/get", a.handleStoryGet)
-	mux.HandleFunc("POST /api/v1/story/update-status", a.handleStoryUpdateStatus)
-	mux.HandleFunc("POST /api/v1/story/field-set", a.handleStoryFieldSet)
+	// /api/v1/story/update-status + /api/v1/story/field-set routes removed
+	// in sty_4db0e025 slice D1 — both folded into /api/v1/story/update
+	// (handleStoryUpdate accepts status + fields). pr_story_terminal_gate
+	// is preserved via client.StoryUpdate → MemoryStore.UpdateStatus.
 	mux.HandleFunc("POST /api/v1/project/set", a.handleProjectSet)
 
 	// Operator-tier read routes (sty_ef248ab2).
@@ -682,55 +684,12 @@ func (a *APIRegistrar) handleStoryGet(w http.ResponseWriter, r *http.Request) {
 	writeAPIJSON(w, out)
 }
 
-func (a *APIRegistrar) handleStoryUpdateStatus(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ID     string `json:"id"`
-		Status string `json:"status"`
-	}
-	if err := decodeJSONBody(r, &req); err != nil {
-		writeAPIError(w, err)
-		return
-	}
-	cc := a.clientCaller(r)
-	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
-	out, err := a.client.StoryUpdateStatus(r.Context(), cc, client.StoryUpdateStatusInput{
-		ID:          req.ID,
-		Status:      req.Status,
-		Memberships: cc.Memberships,
-		Now:         time.Now().UTC(),
-	})
-	if err != nil {
-		writeAPIError(w, err)
-		return
-	}
-	writeAPIJSON(w, out)
-}
-
-func (a *APIRegistrar) handleStoryFieldSet(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ID    string `json:"id"`
-		Field string `json:"field"`
-		Value string `json:"value"`
-	}
-	if err := decodeJSONBody(r, &req); err != nil {
-		writeAPIError(w, err)
-		return
-	}
-	cc := a.clientCaller(r)
-	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
-	out, err := a.client.StoryFieldSet(r.Context(), cc, client.StoryFieldSetInput{
-		ID:          req.ID,
-		Field:       req.Field,
-		Value:       req.Value,
-		Memberships: cc.Memberships,
-		Now:         time.Now().UTC(),
-	})
-	if err != nil {
-		writeAPIError(w, err)
-		return
-	}
-	writeAPIJSON(w, out)
-}
+// handleStoryUpdateStatus + handleStoryFieldSet HTTP handlers were
+// removed in sty_4db0e025 slice D1 — both folded into handleStoryUpdate
+// (now living in api_operator_writes.go), which routes through
+// client.StoryUpdate. The consolidated client method preserves
+// pr_story_terminal_gate by calling MemoryStore.UpdateStatus when a
+// status transition is requested.
 
 func (a *APIRegistrar) handleProjectSet(w http.ResponseWriter, r *http.Request) {
 	var req struct {

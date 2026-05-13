@@ -8,6 +8,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -64,7 +65,13 @@ func newStoryAddCmd() *cobra.Command {
 func newStoryUpdateCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "update",
-		Short: "Update a story's mutable fields.",
+		Short: "Update a story (fields, status, and template-declared field values).",
+		Long: "Update a story. --status moves the story through the lifecycle " +
+			"(ready | in_progress | done | cancelled); pr_story_terminal_gate " +
+			"blocks done/cancelled while open tasks remain. --field name=value " +
+			"writes template-declared values (repeatable; empty value clears). " +
+			"Sty_4db0e025 D1 folded story_update_status + story_field_set into " +
+			"this verb.",
 		RunE: writeHandler("story_update", func(cmd *cobra.Command, args []string) (any, error) {
 			id, _ := cmd.Flags().GetString("id")
 			if id == "" {
@@ -95,6 +102,28 @@ func newStoryUpdateCmd() *cobra.Command {
 				v, _ := cmd.Flags().GetStringSlice("tags")
 				out["tags"] = v
 			}
+			if cmd.Flags().Changed("status") {
+				v, _ := cmd.Flags().GetString("status")
+				out["status"] = v
+			}
+			if cmd.Flags().Changed("field") {
+				pairs, _ := cmd.Flags().GetStringSlice("field")
+				fields := map[string]any{}
+				for _, kv := range pairs {
+					name, value, found := strings.Cut(kv, "=")
+					if !found {
+						return nil, cliexit.Newf(cliexit.Usage, "story update: --field expects name=value, got %q", kv)
+					}
+					name = strings.TrimSpace(name)
+					if name == "" {
+						return nil, cliexit.Newf(cliexit.Usage, "story update: --field %q has empty name", kv)
+					}
+					fields[name] = value
+				}
+				if len(fields) > 0 {
+					out["fields"] = fields
+				}
+			}
 			return out, nil
 		}),
 	}
@@ -105,6 +134,8 @@ func newStoryUpdateCmd() *cobra.Command {
 	c.Flags().String("category", "", "New category.")
 	c.Flags().String("priority", "", "New priority.")
 	c.Flags().StringSlice("tags", nil, "Replace tag set (empty clears).")
+	c.Flags().String("status", "", "Target status: ready | in_progress | done | cancelled.")
+	c.Flags().StringSlice("field", nil, "Template-declared field write: name=value (repeatable; empty value clears).")
 	_ = c.MarkFlagRequired("id")
 	return c
 }

@@ -57,9 +57,7 @@ func registerStoryNoun(root *cobra.Command) {
 		newStoryAddCmd(),          // sty_4db0e025 (was newStoryCreateCmd)
 		newStoryGetCmd(),          // order:04
 		newStoryListCmd(),         // sty_ef248ab2
-		newStoryUpdateCmd(),       // sty_f38bd573
-		newStoryUpdateStatusCmd(), // order:05
-		newStoryFieldSetCmd(),     // order:05
+		newStoryUpdateCmd(),       // sty_f38bd573 (status + fields folded in sty_4db0e025 D1)
 		newStoryTemplateGetCmd(),  // sty_ef248ab2
 		newStoryTemplateListCmd(), // sty_ef248ab2
 		newStoryExportWalkCmd(),   // sty_ef248ab2

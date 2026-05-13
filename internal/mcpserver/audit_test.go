@@ -331,12 +331,11 @@ func TestIsAuditReadVerb(t *testing.T) {
 		"ledger_recall":       true,
 		"satellites_info":     true,
 		"story_template_get":  true,
-		"task_add":            false,
-		"task_update":         false,
-		"story_add":           false,
-		"story_update_status": false,
-		"ledger_append":       false,
-		"story_field_set":     false,
+		"task_add":      false,
+		"task_update":   false,
+		"story_add":     false,
+		"story_update":  false, // sty_4db0e025 D1 folded update_status + field_set into story_update
+		"ledger_append": false,
 	}
 	for verb, want := range cases {
 		if got := isAuditReadVerb(verb); got != want {

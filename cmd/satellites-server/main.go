@@ -43,6 +43,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/storystatus"
 	"github.com/bobmcallan/satellites/internal/surreallive"
 	"github.com/bobmcallan/satellites/internal/task"
+	"github.com/bobmcallan/satellites/internal/tasklog"
 	"github.com/bobmcallan/satellites/internal/workspace"
 	"github.com/bobmcallan/satellites/internal/wshandler"
 )
@@ -114,6 +115,7 @@ func main() {
 		wsStore          workspace.Store
 		sessionStore     session.Store
 		taskStore        task.Store
+		taskLogStore     tasklog.Store
 		repoStore        repo.Store
 		changelogStore   changelog.Store
 		apiKeyStore      auth.APIKeyStore
@@ -202,6 +204,7 @@ func main() {
 		// always wires the Surreal-backed shape.
 		apiKeyStore = auth.NewSurrealAgentAPIKeyStore(conn)
 		taskStore = task.NewSurrealStore(conn)
+		taskLogStore = tasklog.NewSurrealStore(conn)
 		repoStore = repo.NewSurrealStore(conn)
 		changelogStore = changelog.NewSurrealStore(conn)
 		repoIndexer = codeindex.NewLocalIndexer(filepath.Join(os.TempDir(), "satellites-repos"))
@@ -551,6 +554,7 @@ func main() {
 			Workspaces:       wsStore,
 			Sessions:         sessionStore,
 			Tasks:            taskStore,
+			TaskLogs:         taskLogStore,
 			Repos:            repoStore,
 			Changelog:        changelogStore,
 			APIKeys:          apiKeyStore,
@@ -655,6 +659,7 @@ func main() {
 		Workspaces:       wsStore,
 		Sessions:         sessionStore,
 		Tasks:            taskStore,
+		TaskLogs:         taskLogStore,
 		Repos:            repoStore,
 		Changelog:        changelogStore,
 		APIKeys:          apiKeyStore,

@@ -199,11 +199,123 @@ func (c *Client) SystemVersion(ctx context.Context) (SystemVersionOutput, error)
 	return out, nil
 }
 
+// TaskLogAppendInput is the typed wire payload for task_log_append.
+// Mirrors the server-side input shape used by `cmd/satellites-client
+// task run`'s lifecycle + chunk uploaders. Payload is a json.RawMessage
+// so the caller can pre-marshal a per-kind body. sty_8c17b89d.
+type TaskLogAppendInput struct {
+	TaskID      string          `json:"task_id"`
+	WorkspaceID string          `json:"workspace_id,omitempty"`
+	ProjectID   string          `json:"project_id,omitempty"`
+	Seq         int64           `json:"seq"`
+	TS          time.Time       `json:"ts,omitempty"`
+	Kind        string          `json:"kind"`
+	Payload     json.RawMessage `json:"payload,omitempty"`
+}
+
+// TaskLogAppendOutput mirrors the typed return of task_log_append.
+type TaskLogAppendOutput struct {
+	ID        string    `json:"id"`
+	TaskID    string    `json:"task_id"`
+	Seq       int64     `json:"seq"`
+	Kind      string    `json:"kind"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// TaskLogAppend is the typed wrapper around Call(...) for the
+// task_log_append verb. Marshals `in` directly so the wire body matches
+// the JSON tag set.
+func (c *Client) TaskLogAppend(ctx context.Context, in TaskLogAppendInput) (TaskLogAppendOutput, error) {
+	args := map[string]any{
+		"task_id": in.TaskID,
+		"seq":     in.Seq,
+		"kind":    in.Kind,
+	}
+	if in.WorkspaceID != "" {
+		args["workspace_id"] = in.WorkspaceID
+	}
+	if in.ProjectID != "" {
+		args["project_id"] = in.ProjectID
+	}
+	if !in.TS.IsZero() {
+		args["ts"] = in.TS.UTC().Format(time.RFC3339Nano)
+	}
+	if len(in.Payload) > 0 {
+		args["payload"] = in.Payload
+	}
+	var out TaskLogAppendOutput
+	if err := c.Call(ctx, "task_log_append", args, &out); err != nil {
+		return TaskLogAppendOutput{}, err
+	}
+	return out, nil
+}
+
+// TaskLogListInput selects rows for task_log_list. sty_8c17b89d.
+type TaskLogListInput struct {
+	TaskID  string `json:"task_id"`
+	FromSeq int64  `json:"from_seq,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
+}
+
+// TaskLogListEntry mirrors one row in the task_log_list response.
+type TaskLogListEntry struct {
+	ID          string          `json:"id"`
+	TaskID      string          `json:"task_id"`
+	WorkspaceID string          `json:"workspace_id"`
+	ProjectID   string          `json:"project_id,omitempty"`
+	Seq         int64           `json:"seq"`
+	TS          time.Time       `json:"ts"`
+	Kind        string          `json:"kind"`
+	Payload     json.RawMessage `json:"payload,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+// TaskLogListOutput mirrors the wire payload of task_log_list.
+type TaskLogListOutput struct {
+	Entries []TaskLogListEntry `json:"entries"`
+}
+
+// TaskLogList is the typed wrapper around Call(...) for the
+// task_log_list verb.
+func (c *Client) TaskLogList(ctx context.Context, in TaskLogListInput) (TaskLogListOutput, error) {
+	args := map[string]any{
+		"task_id": in.TaskID,
+	}
+	if in.FromSeq != 0 {
+		args["from_seq"] = in.FromSeq
+	}
+	if in.Limit > 0 {
+		args["limit"] = in.Limit
+	}
+	var out TaskLogListOutput
+	if err := c.Call(ctx, "task_log_list", args, &out); err != nil {
+		return TaskLogListOutput{}, err
+	}
+	return out, nil
+}
+
+// compoundNouns names tool prefixes whose noun-form spans two
+// underscore-separated tokens. Each entry maps the compound noun's
+// canonical MCP form (`task_log`) to its URL-path projection
+// (`task/log`). Used by ToolNameToPath so `task_log_append` resolves
+// to `/task/log/append` rather than `/task/log-append`. sty_8c17b89d.
+var compoundNouns = map[string]string{
+	"task_log": "task/log",
+}
+
 // ToolNameToPath translates a tool name (`<noun>_<verb>` form, where
 // the verb itself may carry further `_` separators) into the URL path
 // the HTTP API exposes (`/<noun>/<verb>`, with `_` inside the verb
-// becoming `-`). Exported for the table-driven test.
+// becoming `-`). Compound nouns registered in compoundNouns retain
+// their internal `_`→`/` mapping. Exported for the table-driven test.
 func ToolNameToPath(name string) string {
+	for prefix, urlPath := range compoundNouns {
+		head := prefix + "_"
+		if strings.HasPrefix(name, head) {
+			verb := strings.ReplaceAll(name[len(head):], "_", "-")
+			return "/" + urlPath + "/" + verb
+		}
+	}
 	i := strings.IndexByte(name, '_')
 	if i < 0 {
 		return "/" + name

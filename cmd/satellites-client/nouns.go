@@ -69,14 +69,16 @@ func registerStoryNoun(root *cobra.Command) {
 func registerTaskNoun(root *cobra.Command) {
 	noun := nounStub("task", "Tasks — the dispatch unit.")
 	noun.AddCommand(
-		newTaskAddCmd(),    // order:05
-		newTaskGetCmd(),    // order:04
-		newTaskListCmd(),   // sty_ef248ab2
-		newTaskClaimCmd(),  // order:05
-		newTaskRunCmd(),    // sty_3e27a3f5 — orchestrator-invoked dispatch.
-		newTaskUpdateCmd(), // order:05
-		newTaskWalkCmd(),   // order:04
-		newTaskPlanCmd(),   // order:05
+		newTaskAddCmd(),       // order:05
+		newTaskGetCmd(),       // order:04
+		newTaskListCmd(),      // sty_ef248ab2
+		newTaskClaimCmd(),     // order:05
+		newTaskRunCmd(),       // sty_3e27a3f5 — orchestrator-invoked dispatch.
+		newTaskUpdateCmd(),    // order:05
+		newTaskWalkCmd(),      // order:04
+		newTaskPlanCmd(),      // order:05
+		newTaskLogAppendCmd(), // sty_8c17b89d
+		newTaskLogListCmd(),   // sty_8c17b89d
 	)
 	root.AddCommand(noun)
 }

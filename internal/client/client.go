@@ -17,6 +17,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/session"
 	"github.com/bobmcallan/satellites/internal/story"
 	"github.com/bobmcallan/satellites/internal/task"
+	"github.com/bobmcallan/satellites/internal/tasklog"
 	"github.com/bobmcallan/satellites/internal/workspace"
 )
 
@@ -45,6 +46,7 @@ type Deps struct {
 	Workspaces workspace.Store
 	Sessions   session.Store
 	Tasks      task.Store
+	TaskLogs   tasklog.Store
 	Repos      repo.Store
 	Changelog  changelog.Store
 	APIKeys    auth.APIKeyStore

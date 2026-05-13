@@ -39,6 +39,10 @@ var expectedRoutes = []string{
 	"POST /api/v1/task/update",
 	"POST /api/v1/task/add",
 	"POST /api/v1/task/plan",
+	// sty_8c17b89d: task_log routes (append+list thin forwarders; stream is the SSE carve-out).
+	"POST /api/v1/task/log/append",
+	"POST /api/v1/task/log/list",
+	"GET /api/v1/task/log/stream",
 	"POST /api/v1/story/get",
 	// /api/v1/story/update-status + /api/v1/story/field-set folded into
 	// /api/v1/story/update in sty_4db0e025 slice D1.
@@ -143,8 +147,8 @@ var expectedRoutes = []string{
 // /api/v1/story/field-set (folded into /api/v1/story/update), so the
 // expected count is 105 → 103.
 func TestAPI_RoutesRegistered(t *testing.T) {
-	if got := len(expectedRoutes); got != 104 {
-		t.Fatalf("expected 104 routes, got %d (update the slice as the verb set grows)", got)
+	if got := len(expectedRoutes); got != 107 {
+		t.Fatalf("expected 107 routes, got %d (update the slice as the verb set grows)", got)
 	}
 
 	reg := NewAPIRegistrar(client.New(client.Deps{StartedAt: time.Now().UTC()}))

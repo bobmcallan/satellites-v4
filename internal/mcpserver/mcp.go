@@ -626,6 +626,31 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		// handleStoryExportWalk remains so the typed method on
 		// *client.Client continues to back the HTTP route and CLI verb.
 
+		// sty_8c17b89d: task_log_append + task_log_list MCP verbs (SSE
+		// stream is HTTP-only by design; portal subscribes via
+		// EventSource). Gated on TaskLogs being wired so test fixtures
+		// that don't construct a store don't register the tools.
+		if s.deps.TaskLogs != nil {
+			taskLogAppendTool := mcpgo.NewTool("task_log_append",
+				mcpgo.WithDescription("Append one task_log row (lifecycle event or stdout/stderr chunk) to the substrate. Producer-supplied seq governs replay order; the SSE endpoint /api/v1/task/log/stream fans rows out by (task_id, seq). Sty_8c17b89d."),
+				mcpgo.WithString("task_id", mcpgo.Required(), mcpgo.Description("Task id the row belongs to.")),
+				mcpgo.WithString("workspace_id", mcpgo.Description("Workspace scope. Defaults to the task's workspace when omitted.")),
+				mcpgo.WithString("project_id", mcpgo.Description("Project scope. Defaults to the task's project.")),
+				mcpgo.WithNumber("seq", mcpgo.Required(), mcpgo.Description("Producer-supplied monotonic sequence number.")),
+				mcpgo.WithString("ts", mcpgo.Description("RFC3339Nano timestamp. Defaults to now.")),
+				mcpgo.WithString("kind", mcpgo.Required(), mcpgo.Description("One of start | heartbeat | stdout | stderr | stop.")),
+				mcpgo.WithString("payload", mcpgo.Description("Opaque JSON payload, one shape per kind.")),
+			)
+			s.mcp.AddTool(taskLogAppendTool, s.handleTaskLogAppend)
+
+			taskLogListTool := mcpgo.NewTool("task_log_list",
+				mcpgo.WithDescription("List task_log rows for a task ordered by seq ASC. Use from_seq for replay-after-cursor (matches the SSE Last-Event-ID resume shape). Sty_8c17b89d."),
+				mcpgo.WithString("task_id", mcpgo.Required(), mcpgo.Description("Task id whose rows to list.")),
+				mcpgo.WithNumber("from_seq", mcpgo.Description("Inclusive lower bound on seq. Defaults to 0.")),
+				mcpgo.WithNumber("limit", mcpgo.Description("Max rows to return. Defaults to unbounded.")),
+			)
+			s.mcp.AddTool(taskLogListTool, s.handleTaskLogList)
+		}
 	}
 
 	if s.deps.Repos != nil {

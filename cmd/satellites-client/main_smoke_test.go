@@ -114,7 +114,7 @@ func TestNounGroupsRegistered(t *testing.T) {
 	// noun-group shape after sty_0b419d98 Tier B.
 	expected := map[string]int{
 		"story":     8, // sty_4db0e025 D1 folded update_status + field_set into update
-		"task":      8,
+		"task":      10, // sty_8c17b89d added task log-append + task log-list
 		"ledger":    6,
 		"project":   7,
 		"workspace": 7,

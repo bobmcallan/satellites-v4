@@ -49,6 +49,7 @@ var auditReadVerbSuffixes = []string{
 var auditReadVerbsExact = map[string]struct{}{
 	"satellites_info":         {},
 	"task_walk":               {},
+	"task_log_list":           {},
 	"system_list_mcp_tools":   {},
 	"system_version":          {},
 	"agent_ephemeral_summary": {},

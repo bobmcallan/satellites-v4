@@ -200,6 +200,8 @@ func TestCall_PathMappingViaServer(t *testing.T) {
 		{"task_add", "/api/v1/task/add"},
 		{"task_update", "/api/v1/task/update"},
 		{"task_plan", "/api/v1/task/plan"},
+		{"task_log_append", "/api/v1/task/log/append"},
+		{"task_log_list", "/api/v1/task/log/list"},
 		{"ledger_get", "/api/v1/ledger/get"},
 		{"ledger_list", "/api/v1/ledger/list"},
 		{"ledger_search", "/api/v1/ledger/search"},

@@ -67,6 +67,11 @@ func (a *APIRegistrar) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/task/update", a.handleTaskUpdate)
 	mux.HandleFunc("POST /api/v1/task/add", a.handleTaskAdd)
 	mux.HandleFunc("POST /api/v1/task/plan", a.handleTaskPlan)
+	// sty_8c17b89d: task_log routes — append + list are thin
+	// forwarders; stream is the SSE long-lived-connection carve-out.
+	mux.HandleFunc("POST /api/v1/task/log/append", a.handleTaskLogAppend)
+	mux.HandleFunc("POST /api/v1/task/log/list", a.handleTaskLogList)
+	mux.HandleFunc("GET /api/v1/task/log/stream", a.handleTaskLogStream)
 	mux.HandleFunc("POST /api/v1/story/get", a.handleStoryGet)
 	// /api/v1/story/update-status + /api/v1/story/field-set routes removed
 	// in sty_4db0e025 slice D1 — both folded into /api/v1/story/update

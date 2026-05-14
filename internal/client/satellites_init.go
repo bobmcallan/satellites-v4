@@ -195,12 +195,12 @@ func (c *Client) SatellitesInit(ctx context.Context, caller Caller, in Satellite
 
 	return SatellitesInitOutput{
 		State:             state,
-		TargetInstallPath: "./satellites/satellites-client",
-		TargetConfigPath:  "./satellites/satellites-client.toml",
+		TargetInstallPath: "./.satellites/satellites-client",
+		TargetConfigPath:  "./.satellites/satellites-client.toml",
 		DefaultConfig: SatellitesInitDefaultConfig{
 			RepoPath:       ".",
-			WorktreeRoot:   "./satellites/worktree",
-			LogPath:        "./satellites/logs",
+			WorktreeRoot:   "./.satellites/worktree",
+			LogPath:        "./.satellites/logs",
 			BranchTemplate: "client-{task_id}-from-{base_sha}",
 		},
 		Install: SatellitesInitInstall{

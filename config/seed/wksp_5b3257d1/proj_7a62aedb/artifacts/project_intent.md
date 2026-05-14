@@ -54,7 +54,7 @@ the lead authors + reviews; the team builds.
 ### First-run install
 
 The `satellites-client` binary installs as
-`./satellites/satellites-client` colocated under the consumer
+`./.satellites/satellites-client` colocated under the consumer
 project root (sibling `sty_796b8fe1`). When the binary is not
 present on PATH or in the colocated location, call the
 `satellites_init` MCP verb — it returns the install payload

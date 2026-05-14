@@ -57,7 +57,7 @@ type Config struct {
 	// RepoPath is the path to the operator's git working tree the
 	// runtime drives (sty_3b3e4e66 Layer E first consumer). The
 	// default is the parent directory of the exe — when the binary
-	// lives at `<consumer>/satellites/satellites-client`, this
+	// lives at `<consumer>/.satellites/satellites-client`, this
 	// resolves to `<consumer>` without operator configuration
 	// (sty_796b8fe1, AC3). Falls back to "." when the exe directory
 	// can't be resolved (test environments without a real binary).
@@ -119,9 +119,15 @@ const defaultBinFile = "bin/satellites-client.toml"
 // defaultSatellitesFile is the canonical repo-relative file the
 // loader checks ahead of defaultBinFile. Operators who installed
 // via the `satellites_init` payload drop the TOML at
-// <consumer>/satellites/satellites-client.toml — co-located with
-// the binary the verb's payload pins. sty_796b8fe1 AC3.
-const defaultSatellitesFile = "satellites/satellites-client.toml"
+// <consumer>/.satellites/satellites-client.toml — co-located with
+// the binary the verb's payload pins. sty_796b8fe1 AC3, sty_7df24553.
+const defaultSatellitesFile = ".satellites/satellites-client.toml"
+
+// defaultSatellitesFileLegacy is the pre-sty_7df24553 path. The walk-up
+// search probes it after the dotted form so already-installed
+// consumers keep resolving until they re-run satellites_init. One
+// release cycle of overlap.
+const defaultSatellitesFileLegacy = "satellites/satellites-client.toml"
 
 // LoadedTOMLPath returns the path Load actually read, or "" when
 // defaults supplied the whole config.
@@ -179,8 +185,8 @@ func defaultExeDir() string {
 func defaults() *Config {
 	// LogPath defaults to <exe_dir>/logs/ — matches satellites-agent's
 	// default in internal/config/agent_config.go::defaultsAgent. With the
-	// binary at <consumer>/satellites/satellites-client, this resolves
-	// to <consumer>/satellites/logs/.
+	// binary at <consumer>/.satellites/satellites-client, this resolves
+	// to <consumer>/.satellites/logs/.
 	// sty_ef4eedaa, exe-dir resolution fixed in sty_1f942fc6.
 	exeDir := defaultExeDir()
 	logDir := ""
@@ -188,7 +194,7 @@ func defaults() *Config {
 		logDir = filepath.Join(exeDir, "logs")
 	}
 	// WorktreeRoot anchors per-task git worktrees alongside the
-	// satellites-client binary (e.g. <consumer>/satellites/worktree/<task_id>/)
+	// satellites-client binary (e.g. <consumer>/.satellites/worktree/<task_id>/)
 	// rather than under the operator's cwd, so worktree state isn't
 	// co-mingled with the repo's working tree. sty_29d2dc1d. Falls
 	// back to the legacy ".satellites-clients/" path only when the
@@ -199,7 +205,7 @@ func defaults() *Config {
 		worktreeRoot = filepath.Join(exeDir, "worktree")
 	}
 	// RepoPath defaults to the parent directory of the exe dir —
-	// when the binary lives at <consumer>/satellites/satellites-client,
+	// when the binary lives at <consumer>/.satellites/satellites-client,
 	// this resolves to <consumer>. sty_796b8fe1 AC3. Falls back to
 	// "." when the exe directory can't be resolved.
 	repoPath := "."
@@ -323,11 +329,13 @@ func resolveConfigPath(explicit string) (string, string, error) {
 		return p, sourceEnv, nil
 	}
 	// Walk-up: search CWD and its ancestors for the canonical
-	// `satellites/satellites-client.toml` first, then the legacy
-	// `bin/satellites-client.toml`. Stops at the filesystem root or a
-	// .git directory (repo boundary), so a dispatched subprocess
-	// whose CWD is <repo>/satellites/worktree/<task_id>/ finds the
-	// operator's repo-root TOML without leaking out of the repo.
+	// `.satellites/satellites-client.toml` first (sty_7df24553), then
+	// the legacy `satellites/satellites-client.toml` (one-release
+	// overlap), then the older `bin/satellites-client.toml`. Stops at
+	// the filesystem root or a .git directory (repo boundary), so a
+	// dispatched subprocess whose CWD is
+	// <repo>/.satellites/worktree/<task_id>/ finds the operator's
+	// repo-root TOML without leaking out of the repo.
 	// sty_796b8fe1 AC3 — canonical path wins on tie.
 	if cwd, err := os.Getwd(); err == nil {
 		dir := cwd
@@ -335,6 +343,10 @@ func resolveConfigPath(explicit string) (string, string, error) {
 			satCandidate := filepath.Join(dir, defaultSatellitesFile)
 			if _, err := os.Stat(satCandidate); err == nil {
 				return satCandidate, sourceSatellites, nil
+			}
+			legacyCandidate := filepath.Join(dir, defaultSatellitesFileLegacy)
+			if _, err := os.Stat(legacyCandidate); err == nil {
+				return legacyCandidate, sourceSatellites, nil
 			}
 			binCandidate := filepath.Join(dir, defaultBinFile)
 			if _, err := os.Stat(binCandidate); err == nil {

@@ -114,14 +114,14 @@ func TestHandleSatellitesInit_HappyPath(t *testing.T) {
 	if payload.State != "update_available" {
 		t.Errorf("state = %q, want update_available", payload.State)
 	}
-	if payload.TargetInstallPath != "./satellites/satellites-client" {
+	if payload.TargetInstallPath != "./.satellites/satellites-client" {
 		t.Errorf("target_install_path = %q", payload.TargetInstallPath)
 	}
-	if payload.TargetConfigPath != "./satellites/satellites-client.toml" {
+	if payload.TargetConfigPath != "./.satellites/satellites-client.toml" {
 		t.Errorf("target_config_path = %q", payload.TargetConfigPath)
 	}
-	if payload.DefaultConfig.WorktreeRoot != "./satellites/worktree" ||
-		payload.DefaultConfig.LogPath != "./satellites/logs" ||
+	if payload.DefaultConfig.WorktreeRoot != "./.satellites/worktree" ||
+		payload.DefaultConfig.LogPath != "./.satellites/logs" ||
 		payload.DefaultConfig.BranchTemplate != "client-{task_id}-from-{base_sha}" {
 		t.Errorf("default_config drift: %+v", payload.DefaultConfig)
 	}

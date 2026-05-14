@@ -12,7 +12,7 @@ instruction: |
   SHA. Per cli-primary order:08, substrate verbs map 1:1 to
   satellites-client <noun> <verb> CLI invocations
   (docs/cli-primary-design.md §2). The binary installs colocated at
-  ./satellites/satellites-client under the consumer project root.
+  ./.satellites/satellites-client under the consumer project root.
   Do not modify source files — develop is the single writer for code
   and version metadata. No force operations, no tag pushes, no branch
   deletes. If the develop commit is missing, stop and report. Close each

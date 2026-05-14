@@ -44,7 +44,7 @@ assessment, design, and decomposition into role-tagged child tasks.
 
 Verb-call references below map 1:1 to `satellites-client <noun>
 <verb>` invocations per `docs/cli-primary-design.md` §2. The
-binary installs colocated at `./satellites/satellites-client`
+binary installs colocated at `./.satellites/satellites-client`
 under the consumer project root (sibling `sty_796b8fe1` payload).
 The dispatched-agent prompt template
 (`internal/agent/worker/client_claude.go`, post-order:06) lists

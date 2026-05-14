@@ -188,7 +188,8 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	s.mcp.AddTool(systemVersionTool, s.handleSystemVersion)
 
 	// sty_796b8fe1: satellites_init returns the structured install /
-	// refresh payload for the canonical `./satellites/` install layout.
+	// refresh payload for the canonical `./.satellites/` install layout
+	// (sty_7df24553 flipped the path to the dotted form).
 	// Read-only — performs no disk writes. Thin forwarder onto
 	// *client.Client.SatellitesInit per pr_mcp_cli_shared_path.
 	satellitesInitTool := mcpgo.NewTool("satellites_init",

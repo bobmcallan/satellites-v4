@@ -43,7 +43,7 @@ A baseline skill / reviewer seed would invent rows nothing currently consumes (o
 - **Treating the substrate as a context-assembly service at dispatch.** The split is: orchestrator's `task_add(prompt=…)` carries the thin pointer; the agent's per-verb MCP calls carry the rich context.
 - **Hard-coding agent behaviour in Go.** Agent profiles live in `config/seed/agents/`. Changing how an agent works = editing that markdown, not changing the dispatch code.
 - **Proposing a `dispatch_context` bundle verb.** Per-verb retrieval is the model.
-- **Dispatching substrate work through Claude Code's `Agent` tool (or any subagent harness).** The two-surface model is MCP for authoring + `satellites-client task run` for execution; a third channel bypasses both. The binary lives at `./satellites/satellites-client` colocated under the consumer project root (sibling `sty_796b8fe1`).
+- **Dispatching substrate work through Claude Code's `Agent` tool (or any subagent harness).** The two-surface model is MCP for authoring + `satellites-client task run` for execution; a third channel bypasses both. The binary lives at `./.satellites/satellites-client` colocated under the consumer project root (sibling `sty_796b8fe1`, dotted-path flip in `sty_7df24553`).
 
 ## Worked failure mode — sty_4db0e025
 

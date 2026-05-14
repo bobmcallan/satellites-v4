@@ -142,14 +142,29 @@ func inferDevelopTaskID(tw taskWalkResponse) (string, error) {
 	return "", errors.New("infer develop task: no successful contract:develop work task on chain")
 }
 
-// resolveLocalBranch returns the local branch name matching
-// `agent-<devTaskID>-from-*`. Errors when none / multiple matches —
-// the chain convention is one develop task = one branch.
+// branchGlob renders the configured BranchTemplate with {task_id}
+// substituted and {base_sha} replaced by a `*` glob, returning the
+// literal pattern for `git branch --list`. Single source of truth:
+// the writer (renderBranchName) and the reader (resolveLocalBranch)
+// both consume cfg.BranchTemplate.
+func branchGlob(template, devTaskID string) string {
+	s := strings.ReplaceAll(template, "{task_id}", devTaskID)
+	return strings.ReplaceAll(s, "{base_sha}", "*")
+}
+
+// resolveLocalBranch returns the local branch name matching the glob
+// derived from cfg.BranchTemplate (with {task_id} substituted for
+// devTaskID and {base_sha} replaced by `*`). Errors when none /
+// multiple matches — the chain convention is one develop task = one
+// branch.
 func (c *claudeClient) resolveLocalBranch(ctx context.Context, devTaskID string) (string, error) {
 	if c.cfg.RepoPath == "" {
 		return "", errors.New("resolve branch: repo_path empty in agent config")
 	}
-	pattern := "agent-" + devTaskID + "-from-*"
+	if c.cfg.BranchTemplate == "" {
+		return "", errors.New("resolve branch: branch_template empty in agent config")
+	}
+	pattern := branchGlob(c.cfg.BranchTemplate, devTaskID)
 	out, err := c.gitRunner(ctx, c.cfg.RepoPath, "branch", "--list", pattern)
 	if err != nil {
 		return "", fmt.Errorf("resolve branch: git branch --list %s: %w", pattern, err)

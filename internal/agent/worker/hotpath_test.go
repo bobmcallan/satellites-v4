@@ -593,6 +593,20 @@ func TestResolveLocalBranch_TemplateParameterised(t *testing.T) {
 			listOut:  "* dev-task_xyz-deadbeef\n",
 			want:     "dev-task_xyz-deadbeef",
 		},
+		{
+			// Worktree-held: when the matched branch is checked out in
+			// another worktree, `git branch --list` prefixes it with
+			// `+ ` (vs `* ` for current). Dispatched develop tasks run
+			// inside a worktree, so the repo-root resolver sees `+ `
+			// every time. Iter-2's fix stripped only `* ` — this case
+			// catches the gap surfaced in ldg_837cd8fa.
+			name:     "client_prefix_worktree_held",
+			template: "client-{task_id}-from-{base_sha}",
+			taskID:   "task_dev",
+			listKey:  "branch --list client-task_dev-from-*",
+			listOut:  "+ client-task_dev-from-833a28e\n",
+			want:     "client-task_dev-from-833a28e",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

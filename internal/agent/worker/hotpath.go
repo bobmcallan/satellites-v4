@@ -157,6 +157,12 @@ func branchGlob(template, devTaskID string) string {
 // devTaskID and {base_sha} replaced by `*`). Errors when none /
 // multiple matches — the chain convention is one develop task = one
 // branch.
+//
+// `git branch --list` prefixes each line with one of two markers we
+// must strip: `* ` for the current branch and `+ ` for a branch that
+// is checked out in another worktree. Since dispatched develop tasks
+// run inside `<exe_dir>/worktree/<task_id>/`, the repo-root invocation
+// always sees the work branch as `+ <branch>`.
 func (c *claudeClient) resolveLocalBranch(ctx context.Context, devTaskID string) (string, error) {
 	if c.cfg.RepoPath == "" {
 		return "", errors.New("resolve branch: repo_path empty in agent config")
@@ -171,7 +177,10 @@ func (c *claudeClient) resolveLocalBranch(ctx context.Context, devTaskID string)
 	}
 	var matches []string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "* "))
+		trimmed := strings.TrimSpace(line)
+		trimmed = strings.TrimPrefix(trimmed, "* ")
+		trimmed = strings.TrimPrefix(trimmed, "+ ")
+		line = strings.TrimSpace(trimmed)
 		if line == "" {
 			continue
 		}

@@ -43,6 +43,21 @@ this agent's `reviews:` list.
   `verdict:pass | verdict:fail`; the mechanical `story_close` MCP
   verb consults that tag structurally at close time.
 
+## What it delivers
+
+- **story_review (kind:work pre-ship gate).** This agent both
+  delivers and adjudicates the pre-ship gate task. The orchestrator
+  authors a `kind:work action=contract:story_review` task naming
+  this agent; the agent reads the full chain via `task_walk`,
+  applies the rubric in §1-§5 below, and writes the terminal
+  `verdict:pass | verdict:fail` ledger row. The mechanical
+  `story_close` MCP verb consults that tag at close time. The
+  capability is asserted from the frontmatter `delivers:` list at
+  configseed time and enforced at dispatch by the substrate's
+  agent-capability check, so a misnamed or stale agent_id on the
+  workflow's pre-ship work task fails loud at task_add rather than
+  silently producing a no-op review.
+
 ## Rubric
 
 ### 1. Read structural state via task_walk

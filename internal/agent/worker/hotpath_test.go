@@ -490,8 +490,9 @@ func TestRunMergeToMainHotPath_PprodConvergeTimeout(t *testing.T) {
 }
 
 // TestVerifyChainPriorWorkSuccess: open work task on the chain
-// fails the gate; superseded iter-1 failure with iter-2 success
-// passes; review tasks are ignored.
+// fails the gate; a closed=failure work task superseded by a retry
+// carrying prior_task_id passes; an orphaned closed=failure still
+// trips the gate; review tasks are ignored.
 func TestVerifyChainPriorWorkSuccess(t *testing.T) {
 	// Open work task — gate fails.
 	tw := taskWalkResponse{Tasks: []taskWalkTask{
@@ -502,14 +503,27 @@ func TestVerifyChainPriorWorkSuccess(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "open work task")
 
-	// iter-1 failure superseded by iter-2 success — gate passes.
+	// AC3: [failed_merge → retry_merge(prior_task_id=failed_merge)] —
+	// gate passes with retry as ignoreID. This is the documented
+	// recovery primitive per pr_pipeline_authority.
 	tw = taskWalkResponse{Tasks: []taskWalkTask{
-		{ID: "task_dev_1", Action: "contract:develop", Kind: "work", Iteration: 1, Status: "closed", Outcome: "failure"},
-		{ID: "task_dev_2", Action: "contract:develop", Kind: "work", Iteration: 2, Status: "closed", Outcome: "success"},
+		{ID: "task_dev", Action: "contract:develop", Kind: "work", Status: "closed", Outcome: "success"},
+		{ID: "task_merge_1", Action: "contract:merge_to_main", Kind: "work", Status: "closed", Outcome: "failure"},
+		{ID: "task_merge_2", Action: "contract:merge_to_main", Kind: "work", Status: "claimed", PriorTaskID: "task_merge_1"},
+	}}
+	err = verifyChainPriorWorkSuccess(tw, "task_merge_2")
+	assert.NoError(t, err, "retry carrying prior_task_id to closed=failure predecessor must clear the gate")
+
+	// Negative path: orphaned closed=failure work task with no
+	// successor pointing at it via prior_task_id still trips the
+	// gate. Protects against the helper degrading to a no-op.
+	tw = taskWalkResponse{Tasks: []taskWalkTask{
+		{ID: "task_dev_failed", Action: "contract:develop", Kind: "work", Status: "closed", Outcome: "failure"},
 		{ID: "task_merge", Action: "contract:merge_to_main", Kind: "work", Status: "claimed"},
 	}}
 	err = verifyChainPriorWorkSuccess(tw, "task_merge")
-	assert.NoError(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no retry successor")
 
 	// Review tasks ignored — even a failed review on the chain
 	// shouldn't block merge (reviewer's contract authors a retry).

@@ -72,12 +72,13 @@ func (c *claudeClient) runHotPath(ctx context.Context, env TaskEnvelope, ti task
 // taskWalkTask is the subset of task_walk's per-task row the runners
 // read for chain inference + chain-shape gate checks.
 type taskWalkTask struct {
-	ID        string `json:"id"`
-	Action    string `json:"action"`
-	Kind      string `json:"kind"`
-	Status    string `json:"status"`
-	Outcome   string `json:"outcome"`
-	Iteration int    `json:"iteration"`
+	ID          string `json:"id"`
+	Action      string `json:"action"`
+	Kind        string `json:"kind"`
+	Status      string `json:"status"`
+	Outcome     string `json:"outcome"`
+	Iteration   int    `json:"iteration"`
+	PriorTaskID string `json:"prior_task_id"`
 }
 
 // taskWalkResponse decodes task_walk's envelope down to the fields
@@ -568,12 +569,20 @@ func (c *claudeClient) appendHotMergeReleaseEvidence(ctx context.Context, env Ta
 	return c.appendEvidence(ctx, env.ProjectID, ti.StoryID, tags, content)
 }
 
-// verifyChainPriorWorkSuccess fails when any earlier kind=work task on
-// the chain (excluding the current task identified by ignoreID) is not
-// closed outcome=success. The chain shape is part of the gate the
-// heavy-path merge agent runs before merging; the hot runner enforces
-// the same invariant in-process.
+// verifyChainPriorWorkSuccess fails when the chain ending at ignoreID
+// contains a closed=failure kind=work task that no later task has
+// superseded via prior_task_id. Accepts retries that carry
+// `prior_task_id` to a closed=failure predecessor — per
+// `pr_pipeline_authority`, a fresh kind=work task minted with
+// `prior_task_id=<failed_predecessor>` is the documented recovery
+// primitive, and the chain on `task_walk(story_id)` is the
+// audit-of-record. The gate accepts the chain iff every closed=failure
+// work task has at least one successor — direct or transitive — in the
+// walk pointing at it via prior_task_id. Open work tasks (status !=
+// closed) still fail the gate. The current retry task (ignoreID) counts
+// as a valid successor when it carries the linkage.
 func verifyChainPriorWorkSuccess(tw taskWalkResponse, ignoreID string) error {
+	supersededBy := buildPriorIndex(tw)
 	for _, t := range tw.Tasks {
 		if t.ID == ignoreID {
 			continue
@@ -586,38 +595,40 @@ func verifyChainPriorWorkSuccess(tw taskWalkResponse, ignoreID string) error {
 			return fmt.Errorf("chain has open work task %q (action=%s, status=%s)", t.ID, t.Action, t.Status)
 		}
 		if t.Outcome != "success" {
-			// Same-slot retry chains may legitimately have a prior
-			// failure if an iter-2 succeeded. We treat any non-success
-			// closed work task as a chain gap — the caller can override
-			// via trigger if needed.
-			//
-			// To avoid blocking on superseded failures, look for a
-			// later iteration of the same action that succeeded.
-			if hasLaterSuccess(tw, t) {
+			if hasSuccessorRetry(supersededBy, t.ID) {
 				continue
 			}
-			return fmt.Errorf("chain has unsuccessful prior work task %q (action=%s, outcome=%s)", t.ID, t.Action, t.Outcome)
+			return fmt.Errorf("chain has unsuccessful prior work task %q (action=%s, outcome=%s) with no retry successor", t.ID, t.Action, t.Outcome)
 		}
 	}
 	return nil
 }
 
-// hasLaterSuccess reports whether a later task with the same Action
-// closed outcome=success — covering the iter-1-failed → iter-2-success
-// chain shape.
-func hasLaterSuccess(tw taskWalkResponse, prior taskWalkTask) bool {
+// buildPriorIndex inverts the chain: for each task that carries a
+// non-empty PriorTaskID, append its ID to the predecessor's successor
+// list. The result is a map from predecessor-task-ID → list of tasks
+// that point at it via prior_task_id.
+func buildPriorIndex(tw taskWalkResponse) map[string][]string {
+	idx := make(map[string][]string)
 	for _, t := range tw.Tasks {
-		if t.ID == prior.ID || t.Action != prior.Action {
+		if t.PriorTaskID == "" {
 			continue
 		}
-		if t.Kind != "" && t.Kind != "work" {
-			continue
-		}
-		if t.Iteration > prior.Iteration && t.Status == "closed" && t.Outcome == "success" {
-			return true
-		}
+		idx[t.PriorTaskID] = append(idx[t.PriorTaskID], t.ID)
 	}
-	return false
+	return idx
+}
+
+// hasSuccessorRetry reports whether failedID has at least one
+// successor pointing at it via prior_task_id. The current retry task
+// (the caller's ignoreID) counts when it appears in supersededBy —
+// that is exactly the documented retry shape
+// [failed → retry(prior_task_id=failed)]. The outer loop in
+// verifyChainPriorWorkSuccess handles transitivity: if the direct
+// successor is itself a closed=failure with no successor of its own,
+// the outer loop will reject when it iterates to that task.
+func hasSuccessorRetry(supersededBy map[string][]string, failedID string) bool {
+	return len(supersededBy[failedID]) > 0
 }
 
 // appendEvidence POSTs to /api/v1/ledger/append. Threads through

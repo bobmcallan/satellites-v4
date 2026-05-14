@@ -46,6 +46,7 @@ func newTaskRunCmd() *cobra.Command {
 		RunE:  runTaskCmd,
 	}
 	c.Flags().Duration("heartbeat", heartbeatInterval, "Lifecycle heartbeat cadence.")
+	c.Flags().Bool("follow", false, "Subscribe to the task_log SSE stream and print lifecycle markers to stdout.")
 	return c
 }
 
@@ -102,6 +103,40 @@ func runTaskCmd(cmd *cobra.Command, args []string) error {
 	api, err := ensureRemote()
 	if err != nil {
 		return cliexit.Wrap(cliexit.Server, fmt.Errorf("task run %s: api client: %w", taskID, err))
+	}
+
+	// sty_7fc607f5: opt-in --follow subscribes to the task_log SSE
+	// stream and prints lifecycle markers (start / heartbeat / stop)
+	// to stdout as they arrive. When SATELLITES_CLIENT_DISABLE_TELEMETRY=1
+	// is set the parent emits no telemetry, so following would print
+	// nothing — preflight-skip with a warning per plan §9 / AC9.
+	followEnabled, _ := cmd.Flags().GetBool("follow")
+	var (
+		followCancel func()
+		followDone   chan struct{}
+	)
+	if followEnabled {
+		if disableTelemetry {
+			if logger != nil {
+				logger.Warn().
+					Str("task_id", taskID).
+					Msg("task run --follow: SATELLITES_CLIENT_DISABLE_TELEMETRY=1; parent emits no telemetry, skipping SSE subscribe")
+			}
+		} else {
+			fctx, fcancel := context.WithCancel(cmd.Context())
+			followCancel = fcancel
+			followDone = make(chan struct{})
+			go func() {
+				defer close(followDone)
+				_ = followTaskLog(fctx, followerConfig{
+					serverURL: effectiveServer(),
+					authToken: resolvedToken,
+					taskID:    taskID,
+					out:       os.Stdout,
+					logger:    logger,
+				})
+			}()
+		}
 	}
 
 	env := worker.TaskEnvelope{
@@ -194,6 +229,22 @@ func runTaskCmd(cmd *cobra.Command, args []string) error {
 		chunksStderr, bytesStderr := stderrUploader.stats()
 		totalChunks := chunksStdout + chunksStderr + 2 // start + stop
 		appendTaskLogPointer(context.Background(), api, logger, taskID, t.ProjectID, t.StoryID, totalChunks, bytesStdout+bytesStderr)
+	}
+
+	// sty_7fc607f5: stop the follower (if running) before printing the
+	// final outcome line. The stop frame normally ends the goroutine
+	// already; the cancel is the catch-all when the run errored
+	// before lifecycle finalisation (e.g. RunDispatched returned
+	// before emit-stop completed).
+	if followCancel != nil {
+		// Give the follower a brief window to drain the stop frame
+		// it emitted above before cancelling its context.
+		select {
+		case <-followDone:
+		case <-time.After(500 * time.Millisecond):
+		}
+		followCancel()
+		<-followDone
 	}
 
 	fmt.Fprintf(os.Stderr, "\nsatellites-client task run: outcome=%s\n", outcome)

@@ -122,8 +122,8 @@ func (s *hotpathStub) findAPICall(toolName string) *recordedAPICall {
 }
 
 // TestRunHotPath_DispatchesByContractName: the selector lookup table
-// covers push / merge_to_main / story_close and returns
-// errHotUnimplemented for anything else.
+// covers push / merge_to_main and returns errHotUnimplemented for
+// anything else.
 func TestRunHotPath_DispatchesByContractName(t *testing.T) {
 	// Unknown contract → errHotUnimplemented sentinel so Execute
 	// falls back to the heavy path.
@@ -299,154 +299,6 @@ func TestRunMergeToMainHotPath(t *testing.T) {
 	assert.Contains(t, tags, "dispatch_class:hot")
 }
 
-// TestRunStoryCloseHotPath_RefusesEmptyRequiredFields fails the runner
-// when a template-required field is unpopulated. The error mentions
-// the missing field name so the orchestrator knows what to set.
-func TestRunStoryCloseHotPath_RefusesEmptyRequiredFields(t *testing.T) {
-	s := newHotpathStub(t)
-	walk := taskWalkResponse{Tasks: []taskWalkTask{
-		{ID: "task_dev", Action: "contract:develop", Kind: "work", Status: "closed", Outcome: "success"},
-		{ID: "task_close", Action: "contract:story_close", Kind: "work", Status: "claimed"},
-	}}
-	walkBytes, _ := json.Marshal(walk)
-	s.setAPIResp("task_walk", string(walkBytes))
-
-	story := storyRaw{
-		Story: storyRawStory{
-			ID: "sty_close", Title: "test", Status: "in_progress",
-			Fields: map[string]any{"scope": "auth"}, // rollout_plan absent
-		},
-		Template: storyTemplate{
-			Category: "infrastructure",
-			Fields: []storyTemplateField{
-				{Name: "scope", Required: true},
-				{Name: "rollout_plan", Required: false},
-			},
-			Hooks: map[string]storyHookSet{
-				"done": {Structured: []storyHookCheck{
-					{Type: "field_present", Field: "rollout_plan"},
-					{Type: "field_present", Field: "fix_commit"},
-				}},
-			},
-		},
-	}
-	storyBytes, _ := json.Marshal(story)
-	s.setAPIResp("story_get", string(storyBytes))
-
-	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
-
-	ti := taskInfo{
-		ID: "task_close", StoryID: "sty_close", ProjectID: "proj_x",
-		Action: "contract:story_close",
-	}
-	outcome, err := cc.runHotPath(context.Background(),
-		TaskEnvelope{ID: "task_close", ProjectID: "proj_x"},
-		ti, agentInfo{}, contractInfo{Name: "story_close"}, storyInfo{ID: "sty_close"})
-	require.Error(t, err)
-	assert.Equal(t, OutcomeFailure, outcome)
-	assert.Contains(t, err.Error(), "rollout_plan")
-	assert.Contains(t, err.Error(), "fix_commit")
-	assert.Contains(t, err.Error(), "story_update")
-}
-
-// TestRunStoryCloseHotPath_HappyPath: every required field populated,
-// chain consistent → ledger row + task_update.
-func TestRunStoryCloseHotPath_HappyPath(t *testing.T) {
-	s := newHotpathStub(t)
-	walk := taskWalkResponse{Tasks: []taskWalkTask{
-		{ID: "task_dev", Action: "contract:develop", Kind: "work", Status: "closed", Outcome: "success"},
-		{ID: "task_close", Action: "contract:story_close", Kind: "work", Status: "claimed"},
-	}}
-	walkBytes, _ := json.Marshal(walk)
-	s.setAPIResp("task_walk", string(walkBytes))
-
-	story := storyRaw{
-		Story: storyRawStory{
-			ID: "sty_z", Title: "demo story", Status: "in_progress",
-			Fields: map[string]any{
-				"scope":                "internal/agent/worker/",
-				"rollout_plan":         "single deploy, rollback = revert",
-				"fix_commit":           "deadbeef",
-				"regression_test_path": "internal/agent/worker/hotpath_test.go",
-				"post_deploy_check":    "operator runs story through hot path",
-			},
-		},
-		Template: storyTemplate{
-			Category: "infrastructure",
-			Fields: []storyTemplateField{
-				{Name: "scope", Required: true},
-				{Name: "rollout_plan", Required: false},
-				{Name: "fix_commit", Required: false},
-				{Name: "regression_test_path", Required: false},
-				{Name: "post_deploy_check", Required: false},
-			},
-			Hooks: map[string]storyHookSet{
-				"done": {Structured: []storyHookCheck{
-					{Type: "field_present", Field: "rollout_plan"},
-					{Type: "field_present", Field: "fix_commit"},
-					{Type: "field_present", Field: "regression_test_path"},
-					{Type: "field_present", Field: "post_deploy_check"},
-				}},
-			},
-		},
-	}
-	storyBytes, _ := json.Marshal(story)
-	s.setAPIResp("story_get", string(storyBytes))
-	s.setAPIResp("ledger_append", `{"id":"ldg_c"}`)
-	s.setAPIResp("task_update", `{}`)
-
-	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
-
-	trigger, _ := json.Marshal(map[string]string{"resolution": "delivered"})
-	ti := taskInfo{
-		ID: "task_close", StoryID: "sty_z", ProjectID: "proj_x",
-		Action: "contract:story_close", Trigger: trigger,
-	}
-	outcome, err := cc.runHotPath(context.Background(),
-		TaskEnvelope{ID: "task_close", ProjectID: "proj_x"},
-		ti, agentInfo{}, contractInfo{Name: "story_close"}, storyInfo{ID: "sty_z"})
-	require.NoError(t, err)
-	assert.Equal(t, OutcomeSuccess, outcome)
-
-	led := s.findAPICall("ledger_append")
-	require.NotNil(t, led)
-	tagsAny, _ := led.Body["tags"].([]any)
-	tags := make([]string, len(tagsAny))
-	for i, v := range tagsAny {
-		tags[i] = v.(string)
-	}
-	assert.Contains(t, tags, "phase:story_close")
-	assert.Contains(t, tags, "resolution:delivered")
-	assert.Contains(t, tags, "dispatch_class:hot")
-	content, _ := led.Body["content"].(string)
-	assert.Contains(t, content, "internal/agent/worker/")
-	assert.Contains(t, content, "deadbeef")
-	assert.Contains(t, content, "Chain summary")
-}
-
-// TestRequiredClosingFieldsMissing_HooksTakePrecedence: when both
-// `template.fields[*].required` and `hooks.done.structured` exist,
-// the hook list is authoritative.
-func TestRequiredClosingFieldsMissing_HooksTakePrecedence(t *testing.T) {
-	sr := storyRaw{
-		Story: storyRawStory{Fields: map[string]any{"scope": "x"}}, // only scope populated
-		Template: storyTemplate{
-			Fields: []storyTemplateField{
-				{Name: "scope", Required: true}, // template says required
-			},
-			Hooks: map[string]storyHookSet{
-				"done": {Structured: []storyHookCheck{
-					{Type: "field_present", Field: "rollout_plan"}, // hook says rollout_plan
-				}},
-			},
-		},
-	}
-	missing := requiredClosingFieldsMissing(sr)
-	require.Len(t, missing, 1)
-	assert.Equal(t, "rollout_plan", missing[0],
-		"hook structured list should override required:true precedence")
-}
-
 // TestVerifyChainPriorWorkSuccess: open work task on the chain
 // fails the gate; superseded iter-1 failure with iter-2 success
 // passes; review tasks are ignored.
@@ -454,9 +306,9 @@ func TestVerifyChainPriorWorkSuccess(t *testing.T) {
 	// Open work task — gate fails.
 	tw := taskWalkResponse{Tasks: []taskWalkTask{
 		{ID: "task_dev", Action: "contract:develop", Kind: "work", Status: "published"},
-		{ID: "task_close", Action: "contract:story_close", Kind: "work", Status: "claimed"},
+		{ID: "task_merge", Action: "contract:merge_to_main", Kind: "work", Status: "claimed"},
 	}}
-	err := verifyChainPriorWorkSuccess(tw, "task_close")
+	err := verifyChainPriorWorkSuccess(tw, "task_merge")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "open work task")
 
@@ -464,19 +316,19 @@ func TestVerifyChainPriorWorkSuccess(t *testing.T) {
 	tw = taskWalkResponse{Tasks: []taskWalkTask{
 		{ID: "task_dev_1", Action: "contract:develop", Kind: "work", Iteration: 1, Status: "closed", Outcome: "failure"},
 		{ID: "task_dev_2", Action: "contract:develop", Kind: "work", Iteration: 2, Status: "closed", Outcome: "success"},
-		{ID: "task_close", Action: "contract:story_close", Kind: "work", Status: "claimed"},
+		{ID: "task_merge", Action: "contract:merge_to_main", Kind: "work", Status: "claimed"},
 	}}
-	err = verifyChainPriorWorkSuccess(tw, "task_close")
+	err = verifyChainPriorWorkSuccess(tw, "task_merge")
 	assert.NoError(t, err)
 
 	// Review tasks ignored — even a failed review on the chain
-	// shouldn't block close (reviewer's contract authors a retry).
+	// shouldn't block merge (reviewer's contract authors a retry).
 	tw = taskWalkResponse{Tasks: []taskWalkTask{
 		{ID: "task_dev", Action: "contract:develop", Kind: "work", Status: "closed", Outcome: "success"},
 		{ID: "task_rev", Action: "contract:develop", Kind: "review", Status: "closed", Outcome: "failure"},
-		{ID: "task_close", Action: "contract:story_close", Kind: "work", Status: "claimed"},
+		{ID: "task_merge", Action: "contract:merge_to_main", Kind: "work", Status: "claimed"},
 	}}
-	err = verifyChainPriorWorkSuccess(tw, "task_close")
+	err = verifyChainPriorWorkSuccess(tw, "task_merge")
 	assert.NoError(t, err)
 }
 
@@ -520,35 +372,30 @@ func TestResolveLocalBranch_AmbiguousFails(t *testing.T) {
 func TestHotPath_RoutesThroughAPIv1(t *testing.T) {
 	s := newHotpathStub(t)
 	walk := taskWalkResponse{Tasks: []taskWalkTask{
+		{ID: "task_plan", Action: "contract:plan", Kind: "work", Status: "closed", Outcome: "success"},
 		{ID: "task_dev", Action: "contract:develop", Kind: "work", Status: "closed", Outcome: "success"},
-		{ID: "task_close", Action: "contract:story_close", Kind: "work", Status: "claimed"},
+		{ID: "task_push", Action: "contract:push", Kind: "work", Status: "claimed"},
 	}}
 	walkBytes, _ := json.Marshal(walk)
 	s.setAPIResp("task_walk", string(walkBytes))
-	story := storyRaw{
-		Story: storyRawStory{
-			ID: "sty_v1", Title: "api-v1 routing", Status: "in_progress",
-			Fields: map[string]any{"scope": "x"},
-		},
-		Template: storyTemplate{
-			Category: "infrastructure",
-			Fields:   []storyTemplateField{{Name: "scope", Required: true}},
-		},
-	}
-	storyBytes, _ := json.Marshal(story)
-	s.setAPIResp("story_get", string(storyBytes))
+	s.gitOutputs["branch --list agent-task_dev-from-*"] = "  agent-task_dev-from-833a28e\n"
+	s.gitOutputs["log -1 --pretty=fuller agent-task_dev-from-833a28e"] = "commit feedface\n"
+	s.gitOutputs["push origin agent-task_dev-from-833a28e:agent-task_dev-from-833a28e"] =
+		"To origin\n * [new branch]      agent-task_dev-from-833a28e -> agent-task_dev-from-833a28e\n"
+	s.gitOutputs["ls-remote origin agent-task_dev-from-833a28e"] =
+		"feedface\trefs/heads/agent-task_dev-from-833a28e\n"
 	s.setAPIResp("ledger_append", `{"id":"ldg_v1"}`)
 	s.setAPIResp("task_update", `{}`)
 
 	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
 
 	ti := taskInfo{
-		ID: "task_close", StoryID: "sty_v1", ProjectID: "proj_x",
-		Action: "contract:story_close",
+		ID: "task_push", StoryID: "sty_v1", ProjectID: "proj_x",
+		Action: "contract:push",
 	}
 	_, _ = cc.runHotPath(context.Background(),
-		TaskEnvelope{ID: "task_close", ProjectID: "proj_x"},
-		ti, agentInfo{}, contractInfo{Name: "story_close"}, storyInfo{ID: "sty_v1"})
+		TaskEnvelope{ID: "task_push", ProjectID: "proj_x"},
+		ti, agentInfo{}, contractInfo{Name: "push"}, storyInfo{ID: "sty_v1"})
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

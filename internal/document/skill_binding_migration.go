@@ -16,11 +16,11 @@ import (
 //  1. Looks up the contract document the binding references and reads
 //     its name (e.g. "develop").
 //  2. Looks up the matching lifecycle agent. The lifecycle is driven
-//     by three role agents — developer_agent (plan/develop),
-//     releaser_agent (push/merge_to_main), story_close_agent. The
-//     migration consults the role map first; non-lifecycle contracts
-//     (project-scope custom contracts) still fall through to the
-//     legacy `<contract>_agent` name match.
+//     by two role agents — developer_agent (plan/develop) and
+//     releaser_agent (push/merge_to_main). The migration consults
+//     the role map first; non-lifecycle contracts (project-scope
+//     custom contracts) still fall through to the legacy
+//     `<contract>_agent` name match.
 //  3. Merges the skill id into the agent's AgentSettings.SkillRefs
 //     (no-op when already present).
 //  4. Clears the skill's ContractBinding so subsequent reads route
@@ -102,7 +102,6 @@ var lifecycleAgentForContract = map[string]string{
 	"develop":       "developer_agent",
 	"push":          "releaser_agent",
 	"merge_to_main": "releaser_agent",
-	"story_close":   "story_close_agent",
 }
 
 // lookupAgentForContract resolves the agent document driving a given

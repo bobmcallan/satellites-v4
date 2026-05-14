@@ -4,15 +4,17 @@ reviews:
   - "contract:plan"
   - "contract:push"
   - "contract:merge_to_main"
-  - "contract:story_close"
   - "contract:story_review"
 instruction: |
   Review every non-develop kind:review task (plan, push,
-  merge_to_main, story_close). Verdict is one of:
-  accepted | rejected | needs_more. Cite principles in the
-  rationale; on needs_more, return concrete review_questions the
-  agent can address. Do not approve a close whose evidence fails
-  to map AC-by-AC to the story's acceptance criteria.
+  merge_to_main) plus the kind:work contract:story_review pre-ship
+  gate. Verdict is one of: accepted | rejected | needs_more on
+  review tasks, or pass | fail on the story_review work task
+  (the verdict tag the mechanical story_close MCP verb consults).
+  Cite principles in the rationale; on needs_more, return concrete
+  review_questions the agent can address. Do not approve a
+  story_review whose evidence fails to map AC-by-AC to the
+  story's acceptance criteria.
 permission_patterns:
   - "Read:**"
   - "mcp__satellites__satellites_*"
@@ -21,9 +23,9 @@ tags: [v4, agents-roles, reviewer, role-shaped]
 # Story Reviewer
 
 Reviewer agent for every non-develop contract close (`plan`,
-`push`, `merge_to_main`, `story_close`). The substrate's reviewer
-runtime reads this body as the rubric when it claims a
-`kind=review` task whose `Action` matches one of the actions in
+`push`, `merge_to_main`) plus the kind:work `contract:story_review`
+pre-ship gate. The substrate's reviewer runtime reads this body as
+the rubric when it claims a task whose `Action` matches one of
 this agent's `reviews:` list.
 
 ## What it reviews
@@ -34,8 +36,10 @@ this agent's `reviews:` list.
 - **push close.** Commit pushed; no source modifications by the
   releaser; no destructive ops.
 - **merge_to_main close.** Fast-forward only; main aligned to origin.
-- **story_close.** Final sign-off; resolution + evidence map
-  AC-by-AC.
+- **story_review (pre-ship gate).** Final sign-off; resolution +
+  evidence map AC-by-AC. Renders the chain's terminal verdict as
+  `verdict:pass | verdict:fail`; the mechanical `story_close` MCP
+  verb consults that tag structurally at close time.
 
 ## Rubric
 

@@ -169,8 +169,7 @@ Body.
 // Sty_a12e0f5d moved developer_agent + releaser_agent from
 // config/seed/system/agents/ to config/seed/wksp_5b3257d1/agents/ —
 // the work agents are workspace-tier so a workspace authors them once
-// and every project in the workspace inherits. story_close_agent
-// stays at system tier (review-only lifecycle shell).
+// and every project in the workspace inherits.
 func TestRun_RealSeedAgentsCarryInstruction(t *testing.T) {
 	t.Parallel()
 	seedDir, err := filepath.Abs(filepath.Join("..", "..", "config", "seed"))
@@ -186,7 +185,7 @@ func TestRun_RealSeedAgentsCarryInstruction(t *testing.T) {
 		t.Fatalf("RunWorkspace real seed: %v", err)
 	}
 	for _, name := range []string{
-		"developer_agent", "releaser_agent", "story_close_agent",
+		"developer_agent", "releaser_agent",
 	} {
 		agentDoc, err := docs.GetByName(context.Background(), "", name, nil)
 		if err != nil {

@@ -1,9 +1,9 @@
 // hotpath.go is the in-process executor for lifecycle contracts whose
-// dispatch_class is "hot" (push, merge_to_main, story_close). It
-// bypasses the seven-step claude subprocess that client_claude.go's
-// Execute uses for heavy phases: those steps amortise ~60-120s of
-// setup over substantial LLM work, but for git-shape phases the
-// setup dominates the actual work.
+// dispatch_class is "hot" (push, merge_to_main). It bypasses the
+// seven-step claude subprocess that client_claude.go's Execute uses
+// for heavy phases: those steps amortise ~60-120s of setup over
+// substantial LLM work, but for git-shape phases the setup dominates
+// the actual work.
 //
 // Selector branch lives in client_claude.go:Execute. This file owns
 // runHotPath (the dispatch on ci.Name) + the per-contract runners.
@@ -11,10 +11,9 @@
 // Evidence-row shape parity. The runners emit ledger rows whose tag
 // set + content section structure mirror the heavy-path rows that
 // shipped before this story (reference fixtures from sty_f2d342e2:
-// ldg_d0c09de8 push, ldg_f4ed7c6d merge_to_main, ldg_da616aec
-// story_close). The orchestrator-side downstream consumers (reviewer
-// rubrics, portal renderers, audit dashboards) treat hot and heavy
-// rows uniformly.
+// ldg_d0c09de8 push, ldg_f4ed7c6d merge_to_main). The orchestrator-
+// side downstream consumers (reviewer rubrics, portal renderers,
+// audit dashboards) treat hot and heavy rows uniformly.
 //
 // sty_4994caa3 (parent: sty_3b3e4e66; Layer A frontmatter shipped in
 // 833a28e).
@@ -55,8 +54,6 @@ func (c *claudeClient) runHotPath(ctx context.Context, env TaskEnvelope, ti task
 		return c.runPushHotPath(ctx, env, ti, ai, ci, si)
 	case "merge_to_main":
 		return c.runMergeToMainHotPath(ctx, env, ti, ai, ci, si)
-	case "story_close":
-		return c.runStoryCloseHotPath(ctx, env, ti, ai, ci, si)
 	default:
 		return OutcomeFailure, fmt.Errorf("%w %q", errHotUnimplemented, ci.Name)
 	}
@@ -94,14 +91,12 @@ func (c *claudeClient) fetchTaskWalk(ctx context.Context, storyID string) (taskW
 }
 
 // triggerPayload is the optional orchestrator-supplied JSON on
-// task.Trigger. Push + merge runners honour branch / sha when set;
-// story_close honours resolution + (in future) explicit field values.
+// task.Trigger. Push + merge runners honour branch / sha when set.
 // Trigger is parsed leniently — unknown keys are ignored and an
-// invalid JSON blob degrades to "" / "" / "".
+// invalid JSON blob degrades to "" / "".
 type triggerPayload struct {
-	Branch     string `json:"branch"`
-	SHA        string `json:"sha"`
-	Resolution string `json:"resolution"`
+	Branch string `json:"branch"`
+	SHA    string `json:"sha"`
 }
 
 // parseTrigger decodes ti.Trigger; missing / empty / malformed → zero.
@@ -116,8 +111,8 @@ func parseTrigger(raw []byte) triggerPayload {
 
 // inferDevelopTaskID returns the id of the most-recent contract:develop
 // kind=work task on the chain that closed outcome=success. Errors when
-// no such task exists — push / merge / story_close all assume a
-// successful develop ancestor.
+// no such task exists — push + merge both assume a successful develop
+// ancestor.
 func inferDevelopTaskID(tw taskWalkResponse) (string, error) {
 	for i := len(tw.Tasks) - 1; i >= 0; i-- {
 		t := tw.Tasks[i]
@@ -413,261 +408,6 @@ func hasLaterSuccess(tw taskWalkResponse, prior taskWalkTask) bool {
 		}
 	}
 	return false
-}
-
-// runStoryCloseHotPath verifies the chain, reads required closing
-// fields from the story's category template, refuses if any are
-// empty, then writes a generic close-evidence ledger row whose tag
-// set + content shape mirror ldg_da616aec. The runner does NOT
-// transition the story status; that is the orchestrator's next plan
-// step (per pr_substrate_provides_context, dispatch responsibility
-// stays narrow).
-func (c *claudeClient) runStoryCloseHotPath(ctx context.Context, env TaskEnvelope, ti taskInfo, _ agentInfo, _ contractInfo, _ storyInfo) (Outcome, error) {
-	storyRaw, err := c.fetchStoryRaw(ctx, ti.StoryID)
-	if err != nil {
-		return OutcomeFailure, fmt.Errorf("story_close: story_get: %w", err)
-	}
-
-	tw, err := c.fetchTaskWalk(ctx, ti.StoryID)
-	if err != nil {
-		return OutcomeFailure, fmt.Errorf("story_close: %w", err)
-	}
-	if err := verifyChainPriorWorkSuccess(tw, env.ID); err != nil {
-		return OutcomeFailure, fmt.Errorf("story_close: %w", err)
-	}
-
-	missing := requiredClosingFieldsMissing(storyRaw)
-	if len(missing) > 0 {
-		return OutcomeFailure, fmt.Errorf("story_close: closing fields not populated on story: %s — call story_update with a fields={…} payload before dispatching", strings.Join(missing, ", "))
-	}
-
-	resolution := parseTrigger(ti.Trigger).Resolution
-	if resolution == "" {
-		resolution = "delivered"
-	}
-
-	if err := c.appendHotStoryCloseEvidence(ctx, env, ti, storyRaw, tw, resolution); err != nil {
-		return OutcomeFailure, fmt.Errorf("story_close: evidence: %w", err)
-	}
-
-	if err := c.closeTaskSuccess(ctx, env.ID); err != nil {
-		return OutcomeFailure, fmt.Errorf("story_close: close task: %w", err)
-	}
-	return OutcomeSuccess, nil
-}
-
-// storyRaw is the loose-shaped story_get response. The hot runner
-// reads template + fields; the rest is pass-through context. Using
-// json.RawMessage for template lets us defer to the template parser
-// where required.
-type storyRaw struct {
-	Story    storyRawStory  `json:"story"`
-	Template storyTemplate  `json:"template"`
-	Project  map[string]any `json:"project,omitempty"`
-}
-
-type storyRawStory struct {
-	ID          string         `json:"id"`
-	Title       string         `json:"title"`
-	Status      string         `json:"status"`
-	Category    string         `json:"category"`
-	Fields      map[string]any `json:"fields,omitempty"`
-	Tags        []string       `json:"tags,omitempty"`
-	WorkspaceID string         `json:"workspace_id,omitempty"`
-	ProjectID   string         `json:"project_id,omitempty"`
-}
-
-type storyTemplate struct {
-	Category string                  `json:"category"`
-	Fields   []storyTemplateField    `json:"fields"`
-	Hooks    map[string]storyHookSet `json:"hooks,omitempty"`
-}
-
-type storyTemplateField struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Required bool   `json:"required"`
-}
-
-type storyHookSet struct {
-	Structured []storyHookCheck `json:"structured,omitempty"`
-}
-
-type storyHookCheck struct {
-	Type  string `json:"type"`
-	Field string `json:"field,omitempty"`
-}
-
-// fetchStoryRaw POSTs to /api/v1/story/get and returns the full
-// envelope. The route returns StoryGetOutput ({story, template,
-// project, ...}); the hot runner reads story.Fields + template.Hooks.
-func (c *claudeClient) fetchStoryRaw(ctx context.Context, id string) (storyRaw, error) {
-	if id == "" {
-		return storyRaw{}, errors.New("story_get: id empty")
-	}
-	var sr storyRaw
-	if err := c.api.Call(ctx, "story_get", map[string]any{"id": id}, &sr); err != nil {
-		return storyRaw{}, fmt.Errorf("story_get: %w", err)
-	}
-	if sr.Story.ID == "" {
-		return storyRaw{}, errors.New("story_get: empty response")
-	}
-	return sr, nil
-}
-
-// requiredClosingFieldsMissing returns the names of fields the
-// category template's `hooks.done.structured` requires, that are not
-// populated on the story.
-//
-// Two field-source paths are checked:
-//  1. The template's `hooks.done.structured` list (field_present checks).
-//     This is the load-bearing gate for `story_update(status=done)`.
-//  2. As a fallback (templates that haven't declared a `done` hook),
-//     every `Required` field on the template.
-//
-// A field counts as "populated" when story.Fields[name] is present
-// and renders to a non-empty string.
-func requiredClosingFieldsMissing(sr storyRaw) []string {
-	required := requiredFieldNames(sr.Template)
-	if len(required) == 0 {
-		return nil
-	}
-	fields := sr.Story.Fields
-	var missing []string
-	for _, name := range required {
-		v, ok := fields[name]
-		if !ok || !nonEmptyFieldValue(v) {
-			missing = append(missing, name)
-		}
-	}
-	return missing
-}
-
-// requiredFieldNames returns the list of field names the template's
-// done-hook requires. Falls back to the template's `required: true`
-// fields when the hook is absent.
-func requiredFieldNames(t storyTemplate) []string {
-	if hook, ok := t.Hooks["done"]; ok && len(hook.Structured) > 0 {
-		var out []string
-		for _, c := range hook.Structured {
-			if c.Type == "field_present" && c.Field != "" {
-				out = append(out, c.Field)
-			}
-		}
-		if len(out) > 0 {
-			return out
-		}
-	}
-	var out []string
-	for _, f := range t.Fields {
-		if f.Required {
-			out = append(out, f.Name)
-		}
-	}
-	return out
-}
-
-// nonEmptyFieldValue treats string / []byte / number / map values as
-// populated when they render to a non-empty textual representation.
-// Empty string, nil, and the empty map are "not populated".
-func nonEmptyFieldValue(v any) bool {
-	switch x := v.(type) {
-	case nil:
-		return false
-	case string:
-		return strings.TrimSpace(x) != ""
-	case []byte:
-		return strings.TrimSpace(string(x)) != ""
-	case map[string]any:
-		return len(x) > 0
-	case []any:
-		return len(x) > 0
-	default:
-		return true
-	}
-}
-
-// appendHotStoryCloseEvidence writes the kind:evidence ledger row for
-// a story_close. Tag set + sections mirror ldg_da616aec.
-func (c *claudeClient) appendHotStoryCloseEvidence(ctx context.Context, env TaskEnvelope, ti taskInfo, sr storyRaw, tw taskWalkResponse, resolution string) error {
-	var chainSummary strings.Builder
-	chainSummary.WriteString("| Task | Action | Kind | Iter | Outcome |\n")
-	chainSummary.WriteString("|---|---|---|---|---|\n")
-	for _, t := range tw.Tasks {
-		kind := t.Kind
-		if kind == "" {
-			kind = "work"
-		}
-		chainSummary.WriteString(fmt.Sprintf("| `%s` | %s | %s | %d | %s |\n", t.ID, t.Action, kind, t.Iteration, t.Outcome))
-	}
-
-	var fieldsSummary strings.Builder
-	for _, f := range sr.Template.Fields {
-		v := sr.Story.Fields[f.Name]
-		fieldsSummary.WriteString(fmt.Sprintf("- `%s` — %s\n", f.Name, renderFieldValue(v)))
-	}
-
-	content := fmt.Sprintf(
-		"# story_close evidence — %s — resolution: %s\n\n"+
-			"**Resolution code:** `%s`.\n"+
-			"**Story:** `%s` — %s.\n"+
-			"**Close task:** `%s` (this row).\n"+
-			"**Dispatch class:** hot (in-process runner; sty_4994caa3).\n\n"+
-			"## Chain summary (per task_walk)\n\n%s\n"+
-			"Every prior `kind=work` task either closed `outcome=success` OR was succeeded by a later iteration that closed `outcome=success`. The chain is consistent with terminal transition.\n\n"+
-			"## Closing fields (populated this turn)\n\n%s\n"+
-			"## Principles cited\n\n"+
-			"- `pr_evidence` — every claim is backed by a substrate row or reproducible command.\n"+
-			"- `pr_pipeline_integrity` — every contract phase ran end-to-end with its own evidence row.\n",
-		ti.StoryID, resolution,
-		resolution,
-		sr.Story.ID, sr.Story.Title,
-		env.ID,
-		chainSummary.String(),
-		fieldsSummary.String(),
-	)
-	tags := []string{
-		"task_id:" + env.ID,
-		"story_id:" + ti.StoryID,
-		"phase:story_close",
-		"resolution:" + resolution,
-		"dispatch_class:hot",
-		"kind:evidence",
-	}
-	return c.appendEvidence(ctx, env.ProjectID, ti.StoryID, tags, content)
-}
-
-// renderFieldValue formats a story field value for inclusion in the
-// close-evidence row. Long values are truncated to a single line.
-func renderFieldValue(v any) string {
-	if !nonEmptyFieldValue(v) {
-		return "*(empty)*"
-	}
-	switch x := v.(type) {
-	case string:
-		return summariseSingleLine(x)
-	case []byte:
-		return summariseSingleLine(string(x))
-	default:
-		raw, err := json.Marshal(v)
-		if err != nil {
-			return fmt.Sprintf("%v", v)
-		}
-		return summariseSingleLine(string(raw))
-	}
-}
-
-// summariseSingleLine collapses a value to one line, truncating to
-// 240 chars so the evidence row stays scannable.
-func summariseSingleLine(s string) string {
-	s = strings.ReplaceAll(s, "\r\n", " ")
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.TrimSpace(s)
-	const limit = 240
-	if len(s) > limit {
-		return s[:limit] + "…"
-	}
-	return s
 }
 
 // appendEvidence POSTs to /api/v1/ledger/append. Threads through

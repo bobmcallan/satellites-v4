@@ -198,8 +198,11 @@ exit 0
 	// and the lifecycle lines on stdout.
 	runCtx, runCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer runCancel()
+	// Post sty_ad40584f (C4) `task run <id>` is default-async; the
+	// follower assertions exercise the sync path's SSE stream, so
+	// re-opt in via `--sync`.
 	cmd := exec.CommandContext(runCtx, clientBin,
-		"task", "run", taskID,
+		"task", "run", "--sync", taskID,
 		"--follow",
 		"--heartbeat=100ms",
 	)

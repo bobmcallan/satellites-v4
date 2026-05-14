@@ -199,9 +199,9 @@ func (e *asyncTestEnv) shutdown() {
 	e.daemon.WaitInflight()
 }
 
-// runAsyncCLI execs `satellites-client task run --async <id> --socket
-// <path>` against the in-process daemon. Returns stdout, stderr, exit
-// code, and wall-clock elapsed.
+// runAsyncCLI execs `satellites-client task run <id> --socket <path>`
+// against the in-process daemon (default-async post sty_ad40584f C4).
+// Returns stdout, stderr, exit code, and wall-clock elapsed.
 func (e *asyncTestEnv) runAsyncCLI(t *testing.T, taskID string) (stdout, stderr string, exit int, elapsed time.Duration) {
 	t.Helper()
 
@@ -229,7 +229,7 @@ func (e *asyncTestEnv) runAsyncCLI(t *testing.T, taskID string) (stdout, stderr 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, e.clientBin, "task", "run", "--async", "--socket", e.socketPath, taskID)
+	cmd := exec.CommandContext(ctx, e.clientBin, "task", "run", "--socket", e.socketPath, taskID)
 	cmd.Env = []string{
 		"PATH=/usr/bin:/bin",
 		"SATELLITES_CLIENT_CONFIG=" + tomlPath,
@@ -280,8 +280,8 @@ func quickDispatch() clientdaemon.DispatchFunc {
 
 // TestTaskRunAsync — AC1.
 //
-// Boots an in-process daemon, invokes `task run --async <id>`, and
-// asserts:
+// Boots an in-process daemon, invokes `task run <id>` (default-async
+// path post sty_ad40584f C4), and asserts:
 //   - exit code 0
 //   - elapsed wall-time < 1s
 //   - stdout JSON decodes to {task_id, daemon_pid, queue_position}
@@ -415,7 +415,7 @@ func TestTaskRunAsyncDaemonNotRunning(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "task", "run", "--async", "--socket", absentSocket, "task_absent")
+	cmd := exec.CommandContext(ctx, bin, "task", "run", "--socket", absentSocket, "task_absent")
 	cmd.Env = []string{
 		"PATH=/usr/bin:/bin",
 		"SATELLITES_CLIENT_CONFIG=" + tomlPath,
@@ -480,7 +480,7 @@ func TestTaskRunAsyncDaemonNotRunning(t *testing.T) {
 // This makes both CLI calls see the running case (queue_position == 0)
 // and isolates AC5 from the scheduler's promotion latency. The CLI is
 // still invoked twice — the assertion is about the operator-observable
-// stdout JSON being identical across two `task run --async` calls.
+// stdout JSON being identical across two `task run` calls.
 func TestTaskRunAsyncIdempotent(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go build unavailable")

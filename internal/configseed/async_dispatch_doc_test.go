@@ -41,7 +41,8 @@ func TestSeedLoad_AsyncDispatchDocs(t *testing.T) {
 
 	required := []string{
 		"Async dispatch pattern",              // AC1 subsection header
-		"task run --async",                    // AC1 pattern names the flag
+		"the default-async branch",            // AC1 pattern-sentence anchor (post sty_ad40584f C4)
+		"task run <task_id>",                  // AC1 pattern names the no-flag invocation
 		"task walk --story-id",                // AC1 polling verb 1
 		"ledger list --task-id",               // AC1 polling verb 2
 		"kind:agent-execute-evidence",         // AC1 terminal row form

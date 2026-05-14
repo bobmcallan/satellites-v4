@@ -151,13 +151,22 @@ commits directly. Those activities live behind `task run`.
 
 - **Two invocation modes for `task run`.** Choose per task
   based on whether the orchestrator's bash needs to block on
-  the result. **In-session:** the orchestrator runs
-  `satellites-client task run <task_id>` synchronously in its
-  own bash and awaits exit before composing the next step.
-  **Subprocess:** the orchestrator starts the run in the
-  background and routes on its exit notification. Either way
-  the execution envelope is identical — only the
-  orchestrator's wait posture differs.
+  the result. **Default (subprocess / parallel async):** bare
+  `satellites-client task run <task_id>` push-enqueues into
+  the local serve daemon and returns within ~1s with
+  `{task_id, daemon_pid, queue_position}`; the dispatched
+  subprocess survives the CLI exit and the orchestrator
+  observes the outcome via `task walk` + `ledger list` polling
+  (see `#### Async dispatch pattern` below). **In-session
+  (sync):** `satellites-client task run --sync <task_id>`
+  re-opts into the blocking shape — spawns a fresh `claude`
+  subprocess in this process, streams stdout / stderr live,
+  and returns when the agent finishes; the orchestrator's
+  bash blocks on the dispatched subprocess. The `--sync` mode
+  is the right choice when an operator is interactively
+  watching one task at a time. The `--async` flag does NOT
+  exist; the default IS async, and `--sync` is the explicit
+  re-opt-in. Cite `pr_no_unrequested_compat`.
 
 - **The `satellites-agent` daemon** remains available as an
   autonomous-worker fallback when no orchestrator session is
@@ -188,11 +197,12 @@ commits directly. Those activities live behind `task run`.
 
 When the orchestrator has more than one story (or more than one
 slice of the same story) in flight at once, dispatch via
-`task run --async` and poll the chain instead of blocking the
-orchestrator's bash on a sync `task run`.
+`task run` (the default-async branch) and poll the chain
+instead of blocking the orchestrator's bash with `task run
+--sync`.
 
 **Pattern.** Author the work task via `task_add` over MCP →
-run `satellites-client task run --async <task_id>` (the CLI
+run `satellites-client task run <task_id>` (the CLI
 POSTs `/v1/enqueue` on the local daemon socket and exits within
 ~1s returning `{task_id, daemon_pid, queue_position}`) → while
 authoring the next task, poll
@@ -224,7 +234,7 @@ entry (tagged `task_id:<orphaned>`). The orchestrator polling
 the chain sees the orphan evidence row, treats the task as
 failed-without-evidence, and dispatches a retry by minting a
 fresh `task_add(prior_task_id=<orphaned_task>, …)` and running
-`satellites-client task run --async` against the new task. No
+`satellites-client task run` against the new task. No
 silent loss: the orphan row + the retry's `prior_task_id`
 preserve the audit chain on `task_walk`.
 
@@ -234,11 +244,11 @@ Sequence:
 
 1. `task_add(action=contract:develop, story_id=A, agent_id=…)`
    → returns `task_A`.
-2. `satellites-client task run --async task_A` — CLI exits
+2. `satellites-client task run task_A` — CLI exits
    within ~1s with `{task_id, daemon_pid, queue_position}`.
 3. `task_add(action=contract:develop, story_id=B, agent_id=…)`
    → returns `task_B`.
-4. `satellites-client task run --async task_B` — CLI exits
+4. `satellites-client task run task_B` — CLI exits
    within ~1s.
 5. Poll loop at 30s:
    - `satellites-client task walk --story-id A`

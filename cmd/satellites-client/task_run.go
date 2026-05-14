@@ -42,14 +42,14 @@ const heartbeatInterval = dispatchteam.DefaultHeartbeatInterval
 func newTaskRunCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "run <task_id>",
-		Short: "Dispatch a task synchronously: spawn a fresh claude subprocess, stream output live, return when the agent finishes.",
+		Short: "Dispatch a task asynchronously by default (push-enqueue into the local serve daemon, exit within ~1s); --sync re-opts into the blocking shape that spawns a fresh claude subprocess in this process and streams output live.",
 		Args:  cobra.ExactArgs(1),
 		RunE:  runTaskCmd,
 	}
-	c.Flags().Duration("heartbeat", heartbeatInterval, "Lifecycle heartbeat cadence.")
-	c.Flags().Bool("follow", false, "Subscribe to the task_log SSE stream and print lifecycle markers to stdout.")
-	c.Flags().Bool("async", false, "Enqueue into the local serve daemon and exit; subprocess survives CLI exit.")
-	c.Flags().String("socket", clientdaemon.DefaultSocketPath(), "Daemon unix socket (defaults to the daemon's canonical path).")
+	c.Flags().Duration("heartbeat", heartbeatInterval, "Lifecycle heartbeat cadence (--sync mode only).")
+	c.Flags().Bool("follow", false, "Subscribe to the task_log SSE stream and print lifecycle markers to stdout (--sync mode only — async dispatch surfaces lifecycle via task_walk/ledger_list polling instead).")
+	c.Flags().Bool("sync", false, "Block on the dispatched subprocess: spawn claude in-process, stream stdout live, return when the agent finishes. Default is push-enqueue into the local serve daemon and return within ~1s.")
+	c.Flags().String("socket", clientdaemon.DefaultSocketPath(), "Daemon unix socket (defaults to the daemon's canonical path; used by the default async path).")
 	return c
 }
 
@@ -58,7 +58,7 @@ func newTaskRunCmd() *cobra.Command {
 func runTaskCmd(cmd *cobra.Command, args []string) error {
 	taskID := args[0]
 
-	if async, _ := cmd.Flags().GetBool("async"); async {
+	if sync, _ := cmd.Flags().GetBool("sync"); !sync {
 		return runTaskAsync(cmd, taskID)
 	}
 

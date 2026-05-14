@@ -97,11 +97,12 @@ plan
 
 When the orchestrator has more than one story (or more than one
 slice of the same story) in flight at once, dispatch via
-`task run --async` and poll the chain instead of blocking the
-orchestrator's bash on a sync `task run`.
+`task run` (the default-async branch) and poll the chain
+instead of blocking the orchestrator's bash with `task run
+--sync`.
 
 **Pattern.** Author the work task via `task_add` over MCP →
-run `satellites-client task run --async <task_id>` (the CLI
+run `satellites-client task run <task_id>` (the CLI
 POSTs `/v1/enqueue` on the local daemon socket and exits within
 ~1s returning `{task_id, daemon_pid, queue_position}`) → while
 authoring the next task, poll
@@ -133,7 +134,7 @@ entry (tagged `task_id:<orphaned>`). The orchestrator polling
 the chain sees the orphan evidence row, treats the task as
 failed-without-evidence, and dispatches a retry by minting a
 fresh `task_add(prior_task_id=<orphaned_task>, …)` and running
-`satellites-client task run --async` against the new task. No
+`satellites-client task run` against the new task. No
 silent loss: the orphan row + the retry's `prior_task_id`
 preserve the audit chain on `task_walk`.
 
@@ -143,11 +144,11 @@ Sequence:
 
 1. `task_add(action=contract:develop, story_id=A, agent_id=…)`
    → returns `task_A`.
-2. `satellites-client task run --async task_A` — CLI exits
+2. `satellites-client task run task_A` — CLI exits
    within ~1s with `{task_id, daemon_pid, queue_position}`.
 3. `task_add(action=contract:develop, story_id=B, agent_id=…)`
    → returns `task_B`.
-4. `satellites-client task run --async task_B` — CLI exits
+4. `satellites-client task run task_B` — CLI exits
    within ~1s.
 5. Poll loop at 30s:
    - `satellites-client task walk --story-id A`

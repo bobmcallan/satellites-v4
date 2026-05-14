@@ -12,9 +12,11 @@
 //     internals or any substrate-domain package. This is the AC4
 //     import-shape guard the plan binds.
 //
-//   - TestTaskRunRegistersAsyncFlags — proves the cobra surface
-//     ships the --async and --socket flags (the operator-facing wire
-//     contract).
+//   - TestTaskRunRejectsAsyncFlag / TestTaskRunRegistersSyncFlag /
+//     TestTaskRunRegistersSocketFlag — prove the cobra surface ships
+//     --sync (re-opt-in to blocking) and --socket (daemon override)
+//     and rejects --async with cobra's "unknown flag" error
+//     (sty_ad40584f C4 default-flip + flag retirement).
 
 package main
 
@@ -40,18 +42,46 @@ import (
 	"github.com/bobmcallan/satellites/internal/clientdaemon"
 )
 
-// TestTaskRunRegistersAsyncFlags asserts the cobra command surface
-// the operator types against ships both --async (bool) and --socket
-// (string). These are the operator-facing wire contract; the rest of
-// the slice keys off them.
-func TestTaskRunRegistersAsyncFlags(t *testing.T) {
+// TestTaskRunRejectsAsyncFlag is the AC3 regression guard for
+// sty_ad40584f C4: cobra MUST reject `--async` with its built-in
+// "unknown flag: --async" error. Per pr_no_unrequested_compat the
+// flag is removed outright — not aliased, not hidden, not deprecation
+// -warned. The literal substring is what the story body's AC3
+// verification binds the reviewer to.
+func TestTaskRunRejectsAsyncFlag(t *testing.T) {
 	c := newTaskRunCmd()
-	if c.Flags().Lookup("async") == nil {
-		t.Fatalf("task run: --async flag not registered")
+	err := c.ParseFlags([]string{"--async"})
+	if err == nil {
+		t.Fatalf("ParseFlags([\"--async\"]): nil err, want unknown-flag error")
 	}
-	if f := c.Flags().Lookup("async"); f.Value.Type() != "bool" {
-		t.Errorf("--async type = %q, want bool", f.Value.Type())
+	if !strings.Contains(err.Error(), "unknown flag: --async") {
+		t.Errorf("err = %q, want substring %q", err.Error(), "unknown flag: --async")
 	}
+}
+
+// TestTaskRunRegistersSyncFlag asserts the cobra command surface
+// ships `--sync` (bool, default false). After C4 (sty_ad40584f) the
+// default branch is async; `--sync` is the explicit re-opt-in to the
+// blocking shape.
+func TestTaskRunRegistersSyncFlag(t *testing.T) {
+	c := newTaskRunCmd()
+	f := c.Flags().Lookup("sync")
+	if f == nil {
+		t.Fatalf("task run: --sync flag not registered")
+	}
+	if f.Value.Type() != "bool" {
+		t.Errorf("--sync type = %q, want bool", f.Value.Type())
+	}
+	if got, _ := c.Flags().GetBool("sync"); got != false {
+		t.Errorf("--sync default = %v, want false", got)
+	}
+}
+
+// TestTaskRunRegistersSocketFlag asserts the --socket flag survives
+// the C4 flag-surface rework: same default (clientdaemon's canonical
+// path), same name. The async path's operator-override is unchanged.
+func TestTaskRunRegistersSocketFlag(t *testing.T) {
+	c := newTaskRunCmd()
 	if c.Flags().Lookup("socket") == nil {
 		t.Fatalf("task run: --socket flag not registered")
 	}
@@ -190,7 +220,6 @@ func TestTaskRunAsync_StdoutRoundTrip(t *testing.T) {
 	defer srv.Close()
 
 	cmd := newTaskRunCmd()
-	_ = cmd.Flags().Set("async", "true")
 	_ = cmd.Flags().Set("socket", sockPath)
 
 	stdout := &captureBuf{}

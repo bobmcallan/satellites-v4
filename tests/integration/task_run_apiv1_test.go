@@ -129,7 +129,10 @@ func TestTaskRun_AllRequestsOnAPIv1(t *testing.T) {
 	// 6. Dispatch.
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, clientBin, "task", "run", taskID)
+	// Post sty_ad40584f (C4) the bare `task run <id>` is async (push-
+	// enqueue into the daemon). The API-routing assertions here cover
+	// the sync path, so the invocation re-opts in with `--sync`.
+	cmd := exec.CommandContext(ctx, clientBin, "task", "run", "--sync", taskID)
 	cmd.Env = append(os.Environ(),
 		"SATELLITES_CLIENT_CONFIG="+tomlPath,
 		"PATH="+pathDir+string(os.PathListSeparator)+os.Getenv("PATH"),

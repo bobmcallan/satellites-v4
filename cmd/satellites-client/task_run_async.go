@@ -11,10 +11,13 @@
 // are imported from internal/clientdaemon so the daemon-side schema
 // is the single source of truth.
 //
-// Per pr_no_unrequested_compat the CLI surface is exactly --async
-// (plus the operator override --socket). No --mode selector, no env-
-// var indirection, no auto-spawn of the daemon (AC3 is explicit: the
-// operator decides whether the daemon runs).
+// Per pr_no_unrequested_compat C4 (sty_ad40584f) flips async to the
+// CLI default and removes the `--async` flag; the unix-socket wire
+// shape is unchanged. Operator surface: bare `task run <id>` is async
+// (push-enqueue into the daemon); `--sync` re-opts into the blocking
+// shape. The `--socket` override is retained. No --mode selector, no
+// env-var indirection, no auto-spawn of the daemon (AC3 is explicit:
+// the operator decides whether the daemon runs).
 
 package main
 
@@ -50,9 +53,10 @@ const asyncEnqueueTimeout = 5 * time.Second
 // do not edit casually.
 const daemonNotRunningMsg = "daemon not running — start it with: satellites-client serve start"
 
-// runTaskAsync is the early-return branch task_run.go takes when
-// --async is set. POSTs /v1/enqueue, prints {task_id, daemon_pid,
-// queue_position} to stdout, returns nil on 200 → exit 0.
+// runTaskAsync is the default branch task_run.go takes when `--sync`
+// is NOT set (post-C4 default-flip). POSTs /v1/enqueue, prints
+// {task_id, daemon_pid, queue_position} to stdout, returns nil on
+// 200 → exit 0.
 func runTaskAsync(cmd *cobra.Command, taskID string) error {
 	socketPath, _ := cmd.Flags().GetString("socket")
 
@@ -63,14 +67,14 @@ func runTaskAsync(cmd *cobra.Command, taskID string) error {
 
 	body, mErr := json.Marshal(resp)
 	if mErr != nil {
-		return cliexit.Wrap(cliexit.Server, fmt.Errorf("task run --async %s: marshal response: %w", taskID, mErr))
+		return cliexit.Wrap(cliexit.Server, fmt.Errorf("task run %s: marshal response: %w", taskID, mErr))
 	}
 	out := cmd.OutOrStdout()
 	if out == nil {
 		out = os.Stdout
 	}
 	if _, wErr := out.Write(append(body, '\n')); wErr != nil {
-		return cliexit.Wrap(cliexit.Server, fmt.Errorf("task run --async %s: write stdout: %w", taskID, wErr))
+		return cliexit.Wrap(cliexit.Server, fmt.Errorf("task run %s: write stdout: %w", taskID, wErr))
 	}
 	return nil
 }
@@ -98,7 +102,7 @@ func postEnqueue(ctx context.Context, socketPath, taskID string) (clientdaemon.E
 	reqBody, _ := json.Marshal(clientdaemon.EnqueueRequest{TaskID: taskID})
 	req, rErr := http.NewRequestWithContext(dialCtx, http.MethodPost, "http://daemon/v1/enqueue", bytes.NewReader(reqBody))
 	if rErr != nil {
-		return clientdaemon.EnqueueResponse{}, cliexit.Wrap(cliexit.Server, fmt.Errorf("task run --async %s: build request: %w", taskID, rErr))
+		return clientdaemon.EnqueueResponse{}, cliexit.Wrap(cliexit.Server, fmt.Errorf("task run %s: build request: %w", taskID, rErr))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -107,17 +111,17 @@ func postEnqueue(ctx context.Context, socketPath, taskID string) (clientdaemon.E
 		if isDaemonAbsent(doErr) {
 			return clientdaemon.EnqueueResponse{}, cliexit.Newf(cliexit.Server, "%s", daemonNotRunningMsg)
 		}
-		return clientdaemon.EnqueueResponse{}, cliexit.Wrap(cliexit.Server, fmt.Errorf("task run --async %s: POST /v1/enqueue: %w", taskID, doErr))
+		return clientdaemon.EnqueueResponse{}, cliexit.Wrap(cliexit.Server, fmt.Errorf("task run %s: POST /v1/enqueue: %w", taskID, doErr))
 	}
 	defer httpResp.Body.Close()
 
 	respBody, _ := io.ReadAll(httpResp.Body)
 	if httpResp.StatusCode != http.StatusOK {
-		return clientdaemon.EnqueueResponse{}, cliexit.Newf(cliexit.Server, "task run --async %s: daemon returned HTTP %d: %s", taskID, httpResp.StatusCode, bytes.TrimSpace(respBody))
+		return clientdaemon.EnqueueResponse{}, cliexit.Newf(cliexit.Server, "task run %s: daemon returned HTTP %d: %s", taskID, httpResp.StatusCode, bytes.TrimSpace(respBody))
 	}
 	var out clientdaemon.EnqueueResponse
 	if uErr := json.Unmarshal(respBody, &out); uErr != nil {
-		return clientdaemon.EnqueueResponse{}, cliexit.Wrap(cliexit.Server, fmt.Errorf("task run --async %s: decode response: %w", taskID, uErr))
+		return clientdaemon.EnqueueResponse{}, cliexit.Wrap(cliexit.Server, fmt.Errorf("task run %s: decode response: %w", taskID, uErr))
 	}
 	return out, nil
 }

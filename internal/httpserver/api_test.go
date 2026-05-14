@@ -336,10 +336,10 @@ func TestAPI_SatellitesInit_HappyPath(t *testing.T) {
 	if got.State != "update_available" {
 		t.Errorf("state = %q, want update_available", got.State)
 	}
-	if got.TargetInstallPath != "./satellites/satellites-client" {
+	if got.TargetInstallPath != "./.satellites/satellites-client" {
 		t.Errorf("target_install_path = %q", got.TargetInstallPath)
 	}
-	if got.TargetConfigPath != "./satellites/satellites-client.toml" {
+	if got.TargetConfigPath != "./.satellites/satellites-client.toml" {
 		t.Errorf("target_config_path = %q", got.TargetConfigPath)
 	}
 	if got.Install.Filename != "satellites-client-linux-amd64" {

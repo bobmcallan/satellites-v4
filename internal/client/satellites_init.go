@@ -58,6 +58,14 @@ type SatellitesInitInput struct {
 	WorkspaceID       string
 	ResolvedProjectID string
 	Memberships       []string
+
+	// AgentName is the label used when satellites_init mints a
+	// project-scoped agent API key on the caller's behalf
+	// (sty_6b1e207a). Defaults to "cli_default" when empty. Idempotent
+	// on (caller, project_id, name) — a subsequent call with the same
+	// triple returns metadata for the existing active key (cleartext
+	// omitted) rather than minting a duplicate.
+	AgentName string
 }
 
 // SatellitesInitOverride is one orientation pointer surfaced on the
@@ -127,10 +135,38 @@ type SatellitesInitInstall struct {
 // after the binary lands. Kept as a typed struct so future bootstrap
 // kinds (`oauth_pkce`, `device_code`, …) can be added without breaking
 // the wire shape.
+//
+// Kind values:
+//   - "auth_login" — caller must run `satellites-client auth login` to
+//     mint a global per-user OAuth bearer (the only path for first-time
+//     human bootstrap on a fresh host with no MCP session).
+//   - "ready" — satellites_init minted (or re-used) a project-scoped
+//     agent API key on the caller's behalf; the AgentAPIKey field on
+//     the output carries the metadata (and cleartext on a fresh mint).
+//     Source distinguishes minted_at_init vs existing_key.
 type SatellitesInitAuthBootstrap struct {
 	Kind    string `json:"kind"`
-	Command string `json:"command"`
-	EnvHint string `json:"env_hint"`
+	Command string `json:"command,omitempty"`
+	EnvHint string `json:"env_hint,omitempty"`
+	Source  string `json:"source,omitempty"`
+}
+
+// SatellitesInitAgentAPIKey is the agent API key minted (or re-used) on
+// behalf of the caller when satellites_init is invoked from a
+// project-bound, authenticated MCP session. Cleartext is non-empty
+// ONLY on a fresh mint (Source="minted_at_init"); on Source="existing_key"
+// the caller already has the cleartext from a prior install or must
+// regenerate via agent_apikey_create. sty_6b1e207a.
+type SatellitesInitAgentAPIKey struct {
+	ID          string     `json:"id"`
+	Key         string     `json:"key,omitempty"`
+	Prefix      string     `json:"prefix"`
+	Name        string     `json:"name"`
+	ProjectID   string     `json:"project_id,omitempty"`
+	WorkspaceID string     `json:"workspace_id,omitempty"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	Status      string     `json:"status"`
+	Source      string     `json:"source"`
 }
 
 // SatellitesInitOutput is the wire payload for satellites_init.
@@ -141,6 +177,7 @@ type SatellitesInitOutput struct {
 	DefaultConfig      SatellitesInitDefaultConfig      `json:"default_config"`
 	Install            SatellitesInitInstall            `json:"install"`
 	AuthBootstrap      SatellitesInitAuthBootstrap      `json:"auth_bootstrap"`
+	AgentAPIKey        *SatellitesInitAgentAPIKey       `json:"agent_api_key,omitempty"`
 	CurrentVersion     string                           `json:"current_version,omitempty"`
 	FetchedAt          time.Time                        `json:"fetched_at"`
 	WorkspaceOverrides SatellitesInitWorkspaceOverrides `json:"workspace_overrides"`
@@ -193,6 +230,8 @@ func (c *Client) SatellitesInit(ctx context.Context, caller Caller, in Satellite
 	overrides := c.resolveWorkspaceOverrides(ctx, in)
 	coverage := c.resolveChainCoverage(ctx, in)
 
+	auth, agentKey := c.resolveInitAuthBootstrap(ctx, caller, in)
+
 	return SatellitesInitOutput{
 		State:             state,
 		TargetInstallPath: "./.satellites/satellites-client",
@@ -213,16 +252,93 @@ func (c *Client) SatellitesInit(ctx context.Context, caller Caller, in Satellite
 			DownloadURL: artifact.DownloadURL,
 			SHA256:      artifact.SHA256,
 		},
-		AuthBootstrap: SatellitesInitAuthBootstrap{
-			Kind:    "auth_login",
-			Command: "satellites-client auth login",
-			EnvHint: "SATELLITES_TOKEN",
-		},
+		AuthBootstrap:      auth,
+		AgentAPIKey:        agentKey,
 		CurrentVersion:     current,
 		FetchedAt:          manifest.FetchedAt,
 		WorkspaceOverrides: overrides,
 		ChainCoverage:      coverage,
 	}, nil
+}
+
+// resolveInitAuthBootstrap decides which auth flow satellites_init
+// returns for this caller. When the MCP session is anonymous or not
+// project-bound, the operator must run `satellites-client auth login`
+// to mint a global per-user OAuth bearer (the only path for first-time
+// human bootstrap). When the session is authenticated AND
+// project-bound, mint (or re-use) a project-scoped agent API key on
+// the caller's behalf so the consumer install gets a self-contained
+// project-local bearer. sty_6b1e207a slice B.
+func (c *Client) resolveInitAuthBootstrap(ctx context.Context, caller Caller, in SatellitesInitInput) (SatellitesInitAuthBootstrap, *SatellitesInitAgentAPIKey) {
+	loginBootstrap := SatellitesInitAuthBootstrap{
+		Kind:    "auth_login",
+		Command: "satellites-client auth login",
+		EnvHint: "SATELLITES_TOKEN",
+	}
+	if in.ResolvedProjectID == "" || caller.UserID == "" || c.deps.APIKeys == nil {
+		return loginBootstrap, nil
+	}
+	agentName := strings.TrimSpace(in.AgentName)
+	if agentName == "" {
+		agentName = "cli_default"
+	}
+
+	// Idempotency lookup: scan the caller's owned keys for an active
+	// match on (project_id, name). On hit, return metadata only — the
+	// cleartext is unrecoverable from the store.
+	existing, err := c.AgentAPIKeyList(ctx, caller, AgentAPIKeyListInput{ProjectID: in.ResolvedProjectID})
+	if err == nil {
+		for _, row := range existing.Items {
+			if row.Status != "active" {
+				continue
+			}
+			if row.Name != agentName {
+				continue
+			}
+			return SatellitesInitAuthBootstrap{
+					Kind:   "ready",
+					Source: "existing_key",
+				}, &SatellitesInitAgentAPIKey{
+					ID:          row.ID,
+					Prefix:      row.Prefix,
+					Name:        row.Name,
+					ProjectID:   row.ProjectID,
+					WorkspaceID: row.WorkspaceID,
+					ExpiresAt:   row.ExpiresAt,
+					Status:      row.Status,
+					Source:      "existing_key",
+				}
+		}
+	}
+
+	// No active key on file — mint one. The cleartext is emitted
+	// ONCE on the create path; the operator embeds it in the
+	// satellites-client.toml the consumer writes out of this payload.
+	created, err := c.AgentAPIKeyCreate(ctx, caller, AgentAPIKeyCreateInput{
+		Name:        agentName,
+		ProjectID:   in.ResolvedProjectID,
+		ActorSource: "satellites_init",
+	})
+	if err != nil {
+		// On any mint failure, fall back to the auth_login flow so
+		// the operator still has a recoverable path. The caller can
+		// retry by running agent_apikey_create directly.
+		return loginBootstrap, nil
+	}
+	return SatellitesInitAuthBootstrap{
+			Kind:   "ready",
+			Source: "minted_at_init",
+		}, &SatellitesInitAgentAPIKey{
+			ID:          created.ID,
+			Key:         created.Key,
+			Prefix:      created.Prefix,
+			Name:        created.Name,
+			ProjectID:   created.ProjectID,
+			WorkspaceID: created.WorkspaceID,
+			ExpiresAt:   created.ExpiresAt,
+			Status:      created.Status,
+			Source:      "minted_at_init",
+		}
 }
 
 // recommendationOrchestratorWorkspace is the customization-point

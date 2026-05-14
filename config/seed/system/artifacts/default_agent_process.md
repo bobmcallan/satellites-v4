@@ -54,7 +54,10 @@ example, in MCP-only clients that don't shell out. Names and
 parameters in either form are authoritative. The `satellites_init`
 MCP verb returns the install payload when the binary is missing
 or outdated (`install_required` / `update_available` /
-`up_to_date`).
+`up_to_date`). On project-bound sessions it also mints a
+project-scoped agent API key so the install is self-contained;
+on anonymous sessions it falls back to instructing the operator
+to run `satellites-client auth login`.
 
 ## Operating principle
 

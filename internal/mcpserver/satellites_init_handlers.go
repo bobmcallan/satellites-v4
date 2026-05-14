@@ -20,12 +20,23 @@ import (
 // handleSatellitesInit is the satellites_init tool adapter.
 func (s *Server) handleSatellitesInit(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	args := req.GetArguments()
+	caller, _ := auth.UserFrom(ctx)
 	in := client.SatellitesInitInput{
 		CurrentVersion: stringArg(args, "current_version"),
 		OS:             stringArg(args, "os"),
 		Arch:           stringArg(args, "arch"),
+		AgentName:      stringArg(args, "agent_name"),
 	}
-	caller, _ := auth.UserFrom(ctx)
+	// Session-bound project: when the caller's session is project-set,
+	// thread the project + workspace + memberships through so
+	// SatellitesInit can mint a project-scoped agent API key
+	// (sty_6b1e207a slice B). When the session has no active project,
+	// these stay empty and the verb falls back to the auth_login flow.
+	if resolved := s.callerActiveProjectID(ctx, auth.CallerIdentity{UserID: caller.UserID, Email: caller.Email}); resolved != "" {
+		in.ResolvedProjectID = resolved
+		in.WorkspaceID = s.resolveProjectWorkspaceID(ctx, resolved)
+		in.Memberships = s.resolveCallerMemberships(ctx, caller)
+	}
 	out, err := s.cli().SatellitesInit(ctx, toClientCaller(caller), in)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil

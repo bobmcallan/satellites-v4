@@ -193,13 +193,15 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	// Read-only — performs no disk writes. Thin forwarder onto
 	// *client.Client.SatellitesInit per pr_mcp_cli_shared_path.
 	satellitesInitTool := mcpgo.NewTool("satellites_init",
-		mcpgo.WithDescription("Return the structured install/refresh payload for satellites-client (state machine: install_required / update_available / up_to_date). Optionally accepts current_version, os, arch to refine the state + artifact selection. Read-only."),
+		mcpgo.WithDescription("Return the structured install/refresh payload for satellites-client (state machine: install_required / update_available / up_to_date). When the MCP session is project-bound (via project_set), mints (or re-uses) a project-scoped agent API key on the caller's behalf and returns auth_bootstrap.kind=ready + agent_api_key block. Without a session project, falls back to auth_bootstrap.kind=auth_login. Read-only on the install payload; mints one apikey row per (caller, project, agent_name) tuple."),
 		mcpgo.WithString("current_version",
 			mcpgo.Description("Operator-supplied stamp of the locally installed satellites-client; empty drives install_required.")),
 		mcpgo.WithString("os",
 			mcpgo.Description("Override server-side runtime.GOOS (linux | darwin | windows).")),
 		mcpgo.WithString("arch",
 			mcpgo.Description("Override server-side runtime.GOARCH (amd64 | arm64).")),
+		mcpgo.WithString("agent_name",
+			mcpgo.Description("Label for the project-scoped agent API key minted on project-bound sessions. Default cli_default. Idempotent on (caller, project_id, agent_name) — a re-run returns the existing key's metadata.")),
 	)
 	s.mcp.AddTool(satellitesInitTool, s.handleSatellitesInit)
 

@@ -43,6 +43,25 @@ verb to fetch the install payload (`install_required` /
 `update_available` / `up_to_date`) that bootstraps the execution
 surface for the project.
 
+When the MCP session is already project-bound (any prior
+`project_set` call this session), `satellites_init` ALSO mints
+(or re-uses) a project-scoped agent API key on the caller's behalf
+— the payload returns `auth_bootstrap.kind="ready"` plus an
+`agent_api_key` block carrying the cleartext bearer (on a fresh
+mint) or metadata only (on re-use). The orchestrator writes the
+bearer into `./.satellites/satellites-client.toml` once; no
+interactive OAuth flow is needed. The mint is idempotent on
+`(caller, project_id, agent_name)` — default `agent_name` is
+`cli_default`; the operator can override via the verb's
+`agent_name` arg.
+
+When the session is anonymous or has no active project (no prior
+`project_set`), `satellites_init` falls back to
+`auth_bootstrap.kind="auth_login"`, instructing the operator to
+run `satellites-client auth login` for the global per-user OAuth
+flow. The fallback exists for fresh-host human bootstrap where
+no MCP session yet exists.
+
 ### CLI / MCP wire shapes
 
 Substrate verbs map 1:1 across the two surfaces — same names,

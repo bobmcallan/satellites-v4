@@ -295,16 +295,25 @@ func (a *APIRegistrar) handleSatellitesInit(w http.ResponseWriter, r *http.Reque
 		CurrentVersion string `json:"current_version"`
 		OS             string `json:"os"`
 		Arch           string `json:"arch"`
+		AgentName      string `json:"agent_name"`
+		ProjectID      string `json:"project_id"`
 	}
 	if err := decodeJSONBody(r, &req); err != nil {
 		writeAPIError(w, err)
 		return
 	}
 	cc := a.clientCaller(r)
+	// HTTP callers can opt into the apikey-mint flow by supplying
+	// project_id explicitly (the MCP path resolves it from the
+	// session's project_set state). sty_6b1e207a slice B.
+	resolvedProjectID := strings.TrimSpace(req.ProjectID)
 	out, err := a.client.SatellitesInit(r.Context(), cc, client.SatellitesInitInput{
-		CurrentVersion: req.CurrentVersion,
-		OS:             req.OS,
-		Arch:           req.Arch,
+		CurrentVersion:    req.CurrentVersion,
+		OS:                req.OS,
+		Arch:              req.Arch,
+		AgentName:         req.AgentName,
+		ResolvedProjectID: resolvedProjectID,
+		Memberships:       cc.Memberships,
 	})
 	if err != nil {
 		writeAPIError(w, err)

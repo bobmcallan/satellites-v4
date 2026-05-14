@@ -1,5 +1,7 @@
 ---
 name: story_reviewer
+delivers:
+  - "contract:story_review"
 reviews:
   - "contract:plan"
   - "contract:push"

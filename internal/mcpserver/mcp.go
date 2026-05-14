@@ -490,14 +490,38 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		)
 		s.mcp.AddTool(kvListTool, s.handleKVList)
 
-		// agent_compose, agent_ephemeral_summary, agent_apikey_* MCP
-		// registrations removed in sty_4db0e025 slice B1 — these verbs
-		// are now reachable through /api/v1 + the satellites-client CLI
-		// only. Handler bodies remain (handleAgentCompose,
-		// handleAgentEphemeralSummary, handleAgentAPIKey* in
-		// agent_compose.go / agent_apikey_handlers.go) so the typed
-		// methods on *client.Client continue to back the HTTP routes
-		// and CLI verbs.
+		// agent_compose, agent_ephemeral_summary MCP registrations
+		// remain removed (sty_4db0e025 slice B1) — those verbs stay
+		// CLI-only. agent_apikey_* registrations were restored in
+		// sty_6b1e207a so MCP-only callers (IDE agents, automation)
+		// can mint + manage project-scoped keys per
+		// `pr_mcp_cli_shared_path` (transports must be 1:1).
+
+		// agent_apikey_create (sty_6b1e207a slice A): mint a
+		// project-scoped API key. Returns cleartext key ONCE. The
+		// caller's MCP session must be authenticated; if project_id is
+		// supplied, the project's workspace must be in the caller's
+		// membership slice.
+		apikeyCreateTool := mcpgo.NewTool("agent_apikey_create",
+			mcpgo.WithDescription("Mint a project-scoped agent API key. Returns the cleartext key ONCE. project_id optional — when supplied, the project's workspace must be in the caller's memberships. Wire shape mirrors satellites-client agent apikey-create."),
+			mcpgo.WithString("name", mcpgo.Required(), mcpgo.Description("Label for the key (free-form, operator-readable).")),
+			mcpgo.WithString("project_id", mcpgo.Description("Optional project scope. Without it the key is workspace-scoped to the caller's default workspace.")),
+			mcpgo.WithString("expires_at", mcpgo.Description("Optional RFC3339 expiry. Empty = no expiry.")),
+		)
+		s.mcp.AddTool(apikeyCreateTool, s.handleAgentAPIKeyCreate)
+
+		apikeyListTool := mcpgo.NewTool("agent_apikey_list",
+			mcpgo.WithDescription("List API keys owned by the caller. project_id filters; include_archived surfaces deleted rows."),
+			mcpgo.WithString("project_id", mcpgo.Description("Optional project scope filter.")),
+			mcpgo.WithBoolean("include_archived", mcpgo.Description("Include archived (deleted) keys.")),
+		)
+		s.mcp.AddTool(apikeyListTool, s.handleAgentAPIKeyList)
+
+		apikeyDeleteTool := mcpgo.NewTool("agent_apikey_delete",
+			mcpgo.WithDescription("Archive (soft-delete) an API key. The caller must own the key; subsequent bearer authentications with the key fail."),
+			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Key id (apk_<8hex>).")),
+		)
+		s.mcp.AddTool(apikeyDeleteTool, s.handleAgentAPIKeyDelete)
 
 		if s.deps.Sessions != nil {
 			// task_add (sty_a427368d): mint one task at status=published

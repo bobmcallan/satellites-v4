@@ -56,6 +56,7 @@ func (a *APIRegistrar) Register(mux *http.ServeMux) {
 	// Read verbs.
 	a.handle(mux, "POST /api/v1/satellites/info", a.handleSatellitesInfo)
 	a.handle(mux, "POST /api/v1/satellites/init", a.handleSatellitesInit)
+	a.handle(mux, "POST /api/v1/substrate/audit", a.handleSubstrateAudit)
 	a.handle(mux, "POST /api/v1/system/version", a.handleSystemVersion)
 	a.handle(mux, "POST /api/v1/session/whoami", a.handleSessionWhoami)
 	a.handle(mux, "POST /api/v1/session/register", a.handleSessionRegister)
@@ -226,6 +227,58 @@ func (a *APIRegistrar) handleSatellitesInfo(w http.ResponseWriter, r *http.Reque
 func (a *APIRegistrar) handleSystemVersion(w http.ResponseWriter, r *http.Request) {
 	cc := a.clientCaller(r)
 	out, err := a.client.SystemVersion(r.Context(), cc, client.SystemVersionInput{})
+	if err != nil {
+		writeAPIError(w, err)
+		return
+	}
+	writeAPIJSON(w, out)
+}
+
+// handleSubstrateAudit forwards to the typed SubstrateAudit method
+// (sty_2f0db922). The typed surface owns substrate_auditor resolution
+// + task-mint; this handler decodes optional project_id / workspace_id
+// args, threads the caller's resolution chain, and writes the JSON
+// payload.
+func (a *APIRegistrar) handleSubstrateAudit(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ProjectID   string `json:"project_id"`
+		WorkspaceID string `json:"workspace_id"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeAPIError(w, err)
+		return
+	}
+	cc := a.clientCaller(r)
+	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
+	resolve := client.TaskAddResolveDeps{
+		CallerActiveProjectID: func(ctx context.Context, c client.Caller) string {
+			id, _ := a.client.ResolveProjectID(ctx, "", "", c, c.Memberships)
+			return id
+		},
+		ResolveStoryProjectID: func(ctx context.Context, storyID string, memberships []string) string {
+			if storyID == "" {
+				return ""
+			}
+			s := a.client.Stores().Stories
+			if s == nil {
+				return ""
+			}
+			st, err := s.GetByID(ctx, storyID, memberships)
+			if err != nil {
+				return ""
+			}
+			return st.ProjectID
+		},
+		ResolveProjectWorkspaceID: func(ctx context.Context, projectID string) string {
+			return a.client.ResolveProjectWorkspaceID(ctx, projectID)
+		},
+	}
+	out, err := a.client.SubstrateAudit(r.Context(), cc, client.SubstrateAuditInput{
+		ProjectID:   req.ProjectID,
+		WorkspaceID: req.WorkspaceID,
+		Memberships: cc.Memberships,
+		Resolve:     resolve,
+	})
 	if err != nil {
 		writeAPIError(w, err)
 		return

@@ -202,6 +202,25 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	)
 	s.mcp.AddTool(satellitesInitTool, s.handleSatellitesInit)
 
+	// sty_2f0db922: substrate_audit mints a kind=work
+	// action=contract:substrate_audit task naming the substrate_auditor
+	// agent. Per pr_substrate_model the audit rubric lives in markdown
+	// (the contract body + agent body lifts it verbatim); this verb is
+	// the thin mint surface. Thin forwarder onto *client.Client.
+	// SubstrateAudit per pr_mcp_cli_shared_path. Gated on the document
+	// store + task store + story store + ledger store being wired so
+	// the TaskAdd dependency chain is satisfiable.
+	if s.deps.Documents != nil && s.deps.Tasks != nil && s.deps.Stories != nil && s.deps.Ledger != nil {
+		substrateAuditTool := mcpgo.NewTool("substrate_audit",
+			mcpgo.WithDescription("Mint a kind=work action=contract:substrate_audit task naming the substrate_auditor agent. The dispatched agent runs the six-check rubric (non-drift / agent-capability / canonical-chain-coverage / principle-citation / story-template-field / orphan) against the substrate and emits one kind:audit-report ledger row carrying the structured findings + a verdict tag (verdict:audit:pass | verdict:audit:warn | verdict:audit:fail). Read-only with respect to substrate documents. Returns {task_id, story_id, agent_id, scope}."),
+			mcpgo.WithString("project_id",
+				mcpgo.Description("Optional project scope (proj_<8hex>). Empty falls back to the caller's resolution chain.")),
+			mcpgo.WithString("workspace_id",
+				mcpgo.Description("Optional workspace scope (wksp_<8hex>). Empty falls back to the caller's resolution chain.")),
+		)
+		s.mcp.AddTool(substrateAuditTool, s.handleSubstrateAudit)
+	}
+
 	if s.deps.Documents != nil {
 		// document_ingest_file MCP registration removed in sty_4db0e025
 		// slice B3 — operator-only verb, now reachable through /api/v1 +

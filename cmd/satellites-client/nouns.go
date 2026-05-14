@@ -28,6 +28,7 @@ var satellitesClientNouns = []func(*cobra.Command){
 	registerSessionNoun,
 	registerSystemNoun,
 	registerSatellitesNoun,
+	registerSubstrateNoun, // sty_2f0db922
 	registerPortalNoun,
 	registerAuthNoun,
 	registerServeNoun, // sty_5aa20f1b
@@ -284,6 +285,17 @@ func registerSatellitesNoun(root *cobra.Command) {
 	noun := nounStub("satellites", "Satellites — install / refresh entry-points.")
 	noun.AddCommand(
 		newSatellitesInitCmd(), // sty_796b8fe1
+	)
+	root.AddCommand(noun)
+}
+
+// registerSubstrateNoun adds the `substrate` noun group surfacing
+// substrate-shape verbs (continuous drift detection + future
+// substrate-introspection surfaces). sty_2f0db922.
+func registerSubstrateNoun(root *cobra.Command) {
+	noun := nounStub("substrate", "Substrate — shape introspection (audit).")
+	noun.AddCommand(
+		newSubstrateAuditCmd(), // sty_2f0db922
 	)
 	root.AddCommand(noun)
 }

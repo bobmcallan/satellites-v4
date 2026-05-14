@@ -24,6 +24,8 @@ var expectedRoutes = []string{
 	"POST /api/v1/satellites/info",
 	// sty_796b8fe1: satellites_init returns the install/refresh payload.
 	"POST /api/v1/satellites/init",
+	// sty_2f0db922: substrate_audit mints a substrate-audit task.
+	"POST /api/v1/substrate/audit",
 	"POST /api/v1/system/version",
 	"POST /api/v1/session/whoami",
 	"POST /api/v1/session/register",
@@ -149,8 +151,8 @@ var expectedRoutes = []string{
 // /api/v1/story/field-set (folded into /api/v1/story/update), so the
 // expected count is 105 → 103.
 func TestAPI_RoutesRegistered(t *testing.T) {
-	if got := len(expectedRoutes); got != 108 {
-		t.Fatalf("expected 108 routes, got %d (update the slice as the verb set grows)", got)
+	if got := len(expectedRoutes); got != 109 {
+		t.Fatalf("expected 109 routes, got %d (update the slice as the verb set grows)", got)
 	}
 
 	reg := NewAPIRegistrar(client.New(client.Deps{StartedAt: time.Now().UTC()}))

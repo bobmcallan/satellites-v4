@@ -827,3 +827,39 @@ func newSatellitesInitCmd() *cobra.Command {
 	c.Flags().String("arch", "", "Override the server-side runtime.GOARCH resolution (amd64 | arm64).")
 	return c
 }
+
+// newSubstrateAuditCmd surfaces the substrate_audit verb (sty_2f0db922).
+// Mints a kind=work action=contract:substrate_audit task naming the
+// substrate_auditor agent. The dispatched agent applies the six-check
+// rubric (non-drift / agent-capability / chain-coverage / principle-
+// citation / story-template-field / orphan) and emits a kind:audit-
+// report ledger row carrying the structured findings + verdict tag.
+//
+// Operator workflow: `substrate audit` mints the task →
+// `task run <task_id>` dispatches it → the report row lands on the
+// project ledger. Filter by tag `verdict:audit:pass` /
+// `verdict:audit:warn` / `verdict:audit:fail` to read the structural
+// conclusion without parsing JSON content.
+//
+// Per pr_mcp_cli_shared_path the CLI verb is a thin forwarder onto
+// the substrate_audit MCP tool; the typed method on *client.Client
+// owns the agent-resolution + task-mint logic.
+func newSubstrateAuditCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "audit",
+		Short: "Mint a substrate_audit task. Dispatched agent emits a kind:audit-report ledger row with the verdict (audit:pass | audit:warn | audit:fail).",
+		RunE: readHandler("substrate_audit", func(cmd *cobra.Command, args []string) (any, error) {
+			out := map[string]any{}
+			if v, _ := cmd.Flags().GetString("project-id"); v != "" {
+				out["project_id"] = v
+			}
+			if v, _ := cmd.Flags().GetString("workspace-id"); v != "" {
+				out["workspace_id"] = v
+			}
+			return out, nil
+		}),
+	}
+	c.Flags().String("project-id", "", "Optional project scope (proj_<8hex>). Empty falls back to the caller's resolution chain.")
+	c.Flags().String("workspace-id", "", "Optional workspace scope (wksp_<8hex>). Empty falls back to the caller's resolution chain.")
+	return c
+}

@@ -44,6 +44,7 @@ func (a *APIRegistrar) registerOperatorWriteRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/story/add", a.handleStoryAdd)
 	mux.HandleFunc("POST /api/v1/story/update", a.handleStoryUpdate)
 	mux.HandleFunc("POST /api/v1/story/delete", a.handleStoryDelete)
+	mux.HandleFunc("POST /api/v1/story/close", a.handleStoryClose)
 
 	mux.HandleFunc("POST /api/v1/project/add", a.handleProjectAdd)
 	mux.HandleFunc("POST /api/v1/project/update", a.handleProjectUpdate)
@@ -213,6 +214,37 @@ func (a *APIRegistrar) handleStoryDelete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeAPIJSON(w, map[string]any{"id": updated.ID, "status": updated.Status, "deleted": true})
+}
+
+// handleStoryClose is the HTTP transport adapter for the mechanical
+// story_close verb. Thin: decodes the body, resolves caller scope,
+// delegates to client.StoryClose, writes the typed envelope back.
+func (a *APIRegistrar) handleStoryClose(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StoryID        string `json:"story_id"`
+		ResolutionCode string `json:"resolution_code"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeAPIError(w, err)
+		return
+	}
+	if req.StoryID == "" {
+		writeAPIStatus(w, http.StatusBadRequest, "story_id required")
+		return
+	}
+	cc := a.clientCaller(r)
+	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
+	out, err := a.client.StoryClose(r.Context(), cc, client.StoryCloseInput{
+		StoryID:        req.StoryID,
+		ResolutionCode: req.ResolutionCode,
+		Memberships:    cc.Memberships,
+		Now:            time.Now().UTC(),
+	})
+	if err != nil {
+		writeAPIError(w, err)
+		return
+	}
+	writeAPIJSON(w, out)
 }
 
 // ----- project -----

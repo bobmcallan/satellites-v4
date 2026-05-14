@@ -484,6 +484,29 @@ func buildParityCases() []parityCase {
 			},
 		},
 		{
+			// sty_b97dda00 slice 1 — the new mechanical story_close verb.
+			// Each call mints a FRESH story with no review chain so the
+			// gate consistently returns {status:"fail", gaps:[story_review:absent]}.
+			// Picking a deterministic-FAIL fixture means re-running the case
+			// on the second transport doesn't depend on the first call's
+			// mutation (the verb mutates only on PASS).
+			name: "story_close",
+			args: func(t *testing.T, ctx context.Context, ff *parityFixtures) map[string]any {
+				storyResp := callAPIv1(t, ctx, ff.baseURL, ff.satBearer, "story_add", map[string]any{
+					"project_id":          ff.projectID,
+					"title":               fmt.Sprintf("parity-story-close-%d", time.Now().UnixNano()),
+					"description":         "story_close parity fixture",
+					"acceptance_criteria": "ac",
+					"category":            "infrastructure",
+				})
+				sid, _ := storyResp["id"].(string)
+				if sid == "" {
+					t.Fatalf("story_close parity: story_add returned no id: %+v", storyResp)
+				}
+				return map[string]any{"story_id": sid}
+			},
+		},
+		{
 			name: "project_set",
 			args: staticArgs(map[string]any{"repo_url": "git@github.com:parity-test/satellites.git"}),
 		},

@@ -5,6 +5,7 @@ reviews:
   - "contract:push"
   - "contract:merge_to_main"
   - "contract:story_close"
+  - "contract:story_review"
 instruction: |
   Review every non-develop kind:review task (plan, push,
   merge_to_main, story_close). Verdict is one of:

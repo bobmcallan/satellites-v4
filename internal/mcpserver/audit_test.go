@@ -334,6 +334,7 @@ func TestIsAuditReadVerb(t *testing.T) {
 		"task_add":           false,
 		"task_update":        false,
 		"story_update":       false, // sty_4db0e025 D1 folded update_status + field_set into story_update
+		"story_close":        false, // sty_b97dda00 slice 1 — mechanical close mutates story status + appends close-evidence
 		"ledger_append":      false,
 	}
 	for verb, want := range cases {

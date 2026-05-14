@@ -389,6 +389,13 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		)
 		s.mcp.AddTool(listStoryTool, s.handleStoryList)
 
+		closeStoryTool := mcpgo.NewTool("story_close",
+			mcpgo.WithDescription("Mechanical close: gate-checks the story's task chain + story_review verdict + template fields; on PASS appends a kind:close-evidence ledger row and walks the story to status=done via UpdateStatusDerived; on FAIL returns {status:\"fail\", gaps:[…]} without mutation. The reasoning surface lives in the upstream contract:story_review task; this verb is structural only (no LLM, same tier as pr_story_terminal_gate)."),
+			mcpgo.WithString("story_id", mcpgo.Required(), mcpgo.Description("Story id (sty_<8hex>).")),
+			mcpgo.WithString("resolution_code", mcpgo.Description("Resolution slot for the close-evidence row. Default 'delivered'. Allowed: delivered | plan_only | not_required | duplicate | superseded | failed:complexity | failed:scope_invalid | failed:blocked.")),
+		)
+		s.mcp.AddTool(closeStoryTool, s.handleStoryClose)
+
 		// story_update_status + story_field_set MCP registrations removed
 		// in sty_4db0e025 slice D1 — both folded into story_update above
 		// (status + fields arguments). pr_story_terminal_gate is preserved:
@@ -1672,6 +1679,48 @@ func (s *Server) handleStoryAdd(ctx context.Context, req mcpgo.CallToolRequest) 
 		Str("project_id", resolvedID).Str("story_id", st.ID).
 		Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+// handleStoryClose is the thin wire adapter for story_close. The verb
+// is structural only: the substrate-side StoryClose method gate-checks
+// the chain + review verdict + template fields and on PASS walks the
+// story to done via UpdateStatusDerived. Mirrors handleStoryAdd shape
+// per pr_mcp_cli_shared_path.
+func (s *Server) handleStoryClose(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	start := time.Now()
+	caller, _ := auth.UserFrom(ctx)
+	id, err := req.RequireString("story_id")
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	out, err := s.cli().StoryClose(ctx, toClientCaller(caller), client.StoryCloseInput{
+		StoryID:        id,
+		ResolutionCode: req.GetString("resolution_code", ""),
+		Memberships:    memberships,
+		Now:            s.nowUTC(),
+	})
+	if err != nil {
+		return mcpgo.NewToolResultError(storyCloseErrMessage(err)), nil
+	}
+	body, _ := json.Marshal(out)
+	s.logger.Info().Str("method", "tools/call").Str("tool", "story_close").
+		Str("story_id", id).Str("status", out.Status).
+		Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+// storyCloseErrMessage maps the story_close sentinels onto the wire
+// envelope shape mirroring storyErrMessage.
+func storyCloseErrMessage(err error) string {
+	switch {
+	case errors.Is(err, client.ErrStoryCloseStoryIDRequired):
+		return "story_id is required"
+	case errors.Is(err, client.ErrStoryCloseStoryNotFound):
+		return "story not found"
+	default:
+		return err.Error()
+	}
 }
 
 // handleStoryUpdate applies the consolidated story_update verb. The

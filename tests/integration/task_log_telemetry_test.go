@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -416,6 +417,11 @@ func callAPIv1WithHeader(t *testing.T, ctx context.Context, baseURL, bearer, too
 // frame onto frameCh. Signals `subscribed` when the connection
 // handshake has succeeded so the caller can start the producer. Closes
 // frameCh when the connection ends.
+//
+// When SATELLITES_TELEMETRY_DOGFOOD_FILE is set, the literal SSE
+// response bytes are also written to that path verbatim — the
+// orchestrator uses this to capture the kind:dogfood-evidence row's
+// payload for AC6 without parsing.
 func collectTelemetryFrames(t *testing.T, ctx context.Context, baseURL, bearer, taskID string, frameCh chan<- telemetryFrame, subscribed chan<- struct{}) {
 	t.Helper()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/v1/task/log/stream?task_id="+taskID, nil)
@@ -438,7 +444,23 @@ func collectTelemetryFrames(t *testing.T, ctx context.Context, baseURL, bearer, 
 	}
 	close(subscribed)
 
-	sc := bufio.NewScanner(resp.Body)
+	var dogfoodSink io.Writer
+	if path := strings.TrimSpace(getenv("SATELLITES_TELEMETRY_DOGFOOD_FILE")); path != "" {
+		if f, err := createDogfoodFile(path); err == nil {
+			defer f.Close()
+			dogfoodSink = f
+			t.Logf("telemetry dogfood: writing raw SSE to %s", path)
+		} else {
+			t.Logf("telemetry dogfood: cannot open %s: %v", path, err)
+		}
+	}
+
+	var body io.Reader = resp.Body
+	if dogfoodSink != nil {
+		body = io.TeeReader(resp.Body, dogfoodSink)
+	}
+
+	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	var curSeq int64
 	var curData bytes.Buffer
@@ -510,6 +532,15 @@ func drainTelemetryFrames(t *testing.T, ctx context.Context, ch <-chan telemetry
 			return frames
 		}
 	}
+}
+
+// getenv is os.Getenv but trims whitespace so callers do not have to.
+func getenv(k string) string { return strings.TrimSpace(os.Getenv(k)) }
+
+// createDogfoodFile opens path for write+truncate so the test always
+// starts from a clean file.
+func createDogfoodFile(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 }
 
 // summariseKinds returns one string per arrival frame for log lines.

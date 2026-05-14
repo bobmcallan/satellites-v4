@@ -614,6 +614,147 @@ func TestRun_RoleSeedNotPresent(t *testing.T) {
 	}
 }
 
+// TestRun_FrontmatterOnlyEditReseeds (sty_34130d76 AC3) — a seed file
+// whose ONLY change between version N and version N+1 is in the
+// frontmatter (here `permission_patterns:` gains an entry) MUST be
+// re-applied. Pre-fix this test fails: docs.Upsert short-circuited on
+// HashBody(in.Body), which matched between runs because the body was
+// untouched, leaving in.Structured / in.Tags / in.ContractBinding
+// silently dropped on the floor. Post-fix HashContent covers all four
+// fields, so the structured-only change drives summary.Updated == 1
+// and the live row's Structured payload reflects the new value.
+func TestRun_FrontmatterOnlyEditReseeds(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	const v1 = `---
+name: test_agent
+permission_patterns:
+  - "Read:**"
+  - "Bash:git_status"
+tags: [test]
+---
+# Test Agent
+
+Body content for the test agent.
+`
+	const v2 = `---
+name: test_agent
+permission_patterns:
+  - "Read:**"
+  - "Bash:git_status"
+  - "Bash:git_diff"
+tags: [test]
+---
+# Test Agent
+
+Body content for the test agent.
+`
+	writeFile(t, dir, "system/agents/test_agent.md", v1)
+
+	docs := document.NewMemoryStore()
+	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+	if _, err := Run(context.Background(), docs, dir, "wksp_sys", "system", now); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	// Rewrite the seed file body-identical but frontmatter-different.
+	writeFile(t, dir, "system/agents/test_agent.md", v2)
+
+	summary, err := Run(context.Background(), docs, dir, "wksp_sys", "system", now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if summary.Updated != 1 {
+		t.Errorf("second Run updated = %d, want 1 (frontmatter-only edit must reseed)", summary.Updated)
+	}
+	if summary.Skipped != 0 {
+		t.Errorf("second Run skipped = %d, want 0 (the only seed file changed)", summary.Skipped)
+	}
+
+	// The Structured payload must reflect the post-edit permission_patterns.
+	got, err := docs.GetByName(context.Background(), "", "test_agent", nil)
+	if err != nil {
+		t.Fatalf("GetByName: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(got.Structured, &payload); err != nil {
+		t.Fatalf("decode Structured: %v", err)
+	}
+	patterns, _ := payload["permission_patterns"].([]any)
+	if len(patterns) != 3 {
+		t.Fatalf("permission_patterns len = %d, want 3 (frontmatter edit landed)", len(patterns))
+	}
+	if !equalAny(patterns[2], "Bash:git_diff") {
+		t.Errorf("permission_patterns[2] = %v, want %q", patterns[2], "Bash:git_diff")
+	}
+	if got.Version != 2 {
+		t.Errorf("row version = %d, want 2 (one bump on the reseed)", got.Version)
+	}
+}
+
+// TestRun_CommentOnlyFrontmatterStillNoOp (sty_34130d76 AC4) — a YAML
+// comment-only edit between runs must NOT trigger a reseed. The YAML
+// decoder discards comments before mergeFrontmatterIntoJSON, so the
+// Structured payload (and the new HashContent over it) are identical
+// between v1 and v2. Pins option (a)'s contract that whitespace /
+// comment-only edits do not pollute version history.
+func TestRun_CommentOnlyFrontmatterStillNoOp(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	const v1 = `---
+name: test_agent
+permission_patterns:
+  - "Read:**"
+  - "Bash:git_status"
+tags: [test]
+---
+# Test Agent
+
+Body content.
+`
+	const v2 = `---
+name: test_agent
+# patterns the agent is allowed to claim
+permission_patterns:
+  - "Read:**"
+  - "Bash:git_status"
+tags: [test]
+---
+# Test Agent
+
+Body content.
+`
+	writeFile(t, dir, "system/agents/test_agent.md", v1)
+
+	docs := document.NewMemoryStore()
+	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+	if _, err := Run(context.Background(), docs, dir, "wksp_sys", "system", now); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	writeFile(t, dir, "system/agents/test_agent.md", v2)
+	summary, err := Run(context.Background(), docs, dir, "wksp_sys", "system", now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if summary.Skipped != 1 {
+		t.Errorf("second Run skipped = %d, want 1 (comment-only edit must stay no-op)", summary.Skipped)
+	}
+	if summary.Updated != 0 {
+		t.Errorf("second Run updated = %d, want 0", summary.Updated)
+	}
+
+	got, err := docs.GetByName(context.Background(), "", "test_agent", nil)
+	if err != nil {
+		t.Fatalf("GetByName: %v", err)
+	}
+	if got.Version != 1 {
+		t.Errorf("row version = %d, want 1 (comment-only edit must not bump version)", got.Version)
+	}
+}
+
 // equalAny compares the small subset of types JSON unmarshal yields here
 // (string, []any with string contents) without pulling in reflect.DeepEqual's
 // surprises around nil vs empty slices.

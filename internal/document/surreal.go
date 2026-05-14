@@ -160,7 +160,7 @@ const selectCols = "meta::id(id) AS id, workspace_id, project_id, type, name, bo
 
 // Upsert implements Store for SurrealStore.
 func (s *SurrealStore) Upsert(ctx context.Context, in UpsertInput, now time.Time) (UpsertResult, error) {
-	hash := HashBody(in.Body)
+	hash := HashContent(in.Body, in.Structured, in.Tags, in.ContractBinding)
 	candidate := Document{
 		WorkspaceID:     in.WorkspaceID,
 		ProjectID:       in.ProjectID,
@@ -237,7 +237,7 @@ func (s *SurrealStore) Create(ctx context.Context, doc Document, now time.Time) 
 	if doc.ID == "" {
 		doc.ID = NewID()
 	}
-	doc.BodyHash = HashBody([]byte(doc.Body))
+	doc.BodyHash = HashContent([]byte(doc.Body), doc.Structured, doc.Tags, doc.ContractBinding)
 	doc.Version = 1
 	doc.CreatedAt = now
 	doc.UpdatedAt = now
@@ -253,16 +253,9 @@ func (s *SurrealStore) Update(ctx context.Context, id string, fields UpdateField
 	if err != nil {
 		return Document{}, err
 	}
+	prior := doc
 	if fields.Body != nil {
-		newHash := HashBody([]byte(*fields.Body))
-		if newHash != doc.BodyHash {
-			if verr := s.writeVersion(ctx, versionFromDocument(doc)); verr != nil {
-				return Document{}, verr
-			}
-			doc.Body = *fields.Body
-			doc.BodyHash = newHash
-			doc.Version++
-		}
+		doc.Body = *fields.Body
 	}
 	if fields.Structured != nil {
 		doc.Structured = *fields.Structured
@@ -283,6 +276,18 @@ func (s *SurrealStore) Update(ctx context.Context, id string, fields UpdateField
 			return Document{}, err
 		}
 		doc.ContractBinding = fields.ContractBinding
+	}
+	// sty_34130d76: hash covers body + structured + tags + contract_binding,
+	// so a structured/tags/binding-only edit also bumps version and writes
+	// a prior-state row. Status-only edits leave the content hash
+	// unchanged and so deliberately do not bump version.
+	newHash := HashContent([]byte(doc.Body), doc.Structured, doc.Tags, doc.ContractBinding)
+	if newHash != prior.BodyHash {
+		if verr := s.writeVersion(ctx, versionFromDocument(prior)); verr != nil {
+			return Document{}, verr
+		}
+		doc.BodyHash = newHash
+		doc.Version = prior.Version + 1
 	}
 	if err := doc.Validate(); err != nil {
 		return Document{}, err

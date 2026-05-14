@@ -325,7 +325,7 @@ func (m *MemoryStore) validateBindingLocked(binding *string) error {
 func (m *MemoryStore) Upsert(ctx context.Context, in UpsertInput, now time.Time) (UpsertResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	hash := HashBody(in.Body)
+	hash := HashContent(in.Body, in.Structured, in.Tags, in.ContractBinding)
 	candidate := Document{
 		WorkspaceID:     in.WorkspaceID,
 		ProjectID:       in.ProjectID,
@@ -398,7 +398,7 @@ func (m *MemoryStore) Create(ctx context.Context, doc Document, now time.Time) (
 	if _, exists := m.rows[doc.ID]; exists {
 		return Document{}, fmt.Errorf("document: id %q already exists", doc.ID)
 	}
-	doc.BodyHash = HashBody([]byte(doc.Body))
+	doc.BodyHash = HashContent([]byte(doc.Body), doc.Structured, doc.Tags, doc.ContractBinding)
 	doc.Version = 1
 	doc.CreatedAt = now
 	doc.UpdatedAt = now
@@ -414,14 +414,9 @@ func (m *MemoryStore) Update(ctx context.Context, id string, fields UpdateFields
 	if !ok || !inDocMemberships(doc.WorkspaceID, memberships) {
 		return Document{}, ErrNotFound
 	}
+	prior := doc
 	if fields.Body != nil {
-		newHash := HashBody([]byte(*fields.Body))
-		if newHash != doc.BodyHash {
-			m.appendVersionLocked(doc)
-			doc.Body = *fields.Body
-			doc.BodyHash = newHash
-			doc.Version++
-		}
+		doc.Body = *fields.Body
 	}
 	if fields.Structured != nil {
 		doc.Structured = *fields.Structured
@@ -442,6 +437,16 @@ func (m *MemoryStore) Update(ctx context.Context, id string, fields UpdateFields
 			return Document{}, err
 		}
 		doc.ContractBinding = fields.ContractBinding
+	}
+	// sty_34130d76: hash covers body + structured + tags + contract_binding;
+	// any of those mutating bumps version and writes a prior-state row.
+	// Status-only edits leave the content hash unchanged and so
+	// deliberately do not bump version.
+	newHash := HashContent([]byte(doc.Body), doc.Structured, doc.Tags, doc.ContractBinding)
+	if newHash != prior.BodyHash {
+		m.appendVersionLocked(prior)
+		doc.BodyHash = newHash
+		doc.Version = prior.Version + 1
 	}
 	if err := doc.Validate(); err != nil {
 		return Document{}, err

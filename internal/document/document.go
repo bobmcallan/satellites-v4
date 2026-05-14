@@ -7,8 +7,10 @@ package document
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -244,11 +246,61 @@ func versionFromDocument(d Document) DocumentVersion {
 	}
 }
 
-// HashBody returns a sha256 content hash prefixed with "sha256:"; used as
-// the equality test for Upsert's idempotence check.
+// HashBody returns a sha256 content hash prefixed with "sha256:" over
+// the body bytes alone. Retained as a thin shim over HashContent for
+// the small set of callers (document-version diff helpers, isolated
+// hash tests) that genuinely only need body coverage. The Upsert /
+// Create equality check for re-seed convergence calls HashContent so
+// frontmatter-only edits don't slip past as no-ops (sty_34130d76).
 func HashBody(body []byte) string {
-	sum := sha256.Sum256(body)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return HashContent(body, nil, nil, nil)
+}
+
+// HashContent returns a sha256 hash, prefixed "sha256:", over the
+// canonical concatenation of every UpsertInput field that re-seed must
+// notice when it changes: body, structured (frontmatter JSON), tags,
+// and contract_binding. The bytes are separated by 0x00 so a body
+// ending "x" with structured "y" cannot collide with body "xy" and
+// empty structured. Tags are sorted before serialisation so map-order
+// jitter in the parsed frontmatter never flips the hash. The
+// representation is deliberately stable across Go versions because
+// `json.Marshal` of a `map[string]any` emits keys in sorted order.
+//
+// sty_34130d76: extending the hash from body-only to body+frontmatter
+// is the root-cause fix for "frontmatter-only seed edits silently fail
+// to reseed because BodyHash equality short-circuits the upsert".
+func HashContent(body, structured []byte, tags []string, contractBinding *string) string {
+	h := sha256.New()
+	h.Write(body)
+	h.Write([]byte{0x00})
+
+	// Structured is the JSON byte slice the seed loader's
+	// mergeFrontmatterIntoJSON produced via `json.Marshal` of a
+	// `map[string]any` — encoding/json emits keys in sorted order, so
+	// the bytes are already canonical at construction time. Hash
+	// them as-is rather than re-marshalling: re-marshalling would
+	// risk silent rewrites of number representations and would lose
+	// fidelity for any caller that feeds Structured bytes the parser
+	// did not produce.
+	h.Write(structured)
+	h.Write([]byte{0x00})
+
+	if len(tags) > 0 {
+		sorted := make([]string, len(tags))
+		copy(sorted, tags)
+		sort.Strings(sorted)
+		if b, err := json.Marshal(sorted); err == nil {
+			h.Write(b)
+		}
+	}
+	h.Write([]byte{0x00})
+
+	if contractBinding != nil {
+		h.Write([]byte(*contractBinding))
+	}
+
+	sum := h.Sum(nil)
+	return "sha256:" + hex.EncodeToString(sum)
 }
 
 // StringPtr returns nil for the empty string, otherwise a pointer to a

@@ -14,6 +14,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/agent/worker"
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
 	"github.com/bobmcallan/satellites/internal/cliexit"
+	"github.com/bobmcallan/satellites/internal/clientdaemon"
 	"github.com/bobmcallan/satellites/internal/config"
 )
 
@@ -47,6 +48,8 @@ func newTaskRunCmd() *cobra.Command {
 	}
 	c.Flags().Duration("heartbeat", heartbeatInterval, "Lifecycle heartbeat cadence.")
 	c.Flags().Bool("follow", false, "Subscribe to the task_log SSE stream and print lifecycle markers to stdout.")
+	c.Flags().Bool("async", false, "Enqueue into the local serve daemon and exit; subprocess survives CLI exit.")
+	c.Flags().String("socket", clientdaemon.DefaultSocketPath(), "Daemon unix socket (defaults to the daemon's canonical path).")
 	return c
 }
 
@@ -54,6 +57,10 @@ func newTaskRunCmd() *cobra.Command {
 // failure; nil on OutcomeSuccess.
 func runTaskCmd(cmd *cobra.Command, args []string) error {
 	taskID := args[0]
+
+	if async, _ := cmd.Flags().GetBool("async"); async {
+		return runTaskAsync(cmd, taskID)
+	}
 
 	disableTelemetry := os.Getenv(telemetryEnvSkip) == "1"
 

@@ -225,7 +225,7 @@ func TestRunCommitHotPath_HappyPath(t *testing.T) {
 	s.setAPIResp("ledger_append", `{"id":"ldg_xxx"}`)
 	s.setAPIResp("task_update", `{"task_id":"task_commit","status":"closed","outcome":"success"}`)
 
-	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{RepoPath: "/repo", BranchTemplate: "agent-{task_id}-from-{base_sha}"})
 
 	trigger, _ := json.Marshal(map[string]string{"branch": "agent-task_dev-from-833a28e"})
 	ti := taskInfo{
@@ -289,7 +289,7 @@ func TestRunCommitHotPath_InferBranchFromChain(t *testing.T) {
 	s.setAPIResp("ledger_append", `{"id":"ldg_y"}`)
 	s.setAPIResp("task_update", `{}`)
 
-	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{RepoPath: "/repo", BranchTemplate: "agent-{task_id}-from-{base_sha}"})
 
 	ti := taskInfo{
 		ID: "task_commit", StoryID: "sty_x", ProjectID: "proj_x",
@@ -364,7 +364,7 @@ func TestRunMergeToMainHotPath_ReleasePass(t *testing.T) {
 	s := newHotpathStub(t)
 	seedMergeToMainHappyStubs(t, s, "deadbeef")
 
-	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{RepoPath: "/repo", BranchTemplate: "agent-{task_id}-from-{base_sha}"})
 	outcome, err := runMergeToMainTask(t, cc)
 	require.NoError(t, err)
 	assert.Equal(t, OutcomeSuccess, outcome)
@@ -417,7 +417,7 @@ func TestRunMergeToMainHotPath_GHTimeout(t *testing.T) {
 	s.ghOutputs["run watch"] = ""
 	s.ghErrors["run watch"] = context.DeadlineExceeded
 
-	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{RepoPath: "/repo", BranchTemplate: "agent-{task_id}-from-{base_sha}"})
 	outcome, err := runMergeToMainTask(t, cc)
 	require.Error(t, err)
 	assert.Equal(t, OutcomeFailure, outcome)
@@ -444,7 +444,7 @@ func TestRunMergeToMainHotPath_GHFailure(t *testing.T) {
 	s.ghOutputs["run watch"] = "✗ release deploy · failed\n12345 · failure\n"
 	s.ghErrors["run watch"] = errors.New("exit status 1")
 
-	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{RepoPath: "/repo", BranchTemplate: "agent-{task_id}-from-{base_sha}"})
 	outcome, err := runMergeToMainTask(t, cc)
 	require.Error(t, err)
 	assert.Equal(t, OutcomeFailure, outcome)
@@ -472,7 +472,7 @@ func TestRunMergeToMainHotPath_PprodConvergeTimeout(t *testing.T) {
 	// never matches the pushed SHA.
 	s.pprodCommits = []string{"stale-only"}
 
-	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{RepoPath: "/repo", BranchTemplate: "agent-{task_id}-from-{base_sha}"})
 	outcome, err := runMergeToMainTask(t, cc)
 	require.Error(t, err)
 	assert.Equal(t, OutcomeFailure, outcome)
@@ -543,17 +543,80 @@ func TestInferDevelopTaskID_LatestSuccessWins(t *testing.T) {
 }
 
 // TestResolveLocalBranch_AmbiguousFails: when more than one local
-// branch matches the agent-<dev>-from-* glob, the runner refuses to
+// branch matches the template-derived glob, the runner refuses to
 // guess.
 func TestResolveLocalBranch_AmbiguousFails(t *testing.T) {
 	s := newHotpathStub(t)
 	s.gitOutputs["branch --list agent-task_dev-from-*"] =
 		"  agent-task_dev-from-aaaaaaa\n  agent-task_dev-from-bbbbbbb\n"
 
-	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{RepoPath: "/repo", BranchTemplate: "agent-{task_id}-from-{base_sha}"})
 	_, err := cc.resolveLocalBranch(context.Background(), "task_dev")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "multiple matches")
+}
+
+// TestResolveLocalBranch_TemplateParameterised: the resolver derives
+// its glob from cfg.BranchTemplate, so swapping templates (client- /
+// agent- / dev- / no `from-` segment) must just work. Single source of
+// truth for writer and reader — sty_2b24ac64.
+func TestResolveLocalBranch_TemplateParameterised(t *testing.T) {
+	cases := []struct {
+		name     string
+		template string
+		taskID   string
+		listKey  string // joined args fed to gitOutputs
+		listOut  string // raw `git branch --list` stdout
+		want     string
+	}{
+		{
+			name:     "client_prefix_install_payload",
+			template: "client-{task_id}-from-{base_sha}",
+			taskID:   "task_997de08c",
+			listKey:  "branch --list client-task_997de08c-from-*",
+			listOut:  "  client-task_997de08c-from-833a28e\n",
+			want:     "client-task_997de08c-from-833a28e",
+		},
+		{
+			name:     "agent_prefix_legacy_compat",
+			template: "agent-{task_id}-from-{base_sha}",
+			taskID:   "task_dev",
+			listKey:  "branch --list agent-task_dev-from-*",
+			listOut:  "  agent-task_dev-from-833a28e\n",
+			want:     "agent-task_dev-from-833a28e",
+		},
+		{
+			name:     "dev_prefix_no_from_segment",
+			template: "dev-{task_id}-{base_sha}",
+			taskID:   "task_xyz",
+			listKey:  "branch --list dev-task_xyz-*",
+			listOut:  "* dev-task_xyz-deadbeef\n",
+			want:     "dev-task_xyz-deadbeef",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newHotpathStub(t)
+			s.gitOutputs[tc.listKey] = tc.listOut
+			cc := s.client(config.AgentConfig{RepoPath: "/repo", BranchTemplate: tc.template})
+			got, err := cc.resolveLocalBranch(context.Background(), tc.taskID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestResolveLocalBranch_EmptyTemplateErrors: an empty BranchTemplate
+// is a misconfiguration we surface before calling git, not a fallback
+// we tolerate. `git branch --list -from-*` would match every branch
+// in the repo — that failure mode must never reach the gitRunner.
+func TestResolveLocalBranch_EmptyTemplateErrors(t *testing.T) {
+	s := newHotpathStub(t)
+	cc := s.client(config.AgentConfig{RepoPath: "/repo", BranchTemplate: ""})
+	_, err := cc.resolveLocalBranch(context.Background(), "task_dev")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "branch_template empty")
+	assert.Empty(t, s.gitCmds, "resolver must not call git when template is empty")
 }
 
 // TestHotPath_RoutesThroughAPIv1 asserts that every substrate call the
@@ -577,7 +640,7 @@ func TestHotPath_RoutesThroughAPIv1(t *testing.T) {
 	s.setAPIResp("ledger_append", `{"id":"ldg_v1"}`)
 	s.setAPIResp("task_update", `{}`)
 
-	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
+	cc := s.client(config.AgentConfig{RepoPath: "/repo", BranchTemplate: "agent-{task_id}-from-{base_sha}"})
 
 	ti := taskInfo{
 		ID: "task_commit", StoryID: "sty_v1", ProjectID: "proj_x",

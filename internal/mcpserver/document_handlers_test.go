@@ -632,7 +632,7 @@ func TestAgentListWrapper_SystemScopeWorkspaceBlind(t *testing.T) {
 	if _, err := s.deps.Workspaces.Create(ctx, "user_other", "other-tier", time.Now().UTC()); err != nil {
 		t.Fatalf("other ws: %v", err)
 	}
-	for _, name := range []string{"developer_agent", "releaser_agent", "story_close_agent"} {
+	for _, name := range []string{"developer_agent", "releaser_agent"} {
 		if _, err := s.deps.Documents.Create(ctx, document.Document{
 			Type:  document.TypeAgent,
 			Scope: document.ScopeSystem,
@@ -648,8 +648,8 @@ func TestAgentListWrapper_SystemScopeWorkspaceBlind(t *testing.T) {
 		"scope": "system",
 	}))
 	rows := decodeArray(t, res)
-	if len(rows) != 3 {
-		t.Errorf("agent_list(scope=system) = %d rows, want 3 (developer_agent, releaser_agent, story_close_agent)", len(rows))
+	if len(rows) != 2 {
+		t.Errorf("agent_list(scope=system) = %d rows, want 2 (developer_agent, releaser_agent)", len(rows))
 	}
 }
 

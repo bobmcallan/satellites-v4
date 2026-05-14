@@ -29,12 +29,14 @@ import (
 // storyCloseFixtures collects the per-test stable identity rows the
 // chain-mint helpers need.
 type storyCloseFixtures struct {
-	baseURL          string
-	mcpURL           string
-	bearer           string
-	projectID        string
-	storyCloseAgent  string
-	storyReviewAgent string
+	baseURL              string
+	mcpURL               string
+	bearer               string
+	projectID            string
+	developerAgent       string
+	storyReviewAgent     string
+	developmentReviewer  string
+	releaserAgent        string
 }
 
 // TestStoryCloseMCP boots the full container stack once and runs the
@@ -96,23 +98,36 @@ func TestStoryCloseMCP(t *testing.T) {
 		t.Fatalf("project_add returned no id: %+v", createResp)
 	}
 
+	// developer_agent + releaser_agent are workspace-tier (wksp_5b3257d1)
+	// in the real seed (sty_a12e0f5d). The api-key bearer here is admin
+	// only of the auto-minted system workspace, so those rows aren't
+	// reachable via document_list. Mint system-scope fixture agents that
+	// deliver contract:develop / contract:push / contract:merge_to_main
+	// so the chain-mint helpers can author tasks against them.
+	developerAgent := ensureSystemAgentFixture(t, ctx, baseURL, bearer, "developer_agent_fixture",
+		[]string{"contract:plan", "contract:develop"}, nil)
+	releaserAgent := ensureSystemAgentFixture(t, ctx, baseURL, bearer, "releaser_agent_fixture",
+		[]string{"contract:push", "contract:merge_to_main"}, nil)
+
 	agentArr := callToolArray(t, ctx, mcpURL, bearer, "document_list", map[string]any{
 		"type":  "agent",
 		"limit": 50,
 	})
-	closeAgent := agentIDFromList(agentArr, "story_close_agent")
 	reviewAgent := agentIDFromList(agentArr, "story_reviewer")
-	if closeAgent == "" || reviewAgent == "" {
-		t.Fatalf("agents not resolvable: close=%q review=%q (agents=%+v)", closeAgent, reviewAgent, agentArr)
+	devReviewer := agentIDFromList(agentArr, "development_reviewer")
+	if developerAgent == "" || reviewAgent == "" {
+		t.Fatalf("agents not resolvable: developer=%q review=%q (agents=%+v)", developerAgent, reviewAgent, agentArr)
 	}
 
 	ff := &storyCloseFixtures{
-		baseURL:          baseURL,
-		mcpURL:           mcpURL,
-		bearer:           bearer,
-		projectID:        projectID,
-		storyCloseAgent:  closeAgent,
-		storyReviewAgent: reviewAgent,
+		baseURL:             baseURL,
+		mcpURL:              mcpURL,
+		bearer:              bearer,
+		projectID:           projectID,
+		developerAgent:      developerAgent,
+		storyReviewAgent:    reviewAgent,
+		developmentReviewer: devReviewer,
+		releaserAgent:       releaserAgent,
 	}
 
 	t.Run("PassPath", func(t *testing.T) { assertStoryClosePassPath(t, ctx, ff) })
@@ -121,6 +136,129 @@ func TestStoryCloseMCP(t *testing.T) {
 	t.Run("FailStoryReviewFail", func(t *testing.T) { assertStoryCloseFailVerdictFail(t, ctx, ff) })
 	t.Run("FailChainOpenWork", func(t *testing.T) { assertStoryCloseFailOpenWork(t, ctx, ff) })
 	t.Run("FailTemplateFieldMissing", func(t *testing.T) { assertStoryCloseFailTemplateField(t, ctx, ff) })
+	t.Run("LifecycleE2E", func(t *testing.T) { assertStoryCloseLifecycleE2E(t, ctx, ff) })
+}
+
+// TestStoryCloseLifecycleE2E (AC6) is a separate top-level entry point
+// that exercises the same new-chain E2E flow against a fresh
+// testcontainers stack. Implementation lives in
+// assertStoryCloseLifecycleE2E (shared with the LifecycleE2E subtest of
+// TestStoryCloseMCP so the heavy container boot amortises in normal
+// CI). The standalone form lets `go test -run TestStoryCloseLifecycleE2E`
+// drive the new-chain assertion in isolation.
+func TestStoryCloseLifecycleE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping testcontainers TestStoryCloseLifecycleE2E in -short mode")
+	}
+	// Reuse the same boot path as TestStoryCloseMCP. Each call mints
+	// its own network + surreal + server, so this test runs
+	// stand-alone.
+	ctx, cancel := context.WithTimeout(context.Background(), 360*time.Second)
+	defer cancel()
+
+	net, err := network.New(ctx)
+	if err != nil {
+		t.Fatalf("network: %v", err)
+	}
+	t.Cleanup(func() { _ = net.Remove(ctx) })
+
+	surreal, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:          "surrealdb/surrealdb:v3.0.0",
+			ExposedPorts:   []string{"8000/tcp"},
+			Cmd:            []string{"start", "--user", "root", "--pass", "root"},
+			Networks:       []string{net.Name},
+			NetworkAliases: map[string][]string{net.Name: {"surrealdb"}},
+			WaitingFor:     wait.ForListeningPort("8000/tcp").WithStartupTimeout(90 * time.Second),
+		},
+		Started: true,
+	})
+	if err != nil {
+		t.Fatalf("surreal: %v", err)
+	}
+	t.Cleanup(func() { _ = surreal.Terminate(ctx) })
+
+	const bearer = "key_lifecycle_e2e"
+	baseURL, stop := startServerContainerWithOptions(t, ctx, startOptions{
+		Network: net.Name,
+		Env: map[string]string{
+			"SATELLITES_DB_DSN":   "ws://root:root@surrealdb:8000/rpc/satellites/satellites",
+			"SATELLITES_API_KEYS": bearer,
+			"SATELLITES_DOCS_DIR": "/app/docs",
+		},
+	})
+	defer stop()
+
+	mcpURL := baseURL + "/mcp"
+	rpcInit(t, ctx, mcpURL, bearer)
+
+	createResp := callAPIv1(t, ctx, baseURL, bearer, "project_add", map[string]any{
+		"name": "story-close-lifecycle-e2e",
+	})
+	projectID, _ := createResp["id"].(string)
+	if projectID == "" {
+		t.Fatalf("project_add returned no id: %+v", createResp)
+	}
+
+	developerAgent := ensureSystemAgentFixture(t, ctx, baseURL, bearer, "developer_agent_fixture",
+		[]string{"contract:plan", "contract:develop"}, nil)
+	releaserAgent := ensureSystemAgentFixture(t, ctx, baseURL, bearer, "releaser_agent_fixture",
+		[]string{"contract:push", "contract:merge_to_main"}, nil)
+
+	agentArr := callToolArray(t, ctx, mcpURL, bearer, "document_list", map[string]any{
+		"type":  "agent",
+		"limit": 50,
+	})
+	reviewAgent := agentIDFromList(agentArr, "story_reviewer")
+	devReviewer := agentIDFromList(agentArr, "development_reviewer")
+	if developerAgent == "" || reviewAgent == "" || releaserAgent == "" {
+		t.Fatalf("agents not resolvable: developer=%q review=%q releaser=%q",
+			developerAgent, reviewAgent, releaserAgent)
+	}
+
+	ff := &storyCloseFixtures{
+		baseURL:             baseURL,
+		mcpURL:              mcpURL,
+		bearer:              bearer,
+		projectID:           projectID,
+		developerAgent:      developerAgent,
+		storyReviewAgent:    reviewAgent,
+		developmentReviewer: devReviewer,
+		releaserAgent:       releaserAgent,
+	}
+	assertStoryCloseLifecycleE2E(t, ctx, ff)
+}
+
+// ensureSystemAgentFixture POSTs /api/v1/agent/add for a system-scope
+// agent that delivers / reviews the supplied actions, and returns the
+// created agent id. The api-key bearer is admin of the system
+// workspace (see cmd/satellites-server/main.go), so the row is
+// reachable through the same caller's subsequent document_list calls.
+// The fixture name is used as the visible doc name; pass distinct
+// names per test so the row is unambiguous.
+func ensureSystemAgentFixture(t *testing.T, ctx context.Context, baseURL, bearer, name string, delivers, reviews []string) string {
+	t.Helper()
+	settings := map[string]any{
+		"permission_patterns": []string{"Read:**"},
+	}
+	if len(delivers) > 0 {
+		settings["delivers"] = delivers
+	}
+	if len(reviews) > 0 {
+		settings["reviews"] = reviews
+	}
+	structured, _ := json.Marshal(settings)
+	resp := callAPIv1(t, ctx, baseURL, bearer, "agent_add", map[string]any{
+		"scope":      "system",
+		"name":       name,
+		"body":       "fixture agent for tests/integration/story_close_mcp_test.go",
+		"structured": string(structured),
+	})
+	id, _ := resp["id"].(string)
+	if id == "" {
+		t.Fatalf("agent_add(%q) returned no id: %+v", name, resp)
+	}
+	return id
 }
 
 // mintStoryForClose creates an infrastructure-category story and (when
@@ -169,10 +307,10 @@ func fillTemplateFields(t *testing.T, ctx context.Context, ff *storyCloseFixture
 func addAndCloseWorkTask(t *testing.T, ctx context.Context, ff *storyCloseFixtures, storyID, prompt string) string {
 	t.Helper()
 	resp := callTool(t, ctx, ff.mcpURL, ff.bearer, "task_add", map[string]any{
-		"agent_id": ff.storyCloseAgent,
+		"agent_id": ff.developerAgent,
 		"story_id": storyID,
 		"prompt":   prompt,
-		"action":   "contract:story_close",
+		"action":   "contract:develop",
 	})
 	tid, _ := resp["task_id"].(string)
 	if tid == "" {
@@ -194,10 +332,10 @@ func addAndCloseWorkTask(t *testing.T, ctx context.Context, ff *storyCloseFixtur
 func addPublishedWorkTask(t *testing.T, ctx context.Context, ff *storyCloseFixtures, storyID string) string {
 	t.Helper()
 	resp := callTool(t, ctx, ff.mcpURL, ff.bearer, "task_add", map[string]any{
-		"agent_id": ff.storyCloseAgent,
+		"agent_id": ff.developerAgent,
 		"story_id": storyID,
 		"prompt":   "open work for FAIL path",
-		"action":   "contract:story_close",
+		"action":   "contract:develop",
 	})
 	tid, _ := resp["task_id"].(string)
 	if tid == "" {
@@ -454,4 +592,139 @@ func assertStoryCloseFailTemplateField(t *testing.T, ctx context.Context, ff *st
 		t.Errorf("expected template:<field>:missing in gaps, got %+v", gapCodes(resp))
 	}
 	assertStoryNotClosed(t, ctx, ff, storyID)
+}
+
+// closeWorkTask mints a work task and closes it outcome=success. The
+// chain helpers below use this to walk each lifecycle phase.
+func closeWorkTask(t *testing.T, ctx context.Context, ff *storyCloseFixtures, agentID, storyID, action, kind, prompt string) string {
+	t.Helper()
+	args := map[string]any{
+		"agent_id": agentID,
+		"story_id": storyID,
+		"prompt":   prompt,
+		"action":   action,
+	}
+	if kind != "" {
+		args["kind"] = kind
+	}
+	resp := callTool(t, ctx, ff.mcpURL, ff.bearer, "task_add", args)
+	tid, _ := resp["task_id"].(string)
+	if tid == "" {
+		t.Fatalf("task_add(%s/%s) returned no task_id: %+v", action, kind, resp)
+	}
+	closeResp := callTool(t, ctx, ff.mcpURL, ff.bearer, "task_update", map[string]any{
+		"id":      tid,
+		"status":  "closed",
+		"outcome": "success",
+	})
+	if got, _ := closeResp["status"].(string); got != "closed" {
+		t.Fatalf("task_update(%s) did not close: %+v", tid, closeResp)
+	}
+	return tid
+}
+
+// appendVerdictRowForTask is closeWorkTask's verdict-shaped sibling
+// (kind:verdict ledger row tagged with the just-closed review task).
+// Distinct from `appendVerdictRow` (used by the FAIL-path subtests)
+// because the lifecycle E2E path needs both the verdict:accepted shape
+// (for develop_review) and verdict:pass (for story_review pre-ship).
+func appendVerdictRowForTask(t *testing.T, ctx context.Context, ff *storyCloseFixtures, storyID, taskID, verdict string) {
+	t.Helper()
+	_ = callTool(t, ctx, ff.mcpURL, ff.bearer, "ledger_append", map[string]any{
+		"project_id": ff.projectID,
+		"story_id":   storyID,
+		"type":       "decision",
+		"content":    `{"rationale":"lifecycle-e2e verdict"}`,
+		"tags":       []string{"kind:verdict", "task_id:" + taskID, "verdict:" + verdict},
+	})
+}
+
+// assertStoryCloseLifecycleE2E (AC6) walks the full new chain end-to-
+// end against the running testcontainers stack, then calls the
+// mechanical `story_close` MCP verb and asserts the PASS contract:
+// status=pass + non-empty evidence_id + story_get status=done +
+// ledger contains a kind:close-evidence row.
+//
+// Chain phase ordering walked here mirrors the new workflow:
+//
+//	plan          (work, closed)
+//	develop       (work, closed)
+//	develop_review(review on contract:develop, closed + verdict:accepted)
+//	story_review  (work on contract:story_review, closed + verdict:pass)
+//	push          (work, closed)
+//	merge_to_main (work, closed)
+//	push (main)   (work, closed)
+//
+// Each step uses task_add with the matching agent + action +
+// (where applicable) kind, then task_update(status=closed,
+// outcome=success). The review steps additionally append a
+// kind:verdict ledger row so the mechanical close verb's gate sees
+// the verdict tag.
+func assertStoryCloseLifecycleE2E(t *testing.T, ctx context.Context, ff *storyCloseFixtures) {
+	t.Helper()
+	storyID := mintStoryForClose(t, ctx, ff, "lifecycle-e2e", true)
+
+	// plan
+	_ = closeWorkTask(t, ctx, ff, ff.developerAgent, storyID, "contract:plan", "", "plan for lifecycle-e2e")
+
+	// develop + develop_review (accepted).
+	// development_reviewer reviews contract:develop (story_reviewer
+	// does not, so use the matching reviewer to avoid
+	// agent_cannot_review).
+	devTaskID := closeWorkTask(t, ctx, ff, ff.developerAgent, storyID, "contract:develop", "", "develop for lifecycle-e2e")
+	devReviewAgent := ff.developmentReviewer
+	if devReviewAgent == "" {
+		devReviewAgent = ff.storyReviewAgent
+	}
+	devReviewID := closeWorkTask(t, ctx, ff, devReviewAgent, storyID, "contract:develop", "review", "develop_review for lifecycle-e2e")
+	appendVerdictRowForTask(t, ctx, ff, storyID, devReviewID, "accepted")
+	_ = devTaskID
+
+	// story_review (pre-ship gate, kind=review, verdict:pass — same
+	// shape the slice-1 PASS subtest exercises so the mechanical
+	// close verb's existing gate accepts the chain).
+	srReviewID := closeWorkTask(t, ctx, ff, ff.storyReviewAgent, storyID, "contract:story_review", "review", "story_review for lifecycle-e2e")
+	appendVerdictRowForTask(t, ctx, ff, storyID, srReviewID, "pass")
+
+	// push, merge_to_main, push_main (execution-shape, no reviewer).
+	// Use releaser_agent when available, else developer_agent for
+	// fixture-only chain shaping.
+	releaser := ff.releaserAgent
+	if releaser == "" {
+		releaser = ff.developerAgent
+	}
+	_ = closeWorkTask(t, ctx, ff, releaser, storyID, "contract:push", "", "push for lifecycle-e2e")
+	_ = closeWorkTask(t, ctx, ff, releaser, storyID, "contract:merge_to_main", "", "merge_to_main for lifecycle-e2e")
+	_ = closeWorkTask(t, ctx, ff, releaser, storyID, "contract:push", "", "push_main for lifecycle-e2e")
+
+	// Mechanical close verb.
+	resp := callStoryClose(t, ctx, ff, storyID)
+	if status, _ := resp["status"].(string); status != "pass" {
+		t.Fatalf("status = %v, want pass; resp=%+v", resp["status"], resp)
+	}
+	if id, _ := resp["evidence_id"].(string); id == "" {
+		t.Errorf("evidence_id missing on pass: %+v", resp)
+	}
+	if got, _ := resp["story_status"].(string); got != "done" {
+		t.Errorf("story_status = %q, want done", got)
+	}
+
+	getResp := callTool(t, ctx, ff.mcpURL, ff.bearer, "story_get", map[string]any{"id": storyID})
+	st, _ := getResp["story"].(map[string]any)
+	if got, _ := st["status"].(string); got != "done" {
+		t.Errorf("story_get status = %q, want done after lifecycle-e2e PASS", got)
+	}
+
+	rawResp := callToolRaw(t, ctx, ff.mcpURL, ff.bearer, "ledger_list", map[string]any{
+		"project_id": ff.projectID,
+		"story_id":   storyID,
+		"tags":       []any{"kind:close-evidence"},
+		"limit":      10,
+	})
+	text := extractToolText(t, rawResp)
+	var rows []map[string]any
+	_ = json.Unmarshal([]byte(text), &rows)
+	if len(rows) == 0 {
+		t.Errorf("lifecycle-e2e: expected at least one kind:close-evidence row, got none")
+	}
 }

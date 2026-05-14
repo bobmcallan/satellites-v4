@@ -130,9 +130,9 @@ type taskInfo struct {
 	Description string `json:"description"`
 	// Trigger is the orchestrator-supplied JSON blob the hot-path
 	// runners consult when present — push / merge honour `branch` +
-	// `sha`, story_close honours `resolution`. Empty when the task
-	// was minted without an explicit trigger payload (the chain-
-	// inference path handles that case). sty_4994caa3.
+	// `sha`. Empty when the task was minted without an explicit
+	// trigger payload (the chain-inference path handles that case).
+	// sty_4994caa3.
 	Trigger json.RawMessage `json:"trigger,omitempty"`
 }
 
@@ -460,8 +460,8 @@ func buildSpawnMCPConfigJSON(cfg config.AgentConfig) (string, error) {
 // sty_3b3e4e66 (Layer A): the resolved contract's dispatch_class is
 // fetched and logged on every dispatch. The in-process hot-path
 // runner that consumes this field — bypassing the claude subprocess
-// for "hot" contracts (push, merge_to_main, story_close) — lands in
-// the Layer B+C follow-up. This commit ships only the data plumbing
+// for "hot" contracts (push, merge_to_main) — lands in the
+// Layer B+C follow-up. This commit ships only the data plumbing
 // so contracts can declare their dispatch class without changing the
 // runtime selector. Layer B will branch on ci.dispatchClass() here.
 func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome, error) {
@@ -485,11 +485,11 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 	}
 
 	// sty_4994caa3 Layer B — branch on the contract's dispatch_class.
-	// "hot" contracts (push, merge_to_main, story_close) execute
-	// in-process via runHotPath, skipping the seven-step claude
-	// subprocess that the heavy path runs. errHotUnimplemented falls
-	// back to the heavy path so a misclassified contract degrades
-	// gracefully rather than failing the dispatch.
+	// "hot" contracts (push, merge_to_main) execute in-process via
+	// runHotPath, skipping the seven-step claude subprocess that
+	// the heavy path runs. errHotUnimplemented falls back to the
+	// heavy path so a misclassified contract degrades gracefully
+	// rather than failing the dispatch.
 	dispatchClass := ci.dispatchClass()
 	if c.logger != nil {
 		c.logger.Debug().

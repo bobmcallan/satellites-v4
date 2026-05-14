@@ -27,7 +27,6 @@ func TestContractBodies_HaveReviewPolicySection(t *testing.T) {
 		path string
 	}{
 		{"plan", filepath.Join(seedDir, "system", "contracts", "plan.md")},
-		{"story_close", filepath.Join(seedDir, "system", "contracts", "story_close.md")},
 		{"story_review", filepath.Join(seedDir, "system", "contracts", "story_review.md")},
 		{"develop", filepath.Join(seedDir, "wksp_5b3257d1", "contracts", "develop.md")},
 		{"push", filepath.Join(seedDir, "wksp_5b3257d1", "contracts", "push.md")},

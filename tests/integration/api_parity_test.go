@@ -270,9 +270,9 @@ func bootstrapParityFixtures(t *testing.T, ctx context.Context, ff *parityFixtur
 		"type":  "agent",
 		"limit": 50,
 	})
-	devAgentID := agentIDFromList(agentArr, "story_close_agent")
+	devAgentID := agentIDFromList(agentArr, "developer_agent")
 	if devAgentID == "" {
-		t.Fatalf("story_close_agent not found via document_list; resp=%+v", agentArr)
+		t.Fatalf("developer_agent not found via document_list; resp=%+v", agentArr)
 	}
 	ff.systemAgentID = devAgentID
 
@@ -280,7 +280,7 @@ func bootstrapParityFixtures(t *testing.T, ctx context.Context, ff *parityFixtur
 		"agent_id": devAgentID,
 		"story_id": sid,
 		"prompt":   "parity test fixture",
-		"action":   "contract:story_close",
+		"action":   "contract:develop",
 	})
 	tid, _ := taskResp["task_id"].(string)
 	if tid == "" {
@@ -392,7 +392,7 @@ func buildParityCases() []parityCase {
 		{
 			name: "document_get",
 			args: func(_ *testing.T, _ context.Context, ff *parityFixtures) map[string]any {
-				return map[string]any{"name": "story_close_agent", "type": "agent"}
+				return map[string]any{"name": "developer_agent", "type": "agent"}
 			},
 		},
 		{
@@ -419,7 +419,7 @@ func buildParityCases() []parityCase {
 					"agent_id": devAgentID,
 					"story_id": ff.storyID,
 					"prompt":   "fixture for task_update",
-					"action":   "contract:story_close",
+					"action":   "contract:develop",
 				})
 				tid, _ := taskResp["task_id"].(string)
 				_ = callTool(t, ctx, ff.mcpURL, ff.satBearer, "task_claim", map[string]any{})
@@ -433,7 +433,7 @@ func buildParityCases() []parityCase {
 					"agent_id": ff.systemAgentID,
 					"story_id": ff.storyID,
 					"prompt":   "parity task_add",
-					"action":   "contract:story_close",
+					"action":   "contract:develop",
 				}
 			},
 		},
@@ -444,7 +444,7 @@ func buildParityCases() []parityCase {
 					"agent_id": ff.systemAgentID,
 					"story_id": ff.storyID,
 					"prompt":   "parity task_plan",
-					"action":   "contract:story_close",
+					"action":   "contract:develop",
 					"origin":   "story_stage",
 				}
 			},

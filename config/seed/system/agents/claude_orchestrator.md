@@ -193,10 +193,12 @@ feedback to address, not friction to bypass. Citing
 ### Plan submission
 
 The flow when a user says `implement story_xxx`. The full
-phase ordering — `plan → (develop → review → iterate) →
-commit → push → close` — lives in the lifecycle workflow
-document (sibling `sty_e0c3d615`); the steps below are the
-per-phase orchestrator mechanics.
+phase ordering — `plan → develop → develop_review →
+story_review → [iterate develop on FAIL] → push →
+merge_to_main → push_main → story_close [verb]` —
+lives in the lifecycle workflow document (sibling
+`sty_e0c3d615`); the steps below are the per-phase
+orchestrator mechanics.
 
 1. `task_walk(story_id=…)` — confirm the story has no in-flight
    work, or read where the chain currently sits.
@@ -230,17 +232,48 @@ per-phase orchestrator mechanics.
    task) via `task_add` over MCP, and dispatch it via another
    `task run`. Continue until the chain is complete.
 
+### Story-review pre-ship gate (the iteration loop)
+
+Between the develop+develop_review acceptance and the push
+step, the orchestrator mints one `kind=work
+action=contract:story_review` task and dispatches it to
+`story_reviewer`. The reviewer reads the full task chain via
+`task_walk`, dereferences cited ledger rows, applies the
+`story_review` contract rubric, and writes one ledger row
+tagged `kind:verdict, task_id:<this_task>, verdict:pass |
+verdict:fail`.
+
+- On `verdict:pass`, the orchestrator advances to the push
+  contract. The mechanical `story_close` MCP verb (slice 1,
+  `sty_b97dda00`) consults the verdict tag structurally at
+  close time.
+- On `verdict:fail`, the orchestrator MINTS A FRESH
+  `kind=work action=contract:develop task_add(prior_task_id=
+  <prior_develop_task_id>, prompt=…)` carrying the cited
+  gap verbatim, then dispatches that retry. The shape is
+  identical to the today's develop_review iteration loop —
+  the only difference is the contract being iterated on.
+  Cite `pr_pipeline_authority`.
+
 ### Reviewer routing
 
-Review is a contract-policy decision. The `develop` and
-`story_close` contracts dispatch reviewers; `plan`, `push`, and
-`merge_to_main` do not. Reviewer agents declare capability via
-`reviews:` lists on their agent doc structured settings; the
-orchestrator picks the first agent whose `reviews:` contains
+Review is a contract-policy decision. The `develop` contract
+dispatches `development_reviewer`; the `story_review`
+contract dispatches `story_reviewer`. The `push`,
+`merge_to_main`, and `plan` contracts do not dispatch
+reviewers (execution-shape or base-case). The mechanical
+`story_close` MCP verb (slice 1) replaces the legacy
+`contract:story_close` reviewer dispatch — close is
+structural now, gated by the upstream `contract:story_review`
+verdict.
+
+Reviewer agents declare capability via `reviews:` lists on
+their agent doc structured settings; the orchestrator picks
+the first agent whose `reviews:` contains
 `contract:<name>` when minting the review task.
 
-Where a contract requires review, the orchestrator's next plan
-step after the work task closes is a `task_add(kind=review,
+Where a contract requires review, the orchestrator's next
+plan step after the work task closes is a `task_add(kind=review,
 agent_id=<reviewer>, action=contract:<name>,
 parent_task_id=<work>)` call, dispatched the same way as any
 other task. The reviewer writes a `kind:verdict` ledger row

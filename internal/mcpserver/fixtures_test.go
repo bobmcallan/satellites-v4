@@ -57,7 +57,7 @@ func newContractFixture(t *testing.T) *contractFixture {
 		t.Fatalf("project create: %v", err)
 	}
 
-	for _, name := range []string{"plan", "develop", "push", "merge_to_main", "story_close"} {
+	for _, name := range []string{"plan", "develop", "push", "merge_to_main", "story_review"} {
 		if _, err := docStore.Create(ctx, document.Document{
 			Type:   document.TypeContract,
 			Scope:  document.ScopeSystem,
@@ -129,7 +129,7 @@ func newOrchestratorFixture(t *testing.T) *orchestratorFixture {
 		Structured: []byte(`{"required_slots":[
 			{"contract_name":"plan","required":true,"min_count":1,"max_count":1},
 			{"contract_name":"develop","required":true,"min_count":1,"max_count":10},
-			{"contract_name":"story_close","required":true,"min_count":1,"max_count":1}
+			{"contract_name":"story_review","required":true,"min_count":1,"max_count":1}
 		]}`),
 	}
 	if _, err := f.server.deps.Documents.Create(context.Background(), systemSrc, f.now); err != nil {
@@ -148,14 +148,11 @@ func newOrchestratorFixture(t *testing.T) *orchestratorFixture {
 		{Name: "releaser_agent", Delivers: []string{
 			task.ContractAction("push"), task.ContractAction("merge_to_main"),
 		}},
-		{Name: "story_close_agent", Delivers: []string{
-			task.ContractAction("story_close"),
-		}},
 		{Name: "story_reviewer", Reviews: []string{
 			task.ContractAction("plan"),
 			task.ContractAction("push"),
 			task.ContractAction("merge_to_main"),
-			task.ContractAction("story_close"),
+			task.ContractAction("story_review"),
 		}},
 		{Name: "development_reviewer", Reviews: []string{
 			task.ContractAction("develop"),

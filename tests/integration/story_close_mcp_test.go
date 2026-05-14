@@ -99,15 +99,15 @@ func TestStoryCloseMCP(t *testing.T) {
 	}
 
 	// developer_agent + releaser_agent are workspace-tier (wksp_5b3257d1)
-	// in the real seed (sty_a12e0f5d). The api-key bearer here is admin
-	// only of the auto-minted system workspace, so those rows aren't
-	// reachable via document_list. Mint system-scope fixture agents that
-	// deliver contract:develop / contract:push / contract:merge_to_main
-	// so the chain-mint helpers can author tasks against them.
+	// in the real seed. The api-key bearer here is admin only of the
+	// auto-minted system workspace, so those rows aren't reachable via
+	// document_list. Mint system-scope fixture agents that deliver
+	// contract:develop / contract:commit / contract:merge_to_main so
+	// the chain-mint helpers can author tasks against them.
 	developerAgent := ensureSystemAgentFixture(t, ctx, baseURL, bearer, "developer_agent_fixture",
 		[]string{"contract:plan", "contract:develop"}, nil)
 	releaserAgent := ensureSystemAgentFixture(t, ctx, baseURL, bearer, "releaser_agent_fixture",
-		[]string{"contract:push", "contract:merge_to_main"}, nil)
+		[]string{"contract:commit", "contract:merge_to_main"}, nil)
 
 	agentArr := callToolArray(t, ctx, mcpURL, bearer, "document_list", map[string]any{
 		"type":  "agent",
@@ -203,7 +203,7 @@ func TestStoryCloseLifecycleE2E(t *testing.T) {
 	developerAgent := ensureSystemAgentFixture(t, ctx, baseURL, bearer, "developer_agent_fixture",
 		[]string{"contract:plan", "contract:develop"}, nil)
 	releaserAgent := ensureSystemAgentFixture(t, ctx, baseURL, bearer, "releaser_agent_fixture",
-		[]string{"contract:push", "contract:merge_to_main"}, nil)
+		[]string{"contract:commit", "contract:merge_to_main"}, nil)
 
 	agentArr := callToolArray(t, ctx, mcpURL, bearer, "document_list", map[string]any{
 		"type":  "agent",
@@ -372,6 +372,28 @@ func addReviewTask(t *testing.T, ctx context.Context, ff *storyCloseFixtures, st
 	return tid
 }
 
+// appendReleaseEvidenceRow appends a kind:release-evidence ledger row
+// tagged with pushed_sha:<sha>. The mechanical story_close verb's
+// deploy:behind gate consults this row's pushed_sha against pprod's
+// satellites_info commit; the integration harness's pprod reports
+// `unknown` (config.GitCommit default at test time), so the seeded
+// sha matches.
+func appendReleaseEvidenceRow(t *testing.T, ctx context.Context, ff *storyCloseFixtures, storyID, pushedSHA string) {
+	t.Helper()
+	tags := []string{
+		"kind:release-evidence",
+		"phase:merge_to_main",
+		"pushed_sha:" + pushedSHA,
+	}
+	_ = callTool(t, ctx, ff.mcpURL, ff.bearer, "ledger_append", map[string]any{
+		"project_id": ff.projectID,
+		"story_id":   storyID,
+		"type":       "evidence",
+		"content":    "## release-evidence stub for integration test",
+		"tags":       tags,
+	})
+}
+
 // appendVerdictRow appends a kind:verdict ledger row tagged with the
 // review task id + the requested verdict (pass|fail).
 func appendVerdictRow(t *testing.T, ctx context.Context, ff *storyCloseFixtures, storyID, reviewTaskID, verdict string) {
@@ -461,6 +483,11 @@ func assertStoryClosePassPath(t *testing.T, ctx context.Context, ff *storyCloseF
 	_ = addAndCloseWorkTask(t, ctx, ff, storyID, "develop work for PASS")
 	reviewID := addReviewTask(t, ctx, ff, storyID, true)
 	appendVerdictRow(t, ctx, ff, storyID, reviewID, "pass")
+	// AC5 — seed a kind:release-evidence row whose pushed_sha matches
+	// the container's reported satellites_info commit so the
+	// deploy:behind gate passes. config.GitCommit default at test
+	// time is "unknown".
+	appendReleaseEvidenceRow(t, ctx, ff, storyID, "unknown")
 
 	resp := callStoryClose(t, ctx, ff, storyID)
 	if status, _ := resp["status"].(string); status != "pass" {
@@ -686,16 +713,21 @@ func assertStoryCloseLifecycleE2E(t *testing.T, ctx context.Context, ff *storyCl
 	srReviewID := closeWorkTask(t, ctx, ff, ff.storyReviewAgent, storyID, "contract:story_review", "review", "story_review for lifecycle-e2e")
 	appendVerdictRowForTask(t, ctx, ff, storyID, srReviewID, "pass")
 
-	// push, merge_to_main, push_main (execution-shape, no reviewer).
-	// Use releaser_agent when available, else developer_agent for
-	// fixture-only chain shaping.
+	// commit + merge_to_main (execution-shape, no reviewer). After
+	// the lifecycle restructure (sty_ab0b47d6), push is renamed to
+	// commit and the second push (push_main) folds into the atomic
+	// merge_to_main release operation. Use releaser_agent when
+	// available, else developer_agent for fixture-only chain shaping.
 	releaser := ff.releaserAgent
 	if releaser == "" {
 		releaser = ff.developerAgent
 	}
-	_ = closeWorkTask(t, ctx, ff, releaser, storyID, "contract:push", "", "push for lifecycle-e2e")
+	_ = closeWorkTask(t, ctx, ff, releaser, storyID, "contract:commit", "", "commit for lifecycle-e2e")
 	_ = closeWorkTask(t, ctx, ff, releaser, storyID, "contract:merge_to_main", "", "merge_to_main for lifecycle-e2e")
-	_ = closeWorkTask(t, ctx, ff, releaser, storyID, "contract:push", "", "push_main for lifecycle-e2e")
+	// AC5 — release-evidence row authored by the merge_to_main
+	// contract at release time. Seed with pushed_sha matching pprod's
+	// reported commit (config.GitCommit default "unknown" in tests).
+	appendReleaseEvidenceRow(t, ctx, ff, storyID, "unknown")
 
 	// Mechanical close verb.
 	resp := callStoryClose(t, ctx, ff, storyID)

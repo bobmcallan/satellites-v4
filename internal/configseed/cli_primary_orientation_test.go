@@ -60,6 +60,9 @@ func TestSeedLoad_CliPrimaryOrientationDocs(t *testing.T) {
 			fetch: func() (document.Document, error) {
 				return docs.GetByName(ctx, "", "claude_orchestrator", nil)
 			},
+			// System tier carries the universal default orchestrator —
+			// no satellites-project story ids in the body (de-projected
+			// per pr_contract_separation).
 			required: []string{
 				"Two surfaces, one separation",
 				"MCP = authoring surface",
@@ -68,8 +71,6 @@ func TestSeedLoad_CliPrimaryOrientationDocs(t *testing.T) {
 				"Forbidden alternatives",
 				"Claude Code's `Agent` tool",
 				"satellites_init",
-				"sty_796b8fe1",
-				"sty_e0c3d615",
 			},
 		},
 		{

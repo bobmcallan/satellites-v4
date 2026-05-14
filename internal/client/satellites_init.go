@@ -26,6 +26,9 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/bobmcallan/satellites/internal/audit/chaincoverage"
+	"github.com/bobmcallan/satellites/internal/document"
 )
 
 // SatellitesInitInput is the caller-supplied input for SatellitesInit.
@@ -46,6 +49,55 @@ type SatellitesInitInput struct {
 	// runtime.GOARCH.
 	OS   string `json:"os,omitempty"`
 	Arch string `json:"arch,omitempty"`
+
+	// WorkspaceID + ResolvedProjectID are pre-resolved by the wire
+	// layer when the caller binds a workspace/project context. Both
+	// drive the orientation surface (workspace_overrides +
+	// chain_coverage); empty disables the resolution and stamps
+	// scope=system on the overrides (best-effort fallback).
+	WorkspaceID       string
+	ResolvedProjectID string
+	Memberships       []string
+}
+
+// SatellitesInitOverride is one orientation pointer surfaced on the
+// init payload: which scope the workspace currently consumes the doc
+// from + the resolved doc id + a recommendation describing the
+// customization point. The verb does NOT mutate the substrate —
+// recommendations are informational only.
+type SatellitesInitOverride struct {
+	Scope          string `json:"scope"`
+	DocID          string `json:"doc_id,omitempty"`
+	Recommendation string `json:"recommendation"`
+}
+
+// SatellitesInitWorkspaceOverrides bundles the per-doc-kind override
+// pointers. Today we surface orchestrator + workflow.
+type SatellitesInitWorkspaceOverrides struct {
+	Orchestrator SatellitesInitOverride `json:"orchestrator"`
+	Workflow     SatellitesInitOverride `json:"workflow"`
+}
+
+// SatellitesInitContractEntry mirrors chaincoverage.ContractEntry on
+// the wire — the orientation payload carries it directly so callers
+// do not need to import internal/audit.
+type SatellitesInitContractEntry struct {
+	Name    string `json:"name"`
+	FoundAt string `json:"found_at,omitempty"`
+	DocID   string `json:"doc_id,omitempty"`
+}
+
+// SatellitesInitChainCoverage is the chain-coverage report stamped on
+// the init payload. WorkflowSource names the tier the workspace
+// resolves the `default` workflow doc from; Contracts enumerates the
+// canonical chain with each contract's tier + doc id; MissingContracts
+// collects names that did not resolve.
+type SatellitesInitChainCoverage struct {
+	WorkflowSource   string                        `json:"workflow_source"`
+	WorkflowDocID    string                        `json:"workflow_doc_id,omitempty"`
+	Contracts        []SatellitesInitContractEntry `json:"contracts"`
+	MissingContracts []string                      `json:"missing_contracts"`
+	Recommendation   string                        `json:"recommendation"`
 }
 
 // SatellitesInitDefaultConfig mirrors the canonical satellites-client.toml
@@ -83,14 +135,16 @@ type SatellitesInitAuthBootstrap struct {
 
 // SatellitesInitOutput is the wire payload for satellites_init.
 type SatellitesInitOutput struct {
-	State             string                      `json:"state"`
-	TargetInstallPath string                      `json:"target_install_path"`
-	TargetConfigPath  string                      `json:"target_config_path"`
-	DefaultConfig     SatellitesInitDefaultConfig `json:"default_config"`
-	Install           SatellitesInitInstall       `json:"install"`
-	AuthBootstrap     SatellitesInitAuthBootstrap `json:"auth_bootstrap"`
-	CurrentVersion    string                      `json:"current_version,omitempty"`
-	FetchedAt         time.Time                   `json:"fetched_at"`
+	State              string                           `json:"state"`
+	TargetInstallPath  string                           `json:"target_install_path"`
+	TargetConfigPath   string                           `json:"target_config_path"`
+	DefaultConfig      SatellitesInitDefaultConfig      `json:"default_config"`
+	Install            SatellitesInitInstall            `json:"install"`
+	AuthBootstrap      SatellitesInitAuthBootstrap      `json:"auth_bootstrap"`
+	CurrentVersion     string                           `json:"current_version,omitempty"`
+	FetchedAt          time.Time                        `json:"fetched_at"`
+	WorkspaceOverrides SatellitesInitWorkspaceOverrides `json:"workspace_overrides"`
+	ChainCoverage      SatellitesInitChainCoverage      `json:"chain_coverage"`
 }
 
 // State string constants returned in SatellitesInitOutput.State.
@@ -136,6 +190,9 @@ func (c *Client) SatellitesInit(ctx context.Context, caller Caller, in Satellite
 		state = SatellitesInitStateUpdateAvailable
 	}
 
+	overrides := c.resolveWorkspaceOverrides(ctx, in)
+	coverage := c.resolveChainCoverage(ctx, in)
+
 	return SatellitesInitOutput{
 		State:             state,
 		TargetInstallPath: "./satellites/satellites-client",
@@ -161,9 +218,89 @@ func (c *Client) SatellitesInit(ctx context.Context, caller Caller, in Satellite
 			Command: "satellites-client auth login",
 			EnvHint: "SATELLITES_TOKEN",
 		},
-		CurrentVersion: current,
-		FetchedAt:      manifest.FetchedAt,
+		CurrentVersion:     current,
+		FetchedAt:          manifest.FetchedAt,
+		WorkspaceOverrides: overrides,
+		ChainCoverage:      coverage,
 	}, nil
+}
+
+// recommendationOrchestratorWorkspace is the customization-point
+// prose surfaced when the workspace consumes the system-tier
+// orchestrator (no workspace override).
+const recommendationOrchestratorWorkspace = "This workspace has no claude_orchestrator override; consuming the universal default. If your project's contracts or process flow differ (e.g., a different release primitive than merge_to_main; an additional review step), author a workspace-scope override at config/seed/<workspace>/agents/claude_orchestrator.md and seed it. Otherwise, the default applies cleanly."
+
+// recommendationWorkflowWorkspace mirrors the orchestrator hint for
+// the `default` workflow.
+const recommendationWorkflowWorkspace = "This workspace has no `default` workflow override; consuming the universal default. Override at config/seed/<workspace>/workflows/default.md if your project's chain shape differs."
+
+// recommendationUsingOverride is the prose stamped when the
+// workspace has authored its own override (no recommendation
+// needed).
+const recommendationUsingOverride = "using your workspace override"
+
+// resolveWorkspaceOverrides resolves the orchestrator + workflow
+// docs through the document store's tier ladder and stamps the
+// appropriate recommendation prose. Returns scope=system entries
+// with the workspace-side recommendation when the docs store is
+// not configured or no workspace was supplied — the operator still
+// sees the customization point.
+func (c *Client) resolveWorkspaceOverrides(ctx context.Context, in SatellitesInitInput) SatellitesInitWorkspaceOverrides {
+	overrides := SatellitesInitWorkspaceOverrides{
+		Orchestrator: SatellitesInitOverride{Scope: document.ScopeSystem, Recommendation: recommendationOrchestratorWorkspace},
+		Workflow:     SatellitesInitOverride{Scope: document.ScopeSystem, Recommendation: recommendationWorkflowWorkspace},
+	}
+	if c.deps.Documents == nil {
+		return overrides
+	}
+	if doc, err := c.deps.Documents.ResolveByName(ctx, document.TypeAgent, "claude_orchestrator", in.WorkspaceID, in.ResolvedProjectID, in.Memberships); err == nil {
+		overrides.Orchestrator.Scope = doc.Scope
+		overrides.Orchestrator.DocID = doc.ID
+		if doc.Scope == document.ScopeWorkspace {
+			overrides.Orchestrator.Recommendation = recommendationUsingOverride
+		}
+	}
+	if doc, err := c.deps.Documents.ResolveByName(ctx, document.TypeWorkflow, "default", in.WorkspaceID, in.ResolvedProjectID, in.Memberships); err == nil {
+		overrides.Workflow.Scope = doc.Scope
+		overrides.Workflow.DocID = doc.ID
+		if doc.Scope == document.ScopeWorkspace {
+			overrides.Workflow.Recommendation = recommendationUsingOverride
+		}
+	}
+	return overrides
+}
+
+// resolveChainCoverage delegates to the shared chaincoverage package
+// and re-projects the Result into the wire-payload type. The
+// chaincoverage package is the same primitive sty_2f0db922's audit
+// verb will consume — locating the loop there avoids a second
+// extraction.
+func (c *Client) resolveChainCoverage(ctx context.Context, in SatellitesInitInput) SatellitesInitChainCoverage {
+	coverage := SatellitesInitChainCoverage{
+		Contracts:        []SatellitesInitContractEntry{},
+		MissingContracts: []string{},
+	}
+	if c.deps.Documents == nil {
+		coverage.Recommendation = "document store not configured; chain_coverage unavailable"
+		return coverage
+	}
+	res, err := chaincoverage.Resolve(ctx, c.deps.Documents, in.WorkspaceID, in.ResolvedProjectID, in.Memberships, nil)
+	if err != nil {
+		coverage.Recommendation = "chain_coverage error: " + err.Error()
+		return coverage
+	}
+	coverage.WorkflowSource = res.WorkflowSource
+	coverage.WorkflowDocID = res.WorkflowDocID
+	for _, e := range res.Contracts {
+		coverage.Contracts = append(coverage.Contracts, SatellitesInitContractEntry{
+			Name:    e.Name,
+			FoundAt: e.FoundAt,
+			DocID:   e.DocID,
+		})
+	}
+	coverage.MissingContracts = res.MissingContracts
+	coverage.Recommendation = chaincoverage.RecommendationText(in.WorkspaceID, res)
+	return coverage
 }
 
 // pickSatellitesInitArtifact picks the manifest entry matching the

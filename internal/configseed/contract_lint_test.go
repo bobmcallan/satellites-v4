@@ -29,7 +29,7 @@ func TestContractBodies_HaveReviewPolicySection(t *testing.T) {
 		{"plan", filepath.Join(seedDir, "system", "contracts", "plan.md")},
 		{"story_review", filepath.Join(seedDir, "system", "contracts", "story_review.md")},
 		{"develop", filepath.Join(seedDir, "wksp_5b3257d1", "contracts", "develop.md")},
-		{"push", filepath.Join(seedDir, "wksp_5b3257d1", "contracts", "push.md")},
+		{"commit", filepath.Join(seedDir, "wksp_5b3257d1", "contracts", "commit.md")},
 		{"merge_to_main", filepath.Join(seedDir, "wksp_5b3257d1", "contracts", "merge_to_main.md")},
 		{"review", filepath.Join(seedDir, "wksp_5b3257d1", "contracts", "review.md")},
 	}
@@ -66,9 +66,9 @@ func TestReviewContractBody_TerminationSentinel(t *testing.T) {
 }
 
 // TestExecutionShapeContracts_NoReviewerSentinel locks the
-// execution-shape policy on push.md and merge_to_main.md
-// (sty_690b1653 AC #4 / AC #5): both must state that no reviewer
-// is dispatched, matching their execution-shape role in the chain.
+// execution-shape policy on commit.md and merge_to_main.md: both
+// must state that no reviewer is dispatched, matching their
+// execution-shape role in the chain.
 func TestExecutionShapeContracts_NoReviewerSentinel(t *testing.T) {
 	t.Parallel()
 	seedDir, err := filepath.Abs(filepath.Join("..", "..", "config", "seed"))
@@ -76,7 +76,7 @@ func TestExecutionShapeContracts_NoReviewerSentinel(t *testing.T) {
 		t.Fatalf("abs seed dir: %v", err)
 	}
 	const sentinel = "No reviewer is dispatched"
-	for _, name := range []string{"push", "merge_to_main"} {
+	for _, name := range []string{"commit", "merge_to_main"} {
 		body, err := os.ReadFile(filepath.Join(seedDir, "wksp_5b3257d1", "contracts", name+".md"))
 		if err != nil {
 			t.Errorf("%s: read: %v", name, err)
@@ -88,10 +88,10 @@ func TestExecutionShapeContracts_NoReviewerSentinel(t *testing.T) {
 	}
 }
 
-// TestRunWorkspace_RealSeedShipsFourLifecycleContracts (sty_690b1653)
-// asserts the workspace contracts catalogue after seeding the real
+// TestRunWorkspace_RealSeedShipsFourLifecycleContracts asserts the
+// workspace contracts catalogue after seeding the real
 // config/seed/wksp_5b3257d1/ tree contains the four workspace
-// lifecycle contracts: develop, push, merge_to_main, review. Locks
+// lifecycle contracts: develop, commit, merge_to_main, review. Locks
 // review.md being picked up by the workspace loader at boot.
 func TestRunWorkspace_RealSeedShipsFourLifecycleContracts(t *testing.T) {
 	t.Parallel()
@@ -114,7 +114,7 @@ func TestRunWorkspace_RealSeedShipsFourLifecycleContracts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List contracts: %v", err)
 	}
-	want := map[string]bool{"develop": false, "push": false, "merge_to_main": false, "review": false}
+	want := map[string]bool{"develop": false, "commit": false, "merge_to_main": false, "review": false}
 	for _, r := range rows {
 		if r.WorkspaceID != ws {
 			continue

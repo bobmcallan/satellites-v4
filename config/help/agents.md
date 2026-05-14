@@ -18,9 +18,9 @@ lifecycle:
 - `developer_agent` — delivers `contract:plan` and
   `contract:develop`. Reads code + git history; writes code +
   commits; submits the plan task list via `task_submit`.
-- `releaser_agent` — delivers `contract:push` and
+- `releaser_agent` — delivers `contract:commit` and
   `contract:merge_to_main`.
-- `story_reviewer` — reviews `contract:plan`, `contract:push`,
+- `story_reviewer` — reviews `contract:plan`, `contract:commit`,
   `contract:merge_to_main`. Read-only;
   the autonomous reviewer service uses this body as its rubric.
 - `development_reviewer` — reviews `contract:develop`. Read-only.

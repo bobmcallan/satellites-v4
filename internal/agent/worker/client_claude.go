@@ -45,6 +45,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/bobmcallan/satellites/internal/cliremote"
 	"github.com/bobmcallan/satellites/internal/config"
@@ -70,6 +71,31 @@ type claudeClient struct {
 	// tests inject a recorder.
 	gitRunner func(ctx context.Context, dir string, args ...string) ([]byte, error)
 
+	// ghRunner runs a `gh` command. Production uses exec.Command; tests
+	// inject a recorder. Consumed by the merge_to_main hot-path runner
+	// for the GitHub Actions deploy watch (run list + run watch).
+	ghRunner func(ctx context.Context, args ...string) ([]byte, error)
+
+	// pprodInfoFetcher returns the commit currently reported by
+	// pprod's satellites_info verb. Production routes through c.api;
+	// tests inject a stub that returns a scripted sequence so the
+	// converge poll path is exercised deterministically.
+	pprodInfoFetcher func(ctx context.Context) (string, error)
+
+	// pprodPollInterval is the sleep between converge polls. Zero
+	// uses the default (defaultPprodPollInterval). Tests override to
+	// drive timeout cases without sleeping.
+	pprodPollInterval time.Duration
+
+	// pprodConvergeTimeout caps how long the runner waits for pprod
+	// to report the pushed SHA. Zero uses the default
+	// (defaultPprodConvergeTimeout).
+	pprodConvergeTimeout time.Duration
+
+	// ghWatchTimeout caps how long `gh run watch` is allowed to run.
+	// Zero uses the default (defaultGHWatchTimeout).
+	ghWatchTimeout time.Duration
+
 	// stdoutTee / stderrTee mirror the dispatched claude subprocess's
 	// stdout+stderr to additional writers when set (alongside the
 	// per-task worktree log file). The daemon path leaves these nil —
@@ -88,6 +114,7 @@ func newClaudeClient(cfg config.AgentConfig, logger arbor.ILogger) *claudeClient
 		cfg:       cfg,
 		logger:    logger,
 		gitRunner: runGit,
+		ghRunner:  runGH,
 	}
 }
 
@@ -345,6 +372,20 @@ func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return out, fmt.Errorf("git %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return out, nil
+}
+
+// runGH executes `gh` with the supplied args. Returned bytes are the
+// combined output for transport into evidence rows. Errors include
+// the captured stderr so callers can surface gh's complaint. Used by
+// the merge_to_main hot-path runner for the GitHub Actions deploy
+// watch (run list + run watch).
+func runGH(ctx context.Context, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("gh %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return out, nil
 }

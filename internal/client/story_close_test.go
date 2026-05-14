@@ -19,14 +19,27 @@ import (
 // table cases need: workspace + project + story + task + ledger + (when
 // requested) a stub story_template document.
 type storyCloseFixture struct {
-	t           *testing.T
-	now         time.Time
-	c           *Client
-	wsID        string
-	projectID   string
-	storyID     string
-	reviewTask  task.Task
-	caller      Caller
+	t                   *testing.T
+	now                 time.Time
+	c                   *Client
+	wsID                string
+	projectID           string
+	storyID             string
+	reviewTask          task.Task
+	caller              Caller
+	pprodCommitOverride string
+}
+
+// closeInput materialises a StoryCloseInput using the fixture's
+// caller memberships + pprod commit override + a now+10min stamp so
+// the close happens after the seeded chain.
+func (f *storyCloseFixture) closeInput() StoryCloseInput {
+	return StoryCloseInput{
+		StoryID:             f.storyID,
+		Memberships:         f.caller.Memberships,
+		Now:                 f.now.Add(10 * time.Minute),
+		PprodCommitOverride: f.pprodCommitOverride,
+	}
 }
 
 // newStoryCloseFixture sets up a chain where every gate would pass by
@@ -128,6 +141,30 @@ func newStoryCloseFixture(t *testing.T, category string, opts storyCloseFixtureO
 		}
 	}
 
+	// AC5 fixture: a kind:release-evidence row tagged with the pushed
+	// SHA mirrors the row the merge_to_main contract authors at
+	// release time. Sub-tests opt out via SkipReleaseEvidence to
+	// exercise the release-evidence:absent sentinel.
+	if !opts.SkipReleaseEvidence && opts.ReleaseEvidenceSHA != "" {
+		_, err = ledStore.Append(ctx, ledger.LedgerEntry{
+			WorkspaceID: ws.ID,
+			ProjectID:   "proj_test",
+			StoryID:     ledger.StringPtr(st.ID),
+			Type:        ledger.TypeEvidence,
+			Tags: []string{
+				"kind:release-evidence",
+				"phase:merge_to_main",
+				"pushed_sha:" + opts.ReleaseEvidenceSHA,
+			},
+			Content:    `## release-evidence stub`,
+			Durability: ledger.DurabilityDurable,
+			SourceType: ledger.SourceAgent,
+			Status:     ledger.StatusActive,
+			CreatedBy:  "u_dev",
+		}, now.Add(5*time.Minute))
+		require.NoError(t, err)
+	}
+
 	c := New(Deps{
 		Documents:  docStore,
 		Stories:    storyStore,
@@ -137,14 +174,15 @@ func newStoryCloseFixture(t *testing.T, category string, opts storyCloseFixtureO
 	})
 
 	return &storyCloseFixture{
-		t:          t,
-		now:        now,
-		c:          c,
-		wsID:       ws.ID,
-		projectID:  "proj_test",
-		storyID:    st.ID,
-		reviewTask: reviewTask,
-		caller:     Caller{UserID: "u_dev", Memberships: []string{ws.ID}},
+		t:                   t,
+		now:                 now,
+		c:                   c,
+		wsID:                ws.ID,
+		projectID:           "proj_test",
+		storyID:             st.ID,
+		reviewTask:          reviewTask,
+		caller:              Caller{UserID: "u_dev", Memberships: []string{ws.ID}},
+		pprodCommitOverride: opts.PprodCommitOverride,
 	}
 }
 
@@ -154,23 +192,36 @@ func newStoryCloseFixture(t *testing.T, category string, opts storyCloseFixtureO
 // preserve the pre-existing cases; set to task.KindWork to exercise
 // the canonical workflow shape the post-sty_b97dda00 substrate emits.
 type storyCloseFixtureOpts struct {
-	LeaveWorkOpen    bool
-	SkipReviewTask   bool
-	LeaveReviewOpen  bool
-	AppendVerdictRow bool
-	VerdictPass      bool
-	SeedTemplate     bool
-	TemplateJSON     string
-	Fields           map[string]any
-	StoryReviewKind  string
+	LeaveWorkOpen       bool
+	SkipReviewTask      bool
+	LeaveReviewOpen     bool
+	AppendVerdictRow    bool
+	VerdictPass         bool
+	SeedTemplate        bool
+	TemplateJSON        string
+	Fields              map[string]any
+	StoryReviewKind     string
+	SkipReleaseEvidence bool
+	ReleaseEvidenceSHA  string
+	PprodCommitOverride string
 }
 
+// defaultReleaseSHA is the synthetic pushed-SHA both the
+// release-evidence fixture row and the pprod-override default carry
+// so the happy-path tests pass the deploy:behind gate without
+// extra plumbing.
+const defaultReleaseSHA = "deadbeefcafe1234"
+
 // happyOpts returns the gate-passing baseline: closed work + closed
-// review + verdict:pass row + no template hooks (improvement category).
+// review + verdict:pass row + a kind:release-evidence row whose
+// pushed_sha matches the pprod override + no template hooks
+// (improvement category). The deploy:behind gate passes by default.
 func happyOpts() storyCloseFixtureOpts {
 	return storyCloseFixtureOpts{
-		AppendVerdictRow: true,
-		VerdictPass:      true,
+		AppendVerdictRow:    true,
+		VerdictPass:         true,
+		ReleaseEvidenceSHA:  defaultReleaseSHA,
+		PprodCommitOverride: defaultReleaseSHA,
 	}
 }
 
@@ -179,11 +230,7 @@ func happyOpts() storyCloseFixtureOpts {
 // via UpdateStatusDerived, and the response carries the evidence id.
 func TestStoryClose_PassWalksStoryToDone(t *testing.T) {
 	f := newStoryCloseFixture(t, "improvement", happyOpts())
-	out, err := f.c.StoryClose(context.Background(), f.caller, StoryCloseInput{
-		StoryID:     f.storyID,
-		Memberships: f.caller.Memberships,
-		Now:         f.now.Add(10 * time.Minute),
-	})
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
 	require.NoError(t, err)
 	assert.Equal(t, "pass", out.Status)
 	assert.Equal(t, story.StatusDone, out.StoryStatus)
@@ -216,11 +263,7 @@ func TestStoryClose_PassWithKindWorkStoryReview(t *testing.T) {
 	opts.StoryReviewKind = task.KindWork
 	f := newStoryCloseFixture(t, "improvement", opts)
 	require.Equal(t, task.KindWork, f.reviewTask.Kind, "fixture must mint kind=work story_review task")
-	out, err := f.c.StoryClose(context.Background(), f.caller, StoryCloseInput{
-		StoryID:     f.storyID,
-		Memberships: f.caller.Memberships,
-		Now:         f.now.Add(10 * time.Minute),
-	})
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
 	require.NoError(t, err)
 	assert.Equal(t, "pass", out.Status, "kind=work story_review must pass; gaps=%+v", out.Gaps)
 	assert.Equal(t, story.StatusDone, out.StoryStatus)
@@ -236,11 +279,7 @@ func TestStoryClose_FailStoryReviewAbsent(t *testing.T) {
 	opts.SkipReviewTask = true
 	opts.AppendVerdictRow = false
 	f := newStoryCloseFixture(t, "improvement", opts)
-	out, err := f.c.StoryClose(context.Background(), f.caller, StoryCloseInput{
-		StoryID:     f.storyID,
-		Memberships: f.caller.Memberships,
-		Now:         f.now.Add(10 * time.Minute),
-	})
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
 	require.NoError(t, err)
 	assert.Equal(t, "fail", out.Status)
 	assertGap(t, out.Gaps, "story_review:absent", "")
@@ -253,11 +292,7 @@ func TestStoryClose_FailStoryReviewOpen(t *testing.T) {
 	opts.LeaveReviewOpen = true
 	opts.AppendVerdictRow = false
 	f := newStoryCloseFixture(t, "improvement", opts)
-	out, err := f.c.StoryClose(context.Background(), f.caller, StoryCloseInput{
-		StoryID:     f.storyID,
-		Memberships: f.caller.Memberships,
-		Now:         f.now.Add(10 * time.Minute),
-	})
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
 	require.NoError(t, err)
 	assert.Equal(t, "fail", out.Status)
 	assertGap(t, out.Gaps, "story_review:open", f.reviewTask.ID)
@@ -269,11 +304,7 @@ func TestStoryClose_FailStoryReviewVerdictFail(t *testing.T) {
 	opts := happyOpts()
 	opts.VerdictPass = false
 	f := newStoryCloseFixture(t, "improvement", opts)
-	out, err := f.c.StoryClose(context.Background(), f.caller, StoryCloseInput{
-		StoryID:     f.storyID,
-		Memberships: f.caller.Memberships,
-		Now:         f.now.Add(10 * time.Minute),
-	})
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
 	require.NoError(t, err)
 	assert.Equal(t, "fail", out.Status)
 	assertGap(t, out.Gaps, "story_review:fail", f.reviewTask.ID)
@@ -285,11 +316,7 @@ func TestStoryClose_FailChainOpenWork(t *testing.T) {
 	opts := happyOpts()
 	opts.LeaveWorkOpen = true
 	f := newStoryCloseFixture(t, "improvement", opts)
-	out, err := f.c.StoryClose(context.Background(), f.caller, StoryCloseInput{
-		StoryID:     f.storyID,
-		Memberships: f.caller.Memberships,
-		Now:         f.now.Add(10 * time.Minute),
-	})
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
 	require.NoError(t, err)
 	assert.Equal(t, "fail", out.Status)
 	require.NotEmpty(t, out.Gaps)
@@ -312,11 +339,7 @@ func TestStoryClose_FailTemplateFieldMissing(t *testing.T) {
 	opts.SeedTemplate = true
 	opts.TemplateJSON = `{"category":"infrastructure","fields":[{"name":"scope","type":"text","required":true,"prompt":"scope"}],"hooks":{"done":{"structured":[{"type":"field_present","field":"scope"}]}}}`
 	f := newStoryCloseFixture(t, "infrastructure", opts)
-	out, err := f.c.StoryClose(context.Background(), f.caller, StoryCloseInput{
-		StoryID:     f.storyID,
-		Memberships: f.caller.Memberships,
-		Now:         f.now.Add(10 * time.Minute),
-	})
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
 	require.NoError(t, err)
 	assert.Equal(t, "fail", out.Status)
 	assertGap(t, out.Gaps, "template:scope:missing", "")
@@ -333,10 +356,9 @@ func TestStoryClose_RejectsMissingStoryID(t *testing.T) {
 // TestStoryClose_CrossWorkspaceHidesStory — workspace scoping.
 func TestStoryClose_CrossWorkspaceHidesStory(t *testing.T) {
 	f := newStoryCloseFixture(t, "improvement", happyOpts())
-	_, err := f.c.StoryClose(context.Background(), f.caller, StoryCloseInput{
-		StoryID:     f.storyID,
-		Memberships: []string{"wksp_other"},
-	})
+	in := f.closeInput()
+	in.Memberships = []string{"wksp_other"}
+	_, err := f.c.StoryClose(context.Background(), f.caller, in)
 	require.ErrorIs(t, err, ErrStoryCloseStoryNotFound)
 }
 
@@ -344,12 +366,9 @@ func TestStoryClose_CrossWorkspaceHidesStory(t *testing.T) {
 // resolution slot lands on the close-evidence row's tag set.
 func TestStoryClose_ResolutionCodeOverridesDefault(t *testing.T) {
 	f := newStoryCloseFixture(t, "improvement", happyOpts())
-	out, err := f.c.StoryClose(context.Background(), f.caller, StoryCloseInput{
-		StoryID:        f.storyID,
-		ResolutionCode: "superseded",
-		Memberships:    f.caller.Memberships,
-		Now:            f.now.Add(10 * time.Minute),
-	})
+	in := f.closeInput()
+	in.ResolutionCode = "superseded"
+	out, err := f.c.StoryClose(context.Background(), f.caller, in)
 	require.NoError(t, err)
 	require.Equal(t, "pass", out.Status)
 	rows, err := f.c.deps.Ledger.List(context.Background(), f.projectID,
@@ -362,6 +381,46 @@ func TestStoryClose_ResolutionCodeOverridesDefault(t *testing.T) {
 		}
 	}
 	assert.True(t, foundResolution, "resolution:superseded tag absent: %+v", rows)
+}
+
+// TestStoryClose_FailDeployBehind — AC5. The fixture authors a
+// kind:release-evidence row with one pushed_sha; the pprod override
+// reports a different commit. The verb surfaces a `deploy:behind`
+// gap whose Detail contains both SHAs, refuses to mutate, and does
+// NOT append a close-evidence row.
+func TestStoryClose_FailDeployBehind(t *testing.T) {
+	opts := happyOpts()
+	opts.ReleaseEvidenceSHA = "release-sha-aaa"
+	opts.PprodCommitOverride = "pprod-sha-bbb"
+	f := newStoryCloseFixture(t, "improvement", opts)
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	assert.Equal(t, "fail", out.Status)
+	var dbGap *StoryCloseGap
+	for i := range out.Gaps {
+		if out.Gaps[i].Code == "deploy:behind" {
+			dbGap = &out.Gaps[i]
+		}
+	}
+	require.NotNil(t, dbGap, "deploy:behind gap missing: %+v", out.Gaps)
+	assert.Contains(t, dbGap.Detail, "release-sha-aaa")
+	assert.Contains(t, dbGap.Detail, "pprod-sha-bbb")
+	assertStoryUnchanged(t, f)
+}
+
+// TestStoryClose_FailReleaseEvidenceAbsent — AC5 sentinel. With no
+// kind:release-evidence row on the chain, the verb surfaces
+// `release-evidence:absent` (so the operator sees *why* the deploy
+// converge check could not run) and does not mutate.
+func TestStoryClose_FailReleaseEvidenceAbsent(t *testing.T) {
+	opts := happyOpts()
+	opts.SkipReleaseEvidence = true
+	f := newStoryCloseFixture(t, "improvement", opts)
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	assert.Equal(t, "fail", out.Status)
+	assertGap(t, out.Gaps, "release-evidence:absent", "")
+	assertStoryUnchanged(t, f)
 }
 
 func assertGap(t *testing.T, gaps []StoryCloseGap, code, detail string) {

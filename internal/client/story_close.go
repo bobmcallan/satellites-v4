@@ -27,16 +27,28 @@ import (
 // StoryCloseInput names the story to close. ResolutionCode is the slot
 // stored on the kind:close-evidence ledger row; empty falls back to
 // "delivered" per the story_review contract's evidence_required prose.
+//
+// PprodCommitOverride lets tests inject the pprod-reported commit
+// without spinning up a real SatellitesInfo call. Production callers
+// leave it empty and the verb routes the converge check through
+// c.SatellitesInfo.
 type StoryCloseInput struct {
-	StoryID        string
-	ResolutionCode string
-	Memberships    []string
-	Now            time.Time
+	StoryID             string
+	ResolutionCode      string
+	Memberships         []string
+	Now                 time.Time
+	PprodCommitOverride string
 }
 
 // StoryCloseGap is one cited gap the gate refused on. Code is the
-// machine-readable category (story_review:absent | story_review:open |
-// story_review:fail | chain:open_work | template:<field>:missing);
+// machine-readable category — one of:
+//
+//   - story_review:absent | story_review:open | story_review:fail
+//   - chain:open_work
+//   - template:<field>:missing
+//   - deploy:behind                     (pprod commit lags release SHA)
+//   - release-evidence:absent           (no kind:release-evidence row)
+//
 // Detail carries the row id(s), task id(s), or field name the gap
 // resolves to.
 type StoryCloseGap struct {
@@ -154,6 +166,34 @@ func (c *Client) StoryClose(ctx context.Context, caller Caller, in StoryCloseInp
 		}
 	}
 
+	// deploy:behind — pprod's reported commit must match the pushed
+	// SHA recorded on the latest kind:release-evidence row. The
+	// merge_to_main contract authored that row at release time; this
+	// gap is defense-in-depth catching pprod regressions BETWEEN
+	// release and close. Sentinel `release-evidence:absent` surfaces
+	// when no release-evidence row exists so the orchestrator sees
+	// *why* the converge check could not run, rather than silently
+	// passing.
+	releaseRow := latestReleaseEvidenceRow(rows)
+	switch {
+	case releaseRow == nil:
+		gaps = append(gaps, StoryCloseGap{Code: "release-evidence:absent"})
+	default:
+		releaseSHA := pushedSHAFromTags(releaseRow.Tags)
+		if releaseSHA == "" {
+			gaps = append(gaps, StoryCloseGap{Code: "release-evidence:absent", Detail: "row " + releaseRow.ID + " missing pushed_sha tag"})
+			break
+		}
+		pprodCommit, err := c.resolvePprodCommit(ctx, caller, in)
+		if err != nil {
+			gaps = append(gaps, StoryCloseGap{Code: "deploy:behind", Detail: "satellites_info error: " + err.Error()})
+			break
+		}
+		if pprodCommit != releaseSHA {
+			gaps = append(gaps, StoryCloseGap{Code: "deploy:behind", Detail: releaseSHA + " != " + pprodCommit})
+		}
+	}
+
 	if len(gaps) > 0 {
 		return StoryCloseOutput{
 			Status:      "fail",
@@ -251,6 +291,51 @@ func hasTag(tags []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// latestReleaseEvidenceRow finds the most-recent kind:release-evidence
+// ledger row from the supplied per-story rows; nil when none exist.
+// The merge_to_main contract authors exactly one row per release; on a
+// well-formed chain the latest row IS the row covering the chain's
+// release.
+func latestReleaseEvidenceRow(rows []ledger.LedgerEntry) *ledger.LedgerEntry {
+	var picked *ledger.LedgerEntry
+	for i := range rows {
+		r := &rows[i]
+		if !hasTag(r.Tags, "kind:release-evidence") {
+			continue
+		}
+		if picked == nil || r.CreatedAt.After(picked.CreatedAt) {
+			picked = r
+		}
+	}
+	return picked
+}
+
+// pushedSHAFromTags extracts the value following the `pushed_sha:`
+// prefix from a tag slice; empty when no such tag is present.
+func pushedSHAFromTags(tags []string) string {
+	const prefix = "pushed_sha:"
+	for _, t := range tags {
+		if strings.HasPrefix(t, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(t, prefix))
+		}
+	}
+	return ""
+}
+
+// resolvePprodCommit returns the commit currently reported by pprod's
+// satellites_info verb. Tests inject PprodCommitOverride to avoid an
+// HTTP roundtrip; production routes through c.SatellitesInfo.
+func (c *Client) resolvePprodCommit(ctx context.Context, caller Caller, in StoryCloseInput) (string, error) {
+	if in.PprodCommitOverride != "" {
+		return in.PprodCommitOverride, nil
+	}
+	out, err := c.SatellitesInfo(ctx, caller, SatellitesInfoInput{})
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out.Commit), nil
 }
 
 // fieldFromTemplateFailure extracts the field name from a template's

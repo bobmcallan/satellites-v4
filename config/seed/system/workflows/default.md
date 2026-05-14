@@ -4,7 +4,9 @@ tags: [v4, system]
 ---
 # Default System Workflow
 
-The default lifecycle every story passes through. The workflow is
+The default lifecycle every story passes through. Workflow docs
+describe a project's lifecycle chain; the system-tier `default` is
+the canonical pattern projects start with. The workflow is
 **prose-only context** for the orchestrator and reviewer agents —
 the substrate enforces the structure of the submitted task list
 (`task_submit(kind=plan)` validators) but not the specific
@@ -12,7 +14,7 @@ shape of the workflow itself.
 
 ## Shape
 
-`plan → develop → develop_review → story_review → push → merge_to_main → push_main → story_close [verb]`
+`plan → develop → develop_review → story_review → commit → merge_to_main → story_close [verb]`
 
 - `plan` — implementation strategy + review criteria. The plan
   agent also assesses readiness (relevance, dependencies, prior
@@ -34,14 +36,21 @@ shape of the workflow itself.
   `kind=work contract:develop task_add(prior_task_id=…)` carrying
   the cited gap verbatim (same iteration shape as develop_review;
   cite `pr_pipeline_authority`).
-- `push` — ship the develop branch to its upstream remote.
-- `merge_to_main` — local fast-forward main to the develop branch.
-- `push_main` — ship the merged main to origin.
+- `commit` — publish the developer's commit(s) to origin under
+  the work branch. Substrate-level publish action; this is not
+  the release step.
+- `merge_to_main` — the atomic release operation. Fast-forward
+  merges the work branch into local main, pushes main to origin,
+  watches the GitHub Actions deploy workflow to completion, and
+  polls pprod's `satellites_info` until the reported `commit`
+  matches the pushed SHA. Emits a `kind:release-evidence` ledger
+  row carrying SHAs + GH run id + pprod-converge polling.
 - `story_close [verb]` — the mechanical MCP verb (no agent
   dispatch). Gate-checks chain shape + the `story_review` verdict
-  + story template fields; on PASS appends a
-  `kind:close-evidence` ledger row and walks the story to
-  `status=done` via `UpdateStatusDerived`.
+  + story template fields + `deploy:behind` (pprod's commit
+  matches the latest `kind:release-evidence` row's pushed SHA);
+  on PASS appends a `kind:close-evidence` ledger row and walks
+  the story to `status=done` via `UpdateStatusDerived`.
 
 ## How it's used
 
@@ -61,12 +70,10 @@ tasks: [
   {kind: work,   action: contract:develop,       agent_id: developer_agent},
   {kind: review, action: contract:develop,       agent_id: development_reviewer},
   {kind: work,   action: contract:story_review,  agent_id: story_reviewer},
-  {kind: work,   action: contract:push,          agent_id: releaser_agent},
-  {kind: review, action: contract:push,          agent_id: story_reviewer},
+  {kind: work,   action: contract:commit,        agent_id: releaser_agent},
+  {kind: review, action: contract:commit,        agent_id: story_reviewer},
   {kind: work,   action: contract:merge_to_main, agent_id: releaser_agent},
   {kind: review, action: contract:merge_to_main, agent_id: story_reviewer},
-  {kind: work,   action: contract:push,          agent_id: releaser_agent}, // push_main
-  {kind: review, action: contract:push,          agent_id: story_reviewer},
 ]
 // The terminal `story_close` step is the mechanical MCP verb
 // (no task — orchestrator calls `mcp__satellites__story_close(story_id=…)`

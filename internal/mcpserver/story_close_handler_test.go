@@ -110,6 +110,21 @@ func seedStoryCloseAlice(t *testing.T, s *Server) string {
 	}, now.Add(4*time.Minute)); err != nil {
 		t.Fatalf("verdict row: %v", err)
 	}
+	// AC5 — the deploy:behind gate requires a kind:release-evidence row
+	// whose pushed_sha matches pprod's reported commit. SatellitesInfo
+	// at test time returns config.GitCommit = "unknown"; seed a matching
+	// release-evidence row so the close passes the gate.
+	if _, err := s.deps.Ledger.Append(ctx, ledger.LedgerEntry{
+		WorkspaceID: ws.ID, ProjectID: proj.ID,
+		StoryID: ledger.StringPtr(st.ID),
+		Type:    ledger.TypeEvidence,
+		Tags:    []string{"kind:release-evidence", "phase:merge_to_main", "pushed_sha:unknown"},
+		Content: "## release-evidence stub for wire-shape close",
+		Durability: ledger.DurabilityDurable, SourceType: ledger.SourceAgent,
+		Status: ledger.StatusActive, CreatedBy: "u_alice",
+	}, now.Add(5*time.Minute)); err != nil {
+		t.Fatalf("release-evidence row: %v", err)
+	}
 	return st.ID
 }
 

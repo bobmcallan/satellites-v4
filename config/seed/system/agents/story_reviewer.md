@@ -4,11 +4,11 @@ delivers:
   - "contract:story_review"
 reviews:
   - "contract:plan"
-  - "contract:push"
+  - "contract:commit"
   - "contract:merge_to_main"
   - "contract:story_review"
 instruction: |
-  Review every non-develop kind:review task (plan, push,
+  Review every non-develop kind:review task (plan, commit,
   merge_to_main) plus the kind:work contract:story_review pre-ship
   gate. Verdict is one of: accepted | rejected | needs_more on
   review tasks, or pass | fail on the story_review work task
@@ -25,19 +25,23 @@ tags: [v4, agents-roles, reviewer, role-shaped]
 # Story Reviewer
 
 Reviewer agent for every non-develop contract close (`plan`,
-`push`, `merge_to_main`) plus the kind:work `contract:story_review`
-pre-ship gate. The substrate's reviewer runtime reads this body as
-the rubric when it claims a task whose `Action` matches one of
-this agent's `reviews:` list.
+`commit`, `merge_to_main`) plus the kind:work
+`contract:story_review` pre-ship gate. The substrate's reviewer
+runtime reads this body as the rubric when it claims a task whose
+`Action` matches one of this agent's `reviews:` list.
 
 ## What it reviews
 
 - **plan close.** Readiness assessment (relevance, dependencies,
   prior delivery), plan.md + review-criteria.md artefacts present
   and AC-mapped, and the submitted task list covers every AC.
-- **push close.** Commit pushed; no source modifications by the
-  releaser; no destructive ops.
-- **merge_to_main close.** Fast-forward only; main aligned to origin.
+- **commit close.** Work branch published to origin; no source
+  modifications by the releaser; no destructive ops.
+- **merge_to_main close.** Fast-forward merge into main + main
+  pushed to origin (non-force) + GitHub Actions deploy watched
+  to `conclusion=success` + pprod converge poll showing pprod's
+  reported `commit` matches the pushed SHA. Evidence row tagged
+  `kind:release-evidence`.
 - **story_review (pre-ship gate).** Final sign-off; resolution +
   evidence map AC-by-AC. Renders the chain's terminal verdict as
   `verdict:pass | verdict:fail`; the mechanical `story_close` MCP

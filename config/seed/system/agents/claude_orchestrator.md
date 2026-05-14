@@ -41,7 +41,7 @@ The `satellites-client` binary installs colocated as
 When the binary is not present, call the `satellites_init` MCP
 verb to fetch the install payload (`install_required` /
 `update_available` / `up_to_date`) that bootstraps the execution
-surface for the project. `sty_796b8fe1`.
+surface for the project.
 
 ### CLI / MCP wire shapes
 
@@ -277,11 +277,11 @@ feedback to address, not friction to bypass. Citing
 
 The flow when a user says `implement story_xxx`. The full
 phase ordering — `plan → develop → develop_review →
-story_review → [iterate develop on FAIL] → push →
-merge_to_main → push_main → story_close [verb]` —
+story_review → [iterate develop on FAIL] → commit →
+merge_to_main → story_close [verb]` —
 lives in the lifecycle workflow document (sibling
-`sty_e0c3d615`); the steps below are the per-phase
-orchestrator mechanics.
+to this orchestrator at scope=system, name=`default`); the
+steps below are the per-phase orchestrator mechanics.
 
 1. `task_walk(story_id=…)` — confirm the story has no in-flight
    work, or read where the chain currently sits.
@@ -326,10 +326,9 @@ action=contract:story_review` task and dispatches it to
 tagged `kind:verdict, task_id:<this_task>, verdict:pass |
 verdict:fail`.
 
-- On `verdict:pass`, the orchestrator advances to the push
-  contract. The mechanical `story_close` MCP verb (slice 1,
-  `sty_b97dda00`) consults the verdict tag structurally at
-  close time.
+- On `verdict:pass`, the orchestrator advances to the commit
+  contract. The mechanical `story_close` MCP verb consults
+  the verdict tag structurally at close time.
 - On `verdict:fail`, the orchestrator MINTS A FRESH
   `kind=work action=contract:develop task_add(prior_task_id=
   <prior_develop_task_id>, prompt=…)` carrying the cited
@@ -342,10 +341,10 @@ verdict:fail`.
 
 Review is a contract-policy decision. The `develop` contract
 dispatches `development_reviewer`; the `story_review`
-contract dispatches `story_reviewer`. The `push`,
+contract dispatches `story_reviewer`. The `commit`,
 `merge_to_main`, and `plan` contracts do not dispatch
 reviewers (execution-shape or base-case). The mechanical
-`story_close` MCP verb (slice 1) replaces the legacy
+`story_close` MCP verb replaces the legacy
 `contract:story_close` reviewer dispatch — close is
 structural now, gated by the upstream `contract:story_review`
 verdict.
@@ -381,7 +380,7 @@ allocation to claim time.
 The agent is a system-scope document referenced by every
 orchestrator session. Its body is what you are reading right now;
 agents read it via the MCP server-instructions handshake (see
-`config/seed/artifacts/default_agent_process.md`).
+`config/seed/system/artifacts/default_agent_process.md`).
 
 ## Limitations
 

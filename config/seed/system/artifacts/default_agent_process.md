@@ -62,38 +62,7 @@ Read the documents that describe your role, your project, and
 your task. Act on what they say. Write evidence to the ledger.
 Prose is authoritative — fetch rules, do not infer them.
 
-## Lifecycle
-
-Every story walks a fixed chain. The orchestrator authors
-each task via MCP; the team-member agent executes it via
-`satellites-client task run`; the orchestrator reviews the
-evidence and routes to the next step.
-
-```
-plan
-  → develop
-    → develop_review (verdict:accepted|rejected)
-    → [iterate develop on rejected]
-  → story_review (verdict:pass|fail)
-    → [iterate develop on fail]
-  → push
-  → merge_to_main
-  → push_main
-  → story_close [mechanical MCP verb]
-```
-
-- `develop_review` and `story_review` are the two LLM gates.
-  Both render rejection as a fresh `kind=work
-  contract:develop` task minted via `task_add(prior_task_id=…)`
-  (per `pr_pipeline_authority`).
-- The terminal `story_close` step is a mechanical MCP verb
-  (no agent dispatch); it gate-checks the chain + the
-  `story_review` verdict + the story template fields and
-  walks the story to `done` on PASS.
-- `push`, `merge_to_main`, and `push_main` are
-  execution-shape (no reviewer dispatch).
-
-### Async dispatch pattern
+## Async dispatch pattern
 
 When the orchestrator has more than one story (or more than one
 slice of the same story) in flight at once, dispatch via

@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,15 +32,26 @@ import (
 // hotpathStub composes a *claudeClient backed by an httptest server
 // responding to /api/v1/<noun>/<verb> + a mock gitRunner suitable for
 // asserting against the recorded command stream + ledger row contents.
+//
+// ghCmds + ghOutputs + ghErrors mock the gh CLI shell-out the
+// merge_to_main release runner makes (run list + run watch).
+// pprodCommits is the scripted commit sequence the converge poll
+// observes — each entry is consumed in order, and the runner is
+// expected to see the final entry match the pushed SHA.
 type hotpathStub struct {
-	t          *testing.T
-	gitCmds    [][]string
-	gitOutputs map[string]string // joined args → stdout
-	gitErrors  map[string]error  // joined args → error
-	apiCalls   []recordedAPICall
-	apiResp    map[string]string // path → response body (JSON)
-	mu         sync.Mutex
-	srv        *httptest.Server
+	t            *testing.T
+	gitCmds      [][]string
+	gitOutputs   map[string]string // joined args → stdout
+	gitErrors    map[string]error  // joined args → error
+	ghCmds       [][]string
+	ghOutputs    map[string]string // joined args → stdout
+	ghErrors     map[string]error  // joined args → error
+	pprodCommits []string          // scripted converge-poll responses
+	pprodCalls   int
+	apiCalls     []recordedAPICall
+	apiResp      map[string]string // path → response body (JSON)
+	mu           sync.Mutex
+	srv          *httptest.Server
 }
 
 // recordedAPICall captures one POST /api/v1/<noun>/<verb> request.
@@ -52,6 +65,8 @@ func newHotpathStub(t *testing.T) *hotpathStub {
 		t:          t,
 		gitOutputs: map[string]string{},
 		gitErrors:  map[string]error{},
+		ghOutputs:  map[string]string{},
+		ghErrors:   map[string]error{},
 		apiResp:    map[string]string{},
 	}
 }
@@ -66,6 +81,53 @@ func (s *hotpathStub) gitRunner(_ context.Context, dir string, args ...string) (
 		return []byte(s.gitOutputs[joined]), err
 	}
 	return []byte(s.gitOutputs[joined]), nil
+}
+
+// ghRunner records gh-CLI invocations and returns the scripted
+// stdout/err pair. The runner uses prefix matching on the joined
+// args so tests can register "run list" once and have it apply to
+// `run list --branch main --limit 1 --json …`.
+func (s *hotpathStub) ghRunner(ctx context.Context, args ...string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ghCmds = append(s.ghCmds, args)
+	joined := strings.Join(args, " ")
+	for key, err := range s.ghErrors {
+		if strings.HasPrefix(joined, key) {
+			out := s.ghOutputs[key]
+			return []byte(out), err
+		}
+	}
+	for key, out := range s.ghOutputs {
+		if strings.HasPrefix(joined, key) {
+			// Honour context cancellation so timeout-driven cases can
+			// surface ctx.Err() the same way the production gh shell-out
+			// would on a watch that hangs past the deadline.
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return []byte(out), nil
+		}
+	}
+	return nil, fmt.Errorf("hotpathStub: no gh scripted response for %q", joined)
+}
+
+// pprodFetcher returns the next scripted commit. When pprodCommits
+// is exhausted, the last entry is repeated indefinitely. Tests
+// scripting the converge timeout case set pprodCommits to a stale
+// value the runner never matches.
+func (s *hotpathStub) pprodFetcher(_ context.Context) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.pprodCommits) == 0 {
+		return "", fmt.Errorf("hotpathStub: no pprod commits scripted")
+	}
+	idx := s.pprodCalls
+	if idx >= len(s.pprodCommits) {
+		idx = len(s.pprodCommits) - 1
+	}
+	s.pprodCalls++
+	return s.pprodCommits[idx], nil
 }
 
 // setAPIResp registers the response body for a tool's /api/v1/<noun>/<verb>
@@ -104,6 +166,12 @@ func (s *hotpathStub) client(cfg config.AgentConfig) *claudeClient {
 	cc := newClaudeClient(cfg, nil)
 	cc.api = cliremote.New(s.srv.URL, "tok", nil)
 	cc.gitRunner = s.gitRunner
+	cc.ghRunner = s.ghRunner
+	cc.pprodInfoFetcher = s.pprodFetcher
+	// Test-friendly defaults so converge polls don't sleep for seconds.
+	cc.pprodPollInterval = time.Millisecond
+	cc.pprodConvergeTimeout = 500 * time.Millisecond
+	cc.ghWatchTimeout = 500 * time.Millisecond
 	return cc
 }
 
@@ -122,7 +190,7 @@ func (s *hotpathStub) findAPICall(toolName string) *recordedAPICall {
 }
 
 // TestRunHotPath_DispatchesByContractName: the selector lookup table
-// covers push / merge_to_main and returns errHotUnimplemented for
+// covers commit / merge_to_main and returns errHotUnimplemented for
 // anything else.
 func TestRunHotPath_DispatchesByContractName(t *testing.T) {
 	// Unknown contract → errHotUnimplemented sentinel so Execute
@@ -141,12 +209,12 @@ func TestRunHotPath_DispatchesByContractName(t *testing.T) {
 		"unknown contract should return errHotUnimplemented sentinel; got %v", err)
 }
 
-// TestRunPushHotPath_HappyPath drives the full push runner: trigger-
-// supplied branch wins, gitRunner records the three expected commands
-// (log, push, ls-remote — branch resolution short-circuits via
-// trigger), and the ledger evidence row carries the shape-equivalent
-// tag set on /api/v1/ledger/append.
-func TestRunPushHotPath_HappyPath(t *testing.T) {
+// TestRunCommitHotPath_HappyPath drives the full commit runner:
+// trigger-supplied branch wins, gitRunner records the three expected
+// commands (log, push, ls-remote — branch resolution short-circuits
+// via trigger), and the ledger evidence row carries the renamed
+// `phase:commit` tag.
+func TestRunCommitHotPath_HappyPath(t *testing.T) {
 	s := newHotpathStub(t)
 	s.gitOutputs["log -1 --pretty=fuller agent-task_dev-from-833a28e"] =
 		"commit deadbeef\nAuthor: ...\n\n    refactor(auth): foo\n"
@@ -155,19 +223,19 @@ func TestRunPushHotPath_HappyPath(t *testing.T) {
 	s.gitOutputs["ls-remote origin agent-task_dev-from-833a28e"] =
 		"deadbeefcafe\trefs/heads/agent-task_dev-from-833a28e\n"
 	s.setAPIResp("ledger_append", `{"id":"ldg_xxx"}`)
-	s.setAPIResp("task_update", `{"task_id":"task_push","status":"closed","outcome":"success"}`)
+	s.setAPIResp("task_update", `{"task_id":"task_commit","status":"closed","outcome":"success"}`)
 
 	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
 
 	trigger, _ := json.Marshal(map[string]string{"branch": "agent-task_dev-from-833a28e"})
 	ti := taskInfo{
-		ID: "task_push", StoryID: "sty_target", ProjectID: "proj_x",
-		Action: "contract:push", Trigger: trigger,
+		ID: "task_commit", StoryID: "sty_target", ProjectID: "proj_x",
+		Action: "contract:commit", Trigger: trigger,
 	}
 	outcome, err := cc.runHotPath(context.Background(),
-		TaskEnvelope{ID: "task_push", ProjectID: "proj_x"},
+		TaskEnvelope{ID: "task_commit", ProjectID: "proj_x"},
 		ti, agentInfo{Name: "releaser_agent"},
-		contractInfo{Name: "push"},
+		contractInfo{Name: "commit"},
 		storyInfo{ID: "sty_target"})
 	require.NoError(t, err)
 	assert.Equal(t, OutcomeSuccess, outcome)
@@ -179,7 +247,7 @@ func TestRunPushHotPath_HappyPath(t *testing.T) {
 	assert.Equal(t, []string{"DIR=/repo", "push", "origin", "agent-task_dev-from-833a28e:agent-task_dev-from-833a28e"}, s.gitCmds[1])
 	assert.Equal(t, []string{"DIR=/repo", "ls-remote", "origin", "agent-task_dev-from-833a28e"}, s.gitCmds[2])
 
-	// Evidence row tags must match the heavy-path fixture shape.
+	// Evidence row tags carry phase:commit (renamed from phase:push).
 	led := s.findAPICall("ledger_append")
 	require.NotNil(t, led, "ledger_append must be called via /api/v1/ledger/append")
 	tagsAny, _ := led.Body["tags"].([]any)
@@ -187,9 +255,9 @@ func TestRunPushHotPath_HappyPath(t *testing.T) {
 	for i, v := range tagsAny {
 		tags[i] = v.(string)
 	}
-	assert.Contains(t, tags, "task_id:task_push")
+	assert.Contains(t, tags, "task_id:task_commit")
 	assert.Contains(t, tags, "story_id:sty_target")
-	assert.Contains(t, tags, "phase:push")
+	assert.Contains(t, tags, "phase:commit")
 	assert.Contains(t, tags, "branch:agent-task_dev-from-833a28e")
 	assert.Contains(t, tags, "kind:evidence")
 	assert.Contains(t, tags, "dispatch_class:hot")
@@ -198,17 +266,17 @@ func TestRunPushHotPath_HappyPath(t *testing.T) {
 	require.NotNil(t, s.findAPICall("task_update"))
 }
 
-// TestRunPushHotPath_InferBranchFromChain: with no trigger, the
+// TestRunCommitHotPath_InferBranchFromChain: with no trigger, the
 // runner walks the task chain, finds the latest contract:develop
 // success, and resolves agent-<dev>-from-* via git branch --list.
-func TestRunPushHotPath_InferBranchFromChain(t *testing.T) {
+func TestRunCommitHotPath_InferBranchFromChain(t *testing.T) {
 	s := newHotpathStub(t)
 	walk := taskWalkResponse{Tasks: []taskWalkTask{
 		{ID: "task_plan", Action: "contract:plan", Kind: "work", Status: "closed", Outcome: "success"},
 		{ID: "task_dev_a", Action: "contract:develop", Kind: "work", Iteration: 1, Status: "closed", Outcome: "failure"},
 		{ID: "task_dev_b", Action: "contract:develop", Kind: "work", Iteration: 2, Status: "closed", Outcome: "success"},
 		{ID: "task_dev_rev", Action: "contract:develop", Kind: "review", Status: "closed", Outcome: "success"},
-		{ID: "task_push", Action: "contract:push", Kind: "work", Status: "claimed"},
+		{ID: "task_commit", Action: "contract:commit", Kind: "work", Status: "claimed"},
 	}}
 	walkBytes, _ := json.Marshal(walk)
 	s.setAPIResp("task_walk", string(walkBytes))
@@ -224,12 +292,12 @@ func TestRunPushHotPath_InferBranchFromChain(t *testing.T) {
 	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
 
 	ti := taskInfo{
-		ID: "task_push", StoryID: "sty_x", ProjectID: "proj_x",
-		Action: "contract:push",
+		ID: "task_commit", StoryID: "sty_x", ProjectID: "proj_x",
+		Action: "contract:commit",
 	}
 	outcome, err := cc.runHotPath(context.Background(),
-		TaskEnvelope{ID: "task_push", ProjectID: "proj_x"},
-		ti, agentInfo{}, contractInfo{Name: "push"}, storyInfo{ID: "sty_x"})
+		TaskEnvelope{ID: "task_commit", ProjectID: "proj_x"},
+		ti, agentInfo{}, contractInfo{Name: "commit"}, storyInfo{ID: "sty_x"})
 	require.NoError(t, err)
 	assert.Equal(t, OutcomeSuccess, outcome)
 
@@ -245,49 +313,85 @@ func TestRunPushHotPath_InferBranchFromChain(t *testing.T) {
 	assert.True(t, sawBranchList, "branch --list should target the latest successful develop iteration; got %v", s.gitCmds)
 }
 
-// TestRunMergeToMainHotPath drives the merge runner end-to-end.
-func TestRunMergeToMainHotPath(t *testing.T) {
-	s := newHotpathStub(t)
+// seedMergeToMainHappyStubs primes the gitOutputs + ghOutputs + pprod
+// converge sequence + walk response for a PASS run of the extended
+// merge_to_main release runner. The pushedSHA is the SHA the final
+// `rev-parse main` returns AND the converge poll expects to observe.
+func seedMergeToMainHappyStubs(t *testing.T, s *hotpathStub, pushedSHA string) {
+	t.Helper()
 	walk := taskWalkResponse{Tasks: []taskWalkTask{
 		{ID: "task_plan", Action: "contract:plan", Kind: "work", Status: "closed", Outcome: "success"},
 		{ID: "task_dev", Action: "contract:develop", Kind: "work", Status: "closed", Outcome: "success"},
-		{ID: "task_push", Action: "contract:push", Kind: "work", Status: "closed", Outcome: "success"},
+		{ID: "task_commit", Action: "contract:commit", Kind: "work", Status: "closed", Outcome: "success"},
 		{ID: "task_merge", Action: "contract:merge_to_main", Kind: "work", Status: "claimed"},
 	}}
 	walkBytes, _ := json.Marshal(walk)
 	s.setAPIResp("task_walk", string(walkBytes))
 	s.gitOutputs["fetch origin --quiet"] = ""
-	s.gitOutputs["rev-parse main"] = "abc123\n"
+	s.gitOutputs["rev-parse main"] = pushedSHA + "\n"
 	s.gitOutputs["merge-base --is-ancestor main agent-task_dev-from-833a28e"] = ""
 	s.gitOutputs["merge --ff-only agent-task_dev-from-833a28e"] =
-		"Updating abc123..deadbeef\nFast-forward\n internal/auth/middleware.go | 10 ++++++++++\n"
-	// Second rev-parse main returns the post-merge SHA.
-	s.gitOutputs["rev-parse main"] = "deadbeef\n"
+		"Updating abc123.." + pushedSHA + "\nFast-forward\n internal/auth/middleware.go | 10 ++++++++++\n"
+	s.gitOutputs["push origin main"] = "To origin\n   abc123.." + pushedSHA + "  main -> main\n"
+	s.ghOutputs["run list"] = fmt.Sprintf(`[{"databaseId":12345,"headSha":"%s","status":"completed","conclusion":"success"}]`, pushedSHA)
+	s.ghOutputs["run watch"] = "✓ release deploy · main\n12345 · success\n"
+	s.pprodCommits = []string{"stale-1", pushedSHA}
 	s.setAPIResp("ledger_append", `{"id":"ldg_m"}`)
 	s.setAPIResp("task_update", `{}`)
+}
 
-	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
-
+// runMergeToMainTask drives the merge_to_main runner with the
+// trigger-supplied branch and returns the outcome + error.
+func runMergeToMainTask(t *testing.T, cc *claudeClient) (Outcome, error) {
+	t.Helper()
 	trigger, _ := json.Marshal(map[string]string{"branch": "agent-task_dev-from-833a28e"})
 	ti := taskInfo{
 		ID: "task_merge", StoryID: "sty_m", ProjectID: "proj_x",
 		Action: "contract:merge_to_main", Trigger: trigger,
 	}
-	outcome, err := cc.runHotPath(context.Background(),
+	return cc.runHotPath(context.Background(),
 		TaskEnvelope{ID: "task_merge", ProjectID: "proj_x"},
 		ti, agentInfo{}, contractInfo{Name: "merge_to_main"}, storyInfo{ID: "sty_m"})
+}
+
+// TestRunMergeToMainHotPath_ReleasePass — PASS path. The extended
+// release runner: fast-forwards main, pushes main to origin, watches
+// the GH workflow run to success, polls pprod's satellites_info until
+// reported commit matches the pushed SHA. Writes a single
+// `kind:release-evidence` ledger row carrying SHAs + GH run id +
+// converge samples.
+func TestRunMergeToMainHotPath_ReleasePass(t *testing.T) {
+	s := newHotpathStub(t)
+	seedMergeToMainHappyStubs(t, s, "deadbeef")
+
+	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
+	outcome, err := runMergeToMainTask(t, cc)
 	require.NoError(t, err)
 	assert.Equal(t, OutcomeSuccess, outcome)
 
-	// gitRunner sequence: fetch, rev-parse, ancestor, merge, rev-parse.
-	expectedHead := []string{
-		"fetch", "rev-parse", "merge-base", "merge", "rev-parse",
-	}
+	// gitRunner sequence covers the extended release: fetch, rev-parse,
+	// ancestor, merge, rev-parse, push-main.
+	expectedHead := []string{"fetch", "rev-parse", "merge-base", "merge", "rev-parse", "push"}
 	require.GreaterOrEqual(t, len(s.gitCmds), len(expectedHead))
 	for i, want := range expectedHead {
-		assert.Equal(t, want, s.gitCmds[i][1], "git command #%d should be %q", i, want)
+		assert.Equal(t, want, s.gitCmds[i][1], "git command #%d should be %q (got %v)", i, want, s.gitCmds[i])
 	}
 
+	// gh CLI shell-out covers run list + run watch.
+	var sawRunList, sawRunWatch bool
+	for _, cmd := range s.ghCmds {
+		joined := strings.Join(cmd, " ")
+		if strings.HasPrefix(joined, "run list") {
+			sawRunList = true
+		}
+		if strings.HasPrefix(joined, "run watch") {
+			sawRunWatch = true
+		}
+	}
+	assert.True(t, sawRunList, "gh run list expected; got %v", s.ghCmds)
+	assert.True(t, sawRunWatch, "gh run watch expected; got %v", s.ghCmds)
+
+	// kind:release-evidence with pushed_sha + gh_run_id tags.
 	led := s.findAPICall("ledger_append")
 	require.NotNil(t, led)
 	tagsAny, _ := led.Body["tags"].([]any)
@@ -297,6 +401,92 @@ func TestRunMergeToMainHotPath(t *testing.T) {
 	}
 	assert.Contains(t, tags, "phase:merge_to_main")
 	assert.Contains(t, tags, "dispatch_class:hot")
+	assert.Contains(t, tags, "kind:release-evidence")
+	assert.Contains(t, tags, "pushed_sha:deadbeef")
+	assert.Contains(t, tags, "gh_run_id:12345")
+}
+
+// TestRunMergeToMainHotPath_GHTimeout — gh run watch hangs past the
+// configured timeout. The runner returns failure + no
+// kind:release-evidence row is appended.
+func TestRunMergeToMainHotPath_GHTimeout(t *testing.T) {
+	s := newHotpathStub(t)
+	seedMergeToMainHappyStubs(t, s, "deadbeef")
+	// gh run watch hangs forever: the stub's ctx.Err() path returns the
+	// deadline once the watch ctx fires.
+	s.ghOutputs["run watch"] = ""
+	s.ghErrors["run watch"] = context.DeadlineExceeded
+
+	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
+	outcome, err := runMergeToMainTask(t, cc)
+	require.Error(t, err)
+	assert.Equal(t, OutcomeFailure, outcome)
+	assert.Contains(t, err.Error(), "gh run watch")
+
+	// No kind:release-evidence row appended on failure.
+	led := s.findAPICall("ledger_append")
+	if led != nil {
+		tagsAny, _ := led.Body["tags"].([]any)
+		for _, v := range tagsAny {
+			if v == "kind:release-evidence" {
+				t.Errorf("release-evidence row appended on GH timeout: %+v", led)
+			}
+		}
+	}
+}
+
+// TestRunMergeToMainHotPath_GHFailure — gh run watch returns
+// conclusion=failure (exec.Command exits non-zero with stderr). The
+// runner returns failure + no kind:release-evidence row.
+func TestRunMergeToMainHotPath_GHFailure(t *testing.T) {
+	s := newHotpathStub(t)
+	seedMergeToMainHappyStubs(t, s, "deadbeef")
+	s.ghOutputs["run watch"] = "✗ release deploy · failed\n12345 · failure\n"
+	s.ghErrors["run watch"] = errors.New("exit status 1")
+
+	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
+	outcome, err := runMergeToMainTask(t, cc)
+	require.Error(t, err)
+	assert.Equal(t, OutcomeFailure, outcome)
+	assert.Contains(t, err.Error(), "gh run watch")
+
+	led := s.findAPICall("ledger_append")
+	if led != nil {
+		tagsAny, _ := led.Body["tags"].([]any)
+		for _, v := range tagsAny {
+			if v == "kind:release-evidence" {
+				t.Errorf("release-evidence row appended on GH failure: %+v", led)
+			}
+		}
+	}
+}
+
+// TestRunMergeToMainHotPath_PprodConvergeTimeout — gh succeeds but
+// pprod's satellites_info never reports the pushed SHA within the
+// configured converge timeout. The runner returns failure + no
+// kind:release-evidence row.
+func TestRunMergeToMainHotPath_PprodConvergeTimeout(t *testing.T) {
+	s := newHotpathStub(t)
+	seedMergeToMainHappyStubs(t, s, "deadbeef")
+	// Override the scripted commits with a stale-only sequence that
+	// never matches the pushed SHA.
+	s.pprodCommits = []string{"stale-only"}
+
+	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
+	outcome, err := runMergeToMainTask(t, cc)
+	require.Error(t, err)
+	assert.Equal(t, OutcomeFailure, outcome)
+	assert.Contains(t, err.Error(), "pprod converge timeout")
+
+	led := s.findAPICall("ledger_append")
+	if led != nil {
+		tagsAny, _ := led.Body["tags"].([]any)
+		for _, v := range tagsAny {
+			if v == "kind:release-evidence" {
+				t.Errorf("release-evidence row appended on converge timeout: %+v", led)
+			}
+		}
+	}
 }
 
 // TestVerifyChainPriorWorkSuccess: open work task on the chain
@@ -374,7 +564,7 @@ func TestHotPath_RoutesThroughAPIv1(t *testing.T) {
 	walk := taskWalkResponse{Tasks: []taskWalkTask{
 		{ID: "task_plan", Action: "contract:plan", Kind: "work", Status: "closed", Outcome: "success"},
 		{ID: "task_dev", Action: "contract:develop", Kind: "work", Status: "closed", Outcome: "success"},
-		{ID: "task_push", Action: "contract:push", Kind: "work", Status: "claimed"},
+		{ID: "task_commit", Action: "contract:commit", Kind: "work", Status: "claimed"},
 	}}
 	walkBytes, _ := json.Marshal(walk)
 	s.setAPIResp("task_walk", string(walkBytes))
@@ -390,12 +580,12 @@ func TestHotPath_RoutesThroughAPIv1(t *testing.T) {
 	cc := s.client(config.AgentConfig{RepoPath: "/repo"})
 
 	ti := taskInfo{
-		ID: "task_push", StoryID: "sty_v1", ProjectID: "proj_x",
-		Action: "contract:push",
+		ID: "task_commit", StoryID: "sty_v1", ProjectID: "proj_x",
+		Action: "contract:commit",
 	}
 	_, _ = cc.runHotPath(context.Background(),
-		TaskEnvelope{ID: "task_push", ProjectID: "proj_x"},
-		ti, agentInfo{}, contractInfo{Name: "push"}, storyInfo{ID: "sty_v1"})
+		TaskEnvelope{ID: "task_commit", ProjectID: "proj_x"},
+		ti, agentInfo{}, contractInfo{Name: "commit"}, storyInfo{ID: "sty_v1"})
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

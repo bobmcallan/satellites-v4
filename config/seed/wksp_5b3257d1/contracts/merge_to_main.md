@@ -8,20 +8,35 @@ tags: [v4, lifecycle, workspace]
 ---
 # Merge to Main Contract
 
-Advances local main to incorporate a finished work branch. The
-merge must be fast-forward — any state requiring a merge commit is
-a structural drift the contract refuses to paper over.
+The **atomic release operation**. Fast-forwards local main to the
+finished work branch, publishes main to origin, watches the
+GitHub Actions deploy workflow to completion, and polls pprod's
+`satellites_info` until its reported running `commit` matches
+the pushed SHA. Failure at any step stops the release without
+appending a `kind:release-evidence` row — the operator
+reconciles before re-attempting.
 
 ## What it does
 
 - Confirms the source branch is ahead of local main with no
-  divergence.
+  divergence (`git merge-base --is-ancestor main <branch>`).
 - Runs `git merge --ff-only` to advance main to the source ref.
+- Runs `git push origin main` (non-force) to publish main to
+  origin.
+- Captures the GitHub Actions workflow run id triggered by the
+  main-push (`gh run list --branch main --limit 1`) and watches
+  it to completion (`gh run watch <run_id>`) — configurable GH
+  timeout (default 600s).
+- Polls `mcp__satellites__satellites_info` against the pprod
+  server URL until reported `commit` matches the pushed SHA —
+  configurable converge timeout (default 300s).
 
 ## How
 
-Read-only inspection + `git merge --ff-only`. No commit
-authoring; the merge is an updated ref pointer, not new history.
+Read-only inspection + `git merge --ff-only` + `git push origin
+main` + `gh run watch` + HTTP poll of pprod's `satellites_info`.
+No commit authoring; the merge is an updated ref pointer, not new
+history.
 
 ## Pre-merge gate
 
@@ -42,15 +57,26 @@ shape is already present in the returned `tasks[]` and
 
 ## Evidence required
 
-- The source ref being merged (branch name or SHA).
+A single `kind:release-evidence` ledger row tagged
+`phase:merge_to_main, kind:release-evidence` carrying:
+
+- The source ref being merged (branch name).
 - The pre-merge SHA of local main.
-- The post-merge SHA of local main.
+- The post-merge SHA of local main (the pushed SHA).
 - `git status` clean after the merge.
 - Explicit confirmation that the merge resolved fast-forward.
 - Chain-shape attestation: a ledger row capturing the
   `task_walk(story_id)` excerpt with `review_total`,
   `review_open`, and the per-task `prior_task_id` / `status` rows
   for the develop task and any successors.
+- The `git push origin main` literal output (the
+  `X..Y main -> main` line confirming non-force update).
+- The GitHub workflow run id captured from
+  `gh run list --branch main --limit 1`.
+- The `gh run watch <run_id>` exit with `conclusion=success`.
+- The pprod converge polling: each `satellites_info` response's
+  `commit` field + timestamp, ending with the row whose `commit`
+  matches the pushed SHA.
 
 ## Review policy
 
@@ -64,5 +90,11 @@ judgment was applied earlier in the chain.
   the contract aborts; the operator reconciles divergence in a
   follow-up before re-attempting.
 - No force, no merge commits, no rebases.
-- No `git push` — pushing main is a separate concern.
+- No tag pushes — only main is published; the work branch is
+  already on origin via the prior `commit` contract.
 - No branch deletion as part of this contract.
+- On GH-watch failure (timeout or `conclusion=failure`), or on
+  pprod-converge timeout (pprod's reported `commit` does not
+  match the pushed SHA within the converge timeout), the release
+  stops and no `kind:release-evidence` row is appended — the
+  operator reconciles before re-attempting.

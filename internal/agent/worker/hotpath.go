@@ -1,5 +1,5 @@
 // hotpath.go is the in-process executor for lifecycle contracts whose
-// dispatch_class is "hot" (push, merge_to_main). It bypasses the
+// dispatch_class is "hot" (commit, merge_to_main). It bypasses the
 // seven-step claude subprocess that client_claude.go's Execute uses
 // for heavy phases: those steps amortise ~60-120s of setup over
 // substantial LLM work, but for git-shape phases the setup dominates
@@ -10,22 +10,32 @@
 //
 // Evidence-row shape parity. The runners emit ledger rows whose tag
 // set + content section structure mirror the heavy-path rows that
-// shipped before this story (reference fixtures from sty_f2d342e2:
-// ldg_d0c09de8 push, ldg_f4ed7c6d merge_to_main). The orchestrator-
-// side downstream consumers (reviewer rubrics, portal renderers,
-// audit dashboards) treat hot and heavy rows uniformly.
-//
-// sty_4994caa3 (parent: sty_3b3e4e66; Layer A frontmatter shipped in
-// 833a28e).
+// shipped earlier (commit → kind:evidence with phase:commit;
+// merge_to_main → kind:release-evidence with phase:merge_to_main).
+// The orchestrator-side downstream consumers (reviewer rubrics,
+// portal renderers, audit dashboards) treat hot and heavy rows
+// uniformly.
 
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
+)
+
+// merge_to_main release-watch defaults. The runner caps `gh run
+// watch` at defaultGHWatchTimeout and the pprod converge poll at
+// defaultPprodConvergeTimeout. Production overrides these via the
+// claudeClient fields when set (zero falls back to the defaults).
+const (
+	defaultGHWatchTimeout       = 10 * time.Minute
+	defaultPprodConvergeTimeout = 5 * time.Minute
+	defaultPprodPollInterval    = 5 * time.Second
 )
 
 // All substrate calls in this file route through c.api (the shared
@@ -50,8 +60,8 @@ var errHotUnimplemented = errors.New("hot-path runner not implemented for contra
 // the caller surfaces verbatim.
 func (c *claudeClient) runHotPath(ctx context.Context, env TaskEnvelope, ti taskInfo, ai agentInfo, ci contractInfo, si storyInfo) (Outcome, error) {
 	switch ci.Name {
-	case "push":
-		return c.runPushHotPath(ctx, env, ti, ai, ci, si)
+	case "commit":
+		return c.runCommitHotPath(ctx, env, ti, ai, ci, si)
 	case "merge_to_main":
 		return c.runMergeToMainHotPath(ctx, env, ti, ai, ci, si)
 	default:
@@ -91,7 +101,7 @@ func (c *claudeClient) fetchTaskWalk(ctx context.Context, storyID string) (taskW
 }
 
 // triggerPayload is the optional orchestrator-supplied JSON on
-// task.Trigger. Push + merge runners honour branch / sha when set.
+// task.Trigger. Commit + merge runners honour branch / sha when set.
 // Trigger is parsed leniently — unknown keys are ignored and an
 // invalid JSON blob degrades to "" / "".
 type triggerPayload struct {
@@ -111,7 +121,7 @@ func parseTrigger(raw []byte) triggerPayload {
 
 // inferDevelopTaskID returns the id of the most-recent contract:develop
 // kind=work task on the chain that closed outcome=success. Errors when
-// no such task exists — push + merge both assume a successful develop
+// no such task exists — commit + merge both assume a successful develop
 // ancestor.
 func inferDevelopTaskID(tw taskWalkResponse) (string, error) {
 	for i := len(tw.Tasks) - 1; i >= 0; i-- {
@@ -162,11 +172,12 @@ func (c *claudeClient) resolveLocalBranch(ctx context.Context, devTaskID string)
 	}
 }
 
-// resolvePushBranch returns the branch the runner should push. Trigger
-// override wins (orchestrator passes {branch, sha} explicitly); else
-// the chain is walked for the prior develop task and the convention
-// `agent-<devTaskID>-from-*` is resolved against the local repo.
-func (c *claudeClient) resolvePushBranch(ctx context.Context, ti taskInfo) (string, error) {
+// resolveWorkBranch returns the branch the runner should publish.
+// Trigger override wins (orchestrator passes {branch, sha} explicitly);
+// else the chain is walked for the prior develop task and the
+// convention `agent-<devTaskID>-from-*` is resolved against the local
+// repo.
+func (c *claudeClient) resolveWorkBranch(ctx context.Context, ti taskInfo) (string, error) {
 	if tp := parseTrigger(ti.Trigger); tp.Branch != "" {
 		return tp.Branch, nil
 	}
@@ -181,58 +192,59 @@ func (c *claudeClient) resolvePushBranch(ctx context.Context, ti taskInfo) (stri
 	return c.resolveLocalBranch(ctx, dev)
 }
 
-// runPushHotPath pushes the develop branch to origin and emits an
-// evidence row whose tag set + content shape match the heavy-path
-// fixture ldg_d0c09de8.
+// runCommitHotPath publishes the develop branch to origin and emits
+// an evidence row tagged kind:evidence, phase:commit. The commit
+// contract is the substrate-level publish action — not a release;
+// release semantics live in merge_to_main.
 //
 // Steps:
 //
 //  1. Resolve branch (trigger override → task_walk → local branch list).
 //  2. git log -1 --pretty=fuller <branch>     — pre-push commit context.
-//  3. git push origin <branch>:<branch>       — non-force ship.
+//  3. git push origin <branch>:<branch>       — non-force publish.
 //  4. git ls-remote origin <branch>           — origin SHA confirmation.
 //  5. ledger_append with kind:evidence shape.
 //  6. task_update closed success.
-func (c *claudeClient) runPushHotPath(ctx context.Context, env TaskEnvelope, ti taskInfo, _ agentInfo, _ contractInfo, _ storyInfo) (Outcome, error) {
-	branch, err := c.resolvePushBranch(ctx, ti)
+func (c *claudeClient) runCommitHotPath(ctx context.Context, env TaskEnvelope, ti taskInfo, _ agentInfo, _ contractInfo, _ storyInfo) (Outcome, error) {
+	branch, err := c.resolveWorkBranch(ctx, ti)
 	if err != nil {
-		return OutcomeFailure, fmt.Errorf("push: %w", err)
+		return OutcomeFailure, fmt.Errorf("commit: %w", err)
 	}
 
 	logOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "log", "-1", "--pretty=fuller", branch)
 	if err != nil {
-		return OutcomeFailure, fmt.Errorf("push: git log: %w", err)
+		return OutcomeFailure, fmt.Errorf("commit: git log: %w", err)
 	}
 
 	pushOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "push", "origin", branch+":"+branch)
 	if err != nil {
-		return OutcomeFailure, fmt.Errorf("push: git push: %w", err)
+		return OutcomeFailure, fmt.Errorf("commit: git push: %w", err)
 	}
 
 	lsOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "ls-remote", "origin", branch)
 	if err != nil {
-		return OutcomeFailure, fmt.Errorf("push: git ls-remote: %w", err)
+		return OutcomeFailure, fmt.Errorf("commit: git ls-remote: %w", err)
 	}
 
-	if err := c.appendHotPushEvidence(ctx, env, ti, branch, logOut, pushOut, lsOut); err != nil {
-		return OutcomeFailure, fmt.Errorf("push: evidence: %w", err)
+	if err := c.appendHotCommitEvidence(ctx, env, ti, branch, logOut, pushOut, lsOut); err != nil {
+		return OutcomeFailure, fmt.Errorf("commit: evidence: %w", err)
 	}
 
 	if err := c.closeTaskSuccess(ctx, env.ID); err != nil {
-		return OutcomeFailure, fmt.Errorf("push: close task: %w", err)
+		return OutcomeFailure, fmt.Errorf("commit: close task: %w", err)
 	}
 	return OutcomeSuccess, nil
 }
 
-// appendHotPushEvidence writes the kind:evidence ledger row for a
-// push. Tag set + section structure match ldg_d0c09de8.
-func (c *claudeClient) appendHotPushEvidence(ctx context.Context, env TaskEnvelope, ti taskInfo, branch string, logOut, pushOut, lsOut []byte) error {
+// appendHotCommitEvidence writes the kind:evidence ledger row for a
+// commit-contract publish. Tag set carries phase:commit.
+func (c *claudeClient) appendHotCommitEvidence(ctx context.Context, env TaskEnvelope, ti taskInfo, branch string, logOut, pushOut, lsOut []byte) error {
 	content := fmt.Sprintf(
-		"# Push evidence — %s\n\n"+
+		"# Commit evidence — %s\n\n"+
 			"**Branch:** `%s`\n"+
-			"**Phase:** push (review-free)\n"+
-			"**Dispatch class:** hot (in-process runner; sty_4994caa3).\n\n"+
-			"## 1. Pre-push commit verification\n\n"+
+			"**Phase:** commit (publish work branch to origin; review-free)\n"+
+			"**Dispatch class:** hot (in-process runner).\n\n"+
+			"## 1. Pre-publish commit verification\n\n"+
 			"`git log -1 --pretty=fuller %s` (literal):\n\n```\n%s\n```\n\n"+
 			"## 2. Push output\n\n"+
 			"`git push origin %s:%s` (literal):\n\n```\n%s\n```\n\n"+
@@ -241,10 +253,11 @@ func (c *claudeClient) appendHotPushEvidence(ctx context.Context, env TaskEnvelo
 			"## 4. Constraint compliance\n\n"+
 			"- Non-force update (no `+ forced update` in the push output above).\n"+
 			"- No tag push, no branch deletion, no other ref touched.\n"+
-			"- No source files modified by this task (push is a git-write phase only).\n\n"+
+			"- No source files modified by this task (commit is a publish phase only).\n"+
+			"- No release semantics — release is the merge_to_main contract's atomic operation.\n\n"+
 			"## Principles cited\n\n"+
 			"- `pr_evidence` — every claim above is backed by the literal command output.\n"+
-			"- `pr_pipeline_integrity` — push is the contracted ship phase, executed in-process per sty_4994caa3.\n",
+			"- `pr_pipeline_integrity` — commit is the contracted publish phase, executed in-process.\n",
 		ti.StoryID, branch,
 		branch, strings.TrimSpace(string(logOut)),
 		branch, branch, strings.TrimSpace(string(pushOut)),
@@ -253,7 +266,7 @@ func (c *claudeClient) appendHotPushEvidence(ctx context.Context, env TaskEnvelo
 	tags := []string{
 		"task_id:" + env.ID,
 		"story_id:" + ti.StoryID,
-		"phase:push",
+		"phase:commit",
 		"branch:" + branch,
 		"dispatch_class:hot",
 		"kind:evidence",
@@ -261,11 +274,16 @@ func (c *claudeClient) appendHotPushEvidence(ctx context.Context, env TaskEnvelo
 	return c.appendEvidence(ctx, env.ProjectID, ti.StoryID, tags, content)
 }
 
-// runMergeToMainHotPath fast-forwards local `main` to the branch the
-// prior push placed on origin. Emits an evidence row whose shape
-// mirrors ldg_f4ed7c6d.
+// runMergeToMainHotPath performs the **atomic release operation**:
+// fast-forwards local `main` to the work branch, publishes main to
+// origin, watches the GitHub Actions deploy workflow to completion,
+// and polls pprod's `satellites_info` until reported `commit` matches
+// the pushed SHA. Emits one `kind:release-evidence` ledger row on
+// success carrying every step's literal output. Failure at any step
+// stops the release without writing the row — the operator
+// reconciles before re-attempting.
 func (c *claudeClient) runMergeToMainHotPath(ctx context.Context, env TaskEnvelope, ti taskInfo, _ agentInfo, _ contractInfo, _ storyInfo) (Outcome, error) {
-	branch, err := c.resolvePushBranch(ctx, ti)
+	branch, err := c.resolveWorkBranch(ctx, ti)
 	if err != nil {
 		return OutcomeFailure, fmt.Errorf("merge_to_main: %w", err)
 	}
@@ -283,15 +301,11 @@ func (c *claudeClient) runMergeToMainHotPath(ctx context.Context, env TaskEnvelo
 		return OutcomeFailure, fmt.Errorf("merge_to_main: git fetch: %w", err)
 	}
 
-	mainOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "rev-parse", "main")
+	preMainOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "rev-parse", "main")
 	if err != nil {
 		return OutcomeFailure, fmt.Errorf("merge_to_main: git rev-parse main: %w", err)
 	}
 
-	// merge-base --is-ancestor exits 0 when main is an ancestor of
-	// branch (the only state where --ff-only can succeed); non-zero
-	// exits surface here so the runner fails fast before attempting
-	// the merge.
 	if _, err := c.gitRunner(ctx, c.cfg.RepoPath, "merge-base", "--is-ancestor", "main", branch); err != nil {
 		return OutcomeFailure, fmt.Errorf("merge_to_main: ff-only ancestor check: %w", err)
 	}
@@ -305,8 +319,35 @@ func (c *claudeClient) runMergeToMainHotPath(ctx context.Context, env TaskEnvelo
 	if err != nil {
 		return OutcomeFailure, fmt.Errorf("merge_to_main: post-merge rev-parse: %w", err)
 	}
+	pushedSHA := strings.TrimSpace(string(postMainOut))
 
-	if err := c.appendHotMergeEvidence(ctx, env, ti, branch, fetchOut, mainOut, mergeOut, postMainOut); err != nil {
+	pushMainOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "push", "origin", "main")
+	if err != nil {
+		return OutcomeFailure, fmt.Errorf("merge_to_main: git push origin main: %w", err)
+	}
+
+	runListOut, err := c.runGH(ctx, "run", "list", "--branch", "main", "--limit", "1", "--json", "databaseId,headSha,status,conclusion")
+	if err != nil {
+		return OutcomeFailure, fmt.Errorf("merge_to_main: gh run list: %w", err)
+	}
+	runID, err := parseGHRunID(runListOut)
+	if err != nil {
+		return OutcomeFailure, fmt.Errorf("merge_to_main: parse gh run list: %w", err)
+	}
+
+	watchCtx, watchCancel := context.WithTimeout(ctx, c.effectiveGHWatchTimeout())
+	defer watchCancel()
+	watchOut, err := c.runGH(watchCtx, "run", "watch", runID, "--exit-status")
+	if err != nil {
+		return OutcomeFailure, fmt.Errorf("merge_to_main: gh run watch: %w", err)
+	}
+
+	convergeSamples, err := c.pollPprodConverge(ctx, pushedSHA)
+	if err != nil {
+		return OutcomeFailure, fmt.Errorf("merge_to_main: %w", err)
+	}
+
+	if err := c.appendHotMergeReleaseEvidence(ctx, env, ti, branch, pushedSHA, fetchOut, preMainOut, mergeOut, postMainOut, pushMainOut, runID, runListOut, watchOut, convergeSamples); err != nil {
 		return OutcomeFailure, fmt.Errorf("merge_to_main: evidence: %w", err)
 	}
 
@@ -316,36 +357,179 @@ func (c *claudeClient) runMergeToMainHotPath(ctx context.Context, env TaskEnvelo
 	return OutcomeSuccess, nil
 }
 
-// appendHotMergeEvidence writes the kind:evidence ledger row for a
-// merge_to_main. Tag set + sections match ldg_f4ed7c6d.
-func (c *claudeClient) appendHotMergeEvidence(ctx context.Context, env TaskEnvelope, ti taskInfo, branch string, fetchOut, preMain, mergeOut, postMain []byte) error {
+// runGH dispatches to the injected ghRunner; nil falls back to the
+// package-level runGH so production stays a one-line shell-out.
+func (c *claudeClient) runGH(ctx context.Context, args ...string) ([]byte, error) {
+	if c.ghRunner != nil {
+		return c.ghRunner(ctx, args...)
+	}
+	return runGH(ctx, args...)
+}
+
+// effectiveGHWatchTimeout returns the configured timeout or the
+// package default when unset (zero).
+func (c *claudeClient) effectiveGHWatchTimeout() time.Duration {
+	if c.ghWatchTimeout > 0 {
+		return c.ghWatchTimeout
+	}
+	return defaultGHWatchTimeout
+}
+
+// effectivePprodConvergeTimeout returns the configured pprod converge
+// timeout or the package default when unset (zero).
+func (c *claudeClient) effectivePprodConvergeTimeout() time.Duration {
+	if c.pprodConvergeTimeout > 0 {
+		return c.pprodConvergeTimeout
+	}
+	return defaultPprodConvergeTimeout
+}
+
+// effectivePprodPollInterval returns the configured poll interval or
+// the package default when unset (zero).
+func (c *claudeClient) effectivePprodPollInterval() time.Duration {
+	if c.pprodPollInterval > 0 {
+		return c.pprodPollInterval
+	}
+	return defaultPprodPollInterval
+}
+
+// satellitesInfoResp decodes the subset of satellites_info the
+// converge poll reads.
+type satellitesInfoResp struct {
+	Commit string `json:"commit"`
+}
+
+// pprodPollSample is one converge-poll observation captured for the
+// release evidence row.
+type pprodPollSample struct {
+	At     time.Time `json:"at"`
+	Commit string    `json:"commit"`
+}
+
+// pollPprodConverge polls pprod's satellites_info until its reported
+// commit matches pushedSHA or the converge timeout expires. Returns
+// the ordered samples (including the converged final sample) on
+// success; an error wrapping the last observed commit on timeout.
+func (c *claudeClient) pollPprodConverge(ctx context.Context, pushedSHA string) ([]pprodPollSample, error) {
+	timeout := c.effectivePprodConvergeTimeout()
+	interval := c.effectivePprodPollInterval()
+	deadline := time.Now().Add(timeout)
+	var samples []pprodPollSample
+	for {
+		commit, err := c.fetchPprodCommit(ctx)
+		if err != nil {
+			return samples, fmt.Errorf("pprod converge: satellites_info: %w", err)
+		}
+		samples = append(samples, pprodPollSample{At: time.Now().UTC(), Commit: commit})
+		if commit == pushedSHA {
+			return samples, nil
+		}
+		if time.Now().After(deadline) {
+			return samples, fmt.Errorf("pprod converge timeout: last=%q want=%q", commit, pushedSHA)
+		}
+		select {
+		case <-ctx.Done():
+			return samples, fmt.Errorf("pprod converge: ctx: %w", ctx.Err())
+		case <-time.After(interval):
+		}
+	}
+}
+
+// fetchPprodCommit returns pprod's currently reported running commit.
+// Tests override via pprodInfoFetcher; production routes through the
+// shared /api/v1 client (c.api.Call satellites_info).
+func (c *claudeClient) fetchPprodCommit(ctx context.Context) (string, error) {
+	if c.pprodInfoFetcher != nil {
+		return c.pprodInfoFetcher(ctx)
+	}
+	if c.api == nil {
+		return "", errors.New("api client unset")
+	}
+	var info satellitesInfoResp
+	if err := c.api.Call(ctx, "satellites_info", map[string]any{}, &info); err != nil {
+		return "", err
+	}
+	return info.Commit, nil
+}
+
+// parseGHRunID extracts the databaseId of the latest run from
+// `gh run list --json databaseId,...` output. The JSON shape is an
+// array of run objects; we read the first entry's databaseId.
+func parseGHRunID(out []byte) (string, error) {
+	trimmed := bytes.TrimSpace(out)
+	if len(trimmed) == 0 {
+		return "", errors.New("gh run list returned empty output")
+	}
+	var rows []struct {
+		DatabaseID int64  `json:"databaseId"`
+		HeadSHA    string `json:"headSha"`
+	}
+	if err := json.Unmarshal(trimmed, &rows); err != nil {
+		return "", fmt.Errorf("decode gh run list: %w", err)
+	}
+	if len(rows) == 0 {
+		return "", errors.New("gh run list returned no workflow runs")
+	}
+	if rows[0].DatabaseID == 0 {
+		return "", errors.New("gh run list: first row has empty databaseId")
+	}
+	return fmt.Sprintf("%d", rows[0].DatabaseID), nil
+}
+
+// appendHotMergeReleaseEvidence writes the kind:release-evidence
+// ledger row covering the atomic release: local merge + main push +
+// GitHub Actions deploy watch + pprod converge poll. The mechanical
+// `story_close` MCP verb consults the pushedSHA stored on this row to
+// surface the `deploy:behind` gap when pprod regresses.
+func (c *claudeClient) appendHotMergeReleaseEvidence(ctx context.Context, env TaskEnvelope, ti taskInfo, branch, pushedSHA string, fetchOut, preMain, mergeOut, postMain, pushMainOut []byte, runID string, runListOut, watchOut []byte, samples []pprodPollSample) error {
+	convergeLines := make([]string, 0, len(samples))
+	for _, s := range samples {
+		convergeLines = append(convergeLines, fmt.Sprintf("- %s commit=%s", s.At.Format(time.RFC3339), s.Commit))
+	}
 	content := fmt.Sprintf(
-		"## merge_to_main evidence — %s\n\n"+
+		"## merge_to_main release evidence — %s\n\n"+
 			"**Branch merged:** `%s`\n"+
-			"**Dispatch class:** hot (in-process runner; sty_4994caa3).\n\n"+
-			"## Pre-merge state\n\n"+
+			"**Pushed SHA:** `%s`\n"+
+			"**GH workflow run id:** `%s`\n"+
+			"**Dispatch class:** hot (in-process runner).\n\n"+
+			"## 1. Pre-merge state\n\n"+
 			"```\n$ git -C <repo> fetch origin --quiet\n%s\n\n"+
 			"$ git -C <repo> rev-parse main\n%s\n\n"+
 			"$ git -C <repo> merge-base --is-ancestor main %s && echo OK\nOK\n```\n\n"+
 			"Ancestor check returned OK — fast-forward is the only possible resolution.\n\n"+
-			"## Merge command output (literal)\n\n"+
+			"## 2. Merge command output (literal)\n\n"+
 			"```\n$ git -C <repo> merge --ff-only %s\n%s\n```\n\n"+
 			"`Fast-forward` confirms explicit fast-forward resolution.\n\n"+
-			"## Post-merge state\n\n"+
+			"## 3. Post-merge state\n\n"+
 			"```\n$ git -C <repo> rev-parse main\n%s\n```\n\n"+
+			"## 4. Main push to origin\n\n"+
+			"```\n$ git -C <repo> push origin main\n%s\n```\n\n"+
+			"Non-force update.\n\n"+
+			"## 5. GitHub Actions deploy watch\n\n"+
+			"`gh run list --branch main --limit 1 --json databaseId,headSha,status,conclusion` (literal):\n\n"+
+			"```\n%s\n```\n\n"+
+			"`gh run watch %s --exit-status` (literal):\n\n```\n%s\n```\n\n"+
+			"## 6. pprod converge polling\n\n"+
+			"%s\n\n"+
 			"## Constraints honoured\n\n"+
 			"- `--ff-only` ABSOLUTE: ancestor check ran before the merge command; the merge output literally says `Fast-forward`.\n"+
-			"- No `git push` (push is the prior phase).\n"+
-			"- No story transition (story_close is a separate role).\n\n"+
+			"- `git push origin main` is non-force; no tags, no branch deletion.\n"+
+			"- `gh run watch` returned `conclusion=success` before the converge poll ran.\n"+
+			"- pprod's reported `commit` matches the pushed SHA at the final sample.\n\n"+
 			"## Principles cited\n\n"+
 			"- `pr_evidence` — every claim is backed by literal command output.\n"+
-			"- `pr_pipeline_integrity` — the merge ran through the contracted ff-only ancestor gate.\n",
-		ti.StoryID, branch,
+			"- `pr_pipeline_integrity` — the merge ran through the contracted ff-only ancestor gate.\n"+
+			"- `pr_pipeline_authority` — release is not complete until pprod reports the pushed SHA.\n",
+		ti.StoryID, branch, pushedSHA, runID,
 		strings.TrimSpace(string(fetchOut)),
 		strings.TrimSpace(string(preMain)),
 		branch,
 		branch, strings.TrimSpace(string(mergeOut)),
 		strings.TrimSpace(string(postMain)),
+		strings.TrimSpace(string(pushMainOut)),
+		strings.TrimSpace(string(runListOut)),
+		runID, strings.TrimSpace(string(watchOut)),
+		strings.Join(convergeLines, "\n"),
 	)
 	tags := []string{
 		"task_id:" + env.ID,
@@ -353,7 +537,9 @@ func (c *claudeClient) appendHotMergeEvidence(ctx context.Context, env TaskEnvel
 		"phase:merge_to_main",
 		"branch:" + branch,
 		"dispatch_class:hot",
-		"kind:evidence",
+		"kind:release-evidence",
+		"pushed_sha:" + pushedSHA,
+		"gh_run_id:" + runID,
 	}
 	return c.appendEvidence(ctx, env.ProjectID, ti.StoryID, tags, content)
 }

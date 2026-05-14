@@ -17,7 +17,7 @@ import (
 //     its name (e.g. "develop").
 //  2. Looks up the matching lifecycle agent. The lifecycle is driven
 //     by two role agents — developer_agent (plan/develop) and
-//     releaser_agent (push/merge_to_main). The migration consults
+//     releaser_agent (commit/merge_to_main). The migration consults
 //     the role map first; non-lifecycle contracts (project-scope
 //     custom contracts) still fall through to the legacy
 //     `<contract>_agent` name match.
@@ -100,7 +100,7 @@ func MigrateSkillContractBindings(ctx context.Context, store Store, logger arbor
 var lifecycleAgentForContract = map[string]string{
 	"plan":          "developer_agent",
 	"develop":       "developer_agent",
-	"push":          "releaser_agent",
+	"commit":        "releaser_agent",
 	"merge_to_main": "releaser_agent",
 }
 

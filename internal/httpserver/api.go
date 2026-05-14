@@ -47,38 +47,43 @@ func NewAPIRegistrar(c *client.Client) *APIRegistrar {
 // is wrapped by auth.AuthMiddleware at the cmd/satellites-server
 // layer; routes here assume the caller is resolved on the request
 // context.
+//
+// Every /api/v1/* registration flows through a.handle() which wraps
+// the handler with the dispatched-tool-call telemetry middleware
+// (sty_090f6183). The middleware is a no-op when the request lacks
+// the X-Satellites-Dispatched-Task-ID header.
 func (a *APIRegistrar) Register(mux *http.ServeMux) {
 	// Read verbs.
-	mux.HandleFunc("POST /api/v1/satellites/info", a.handleSatellitesInfo)
-	mux.HandleFunc("POST /api/v1/satellites/init", a.handleSatellitesInit)
-	mux.HandleFunc("POST /api/v1/system/version", a.handleSystemVersion)
-	mux.HandleFunc("POST /api/v1/session/whoami", a.handleSessionWhoami)
-	mux.HandleFunc("POST /api/v1/session/register", a.handleSessionRegister)
-	mux.HandleFunc("POST /api/v1/ledger/get", a.handleLedgerGet)
-	mux.HandleFunc("POST /api/v1/ledger/list", a.handleLedgerList)
-	mux.HandleFunc("POST /api/v1/ledger/search", a.handleLedgerSearch)
-	mux.HandleFunc("POST /api/v1/ledger/recall", a.handleLedgerRecall)
-	mux.HandleFunc("POST /api/v1/ledger/append", a.handleLedgerAppend)
-	mux.HandleFunc("POST /api/v1/ledger/dereference", a.handleLedgerDereference)
-	mux.HandleFunc("POST /api/v1/document/get", a.handleDocumentGet)
-	mux.HandleFunc("POST /api/v1/document/list", a.handleDocumentList)
-	mux.HandleFunc("POST /api/v1/task/get", a.handleTaskGet)
-	mux.HandleFunc("POST /api/v1/task/walk", a.handleTaskWalk)
-	mux.HandleFunc("POST /api/v1/task/claim", a.handleTaskClaim)
-	mux.HandleFunc("POST /api/v1/task/update", a.handleTaskUpdate)
-	mux.HandleFunc("POST /api/v1/task/add", a.handleTaskAdd)
-	mux.HandleFunc("POST /api/v1/task/plan", a.handleTaskPlan)
+	a.handle(mux, "POST /api/v1/satellites/info", a.handleSatellitesInfo)
+	a.handle(mux, "POST /api/v1/satellites/init", a.handleSatellitesInit)
+	a.handle(mux, "POST /api/v1/system/version", a.handleSystemVersion)
+	a.handle(mux, "POST /api/v1/session/whoami", a.handleSessionWhoami)
+	a.handle(mux, "POST /api/v1/session/register", a.handleSessionRegister)
+	a.handle(mux, "POST /api/v1/ledger/get", a.handleLedgerGet)
+	a.handle(mux, "POST /api/v1/ledger/list", a.handleLedgerList)
+	a.handle(mux, "POST /api/v1/ledger/search", a.handleLedgerSearch)
+	a.handle(mux, "POST /api/v1/ledger/recall", a.handleLedgerRecall)
+	a.handle(mux, "POST /api/v1/ledger/append", a.handleLedgerAppend)
+	a.handle(mux, "POST /api/v1/ledger/dereference", a.handleLedgerDereference)
+	a.handle(mux, "POST /api/v1/document/get", a.handleDocumentGet)
+	a.handle(mux, "POST /api/v1/document/list", a.handleDocumentList)
+	a.handle(mux, "POST /api/v1/task/get", a.handleTaskGet)
+	a.handle(mux, "POST /api/v1/task/walk", a.handleTaskWalk)
+	a.handle(mux, "POST /api/v1/task/claim", a.handleTaskClaim)
+	a.handle(mux, "POST /api/v1/task/update", a.handleTaskUpdate)
+	a.handle(mux, "POST /api/v1/task/add", a.handleTaskAdd)
+	a.handle(mux, "POST /api/v1/task/plan", a.handleTaskPlan)
 	// sty_8c17b89d: task_log routes — append + list are thin
 	// forwarders; stream is the SSE long-lived-connection carve-out.
-	mux.HandleFunc("POST /api/v1/task/log/append", a.handleTaskLogAppend)
-	mux.HandleFunc("POST /api/v1/task/log/list", a.handleTaskLogList)
+	a.handle(mux, "POST /api/v1/task/log/append", a.handleTaskLogAppend)
+	a.handle(mux, "POST /api/v1/task/log/list", a.handleTaskLogList)
 	mux.HandleFunc("GET /api/v1/task/log/stream", a.handleTaskLogStream)
-	mux.HandleFunc("POST /api/v1/story/get", a.handleStoryGet)
+	a.handle(mux, "POST /api/v1/story/get", a.handleStoryGet)
 	// /api/v1/story/update-status + /api/v1/story/field-set routes removed
 	// in sty_4db0e025 slice D1 — both folded into /api/v1/story/update
 	// (handleStoryUpdate accepts status + fields). pr_story_terminal_gate
 	// is preserved via client.StoryUpdate → MemoryStore.UpdateStatus.
-	mux.HandleFunc("POST /api/v1/project/set", a.handleProjectSet)
+	a.handle(mux, "POST /api/v1/project/set", a.handleProjectSet)
 
 	// Operator-tier read routes (sty_ef248ab2).
 	a.registerOperatorRoutes(mux)
@@ -87,6 +92,71 @@ func (a *APIRegistrar) Register(mux *http.ServeMux) {
 	// Operator-tier Tier B mutates (sty_0b419d98). portal_replicate
 	// remains deferred.
 	a.registerOperatorTierBRoutes(mux)
+}
+
+// dispatchedTaskIDHeader names the inbound HTTP header dispatched
+// agents stamp on every /api/v1/* request so the satellites-server
+// can publish KindToolCallStart / KindToolCallEnd telemetry against
+// the originating task_log stream (sty_090f6183).
+const dispatchedTaskIDHeader = "X-Satellites-Dispatched-Task-ID"
+
+// handle registers a /api/v1/* HandleFunc wrapped with the
+// dispatched-tool-call telemetry middleware. The middleware extracts
+// the tool name from the URL path (e.g. POST /api/v1/task/claim →
+// "task_claim") and emits KindToolCallStart before the handler runs
+// and KindToolCallEnd after — both only when the inbound request
+// carries the dispatched-task-id header. The middleware delegates
+// emission to client.Client.PublishTaskLog so the wire layer never
+// imports internal/tasklog directly (pr_mcp_cli_shared_path).
+func (a *APIRegistrar) handle(mux *http.ServeMux, pattern string, h http.HandlerFunc) {
+	toolName := deriveToolName(pattern)
+	mux.HandleFunc(pattern, a.withDispatchedToolCallTelemetry(toolName, h))
+}
+
+// deriveToolName turns "POST /api/v1/task/log/append" into
+// "task_log_append" so the telemetry payload mirrors the verb name
+// the cliremote.Call surface uses.
+func deriveToolName(pattern string) string {
+	// Strip method prefix.
+	p := pattern
+	if i := strings.Index(p, " "); i >= 0 {
+		p = p[i+1:]
+	}
+	p = strings.TrimPrefix(p, "/api/v1/")
+	p = strings.Trim(p, "/")
+	return strings.ReplaceAll(p, "/", "_")
+}
+
+// withDispatchedToolCallTelemetry wraps next with the
+// KindToolCallStart / KindToolCallEnd emit pair. Returns next
+// unwrapped when the inbound request has no
+// dispatchedTaskIDHeader — the production cost on operator-tier
+// API hits is exactly one header lookup.
+func (a *APIRegistrar) withDispatchedToolCallTelemetry(toolName string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		taskID := strings.TrimSpace(r.Header.Get(dispatchedTaskIDHeader))
+		if taskID == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		a.client.PublishTaskLog(r.Context(), taskID, client.TaskLogKindToolCallStart, map[string]any{
+			"tool_name":    toolName,
+			"args_summary": "",
+		})
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		duration := time.Since(start)
+		errMsg := ""
+		if rec.status >= 400 {
+			errMsg = http.StatusText(rec.status)
+		}
+		a.client.PublishTaskLog(r.Context(), taskID, client.TaskLogKindToolCallEnd, map[string]any{
+			"tool_name":   toolName,
+			"duration_ms": duration.Milliseconds(),
+			"error":       errMsg,
+		})
+	}
 }
 
 // clientCaller builds the typed client.Caller from the AuthMiddleware-

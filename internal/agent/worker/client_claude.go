@@ -580,6 +580,16 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 	if c.cfg.ClientConfigPath != "" {
 		cmd.Env = append(os.Environ(), "SATELLITES_CLIENT_CONFIG="+c.cfg.ClientConfigPath)
 	}
+	// sty_090f6183: stamp the dispatched-task id on the subprocess env
+	// so every `satellites-client …` call inside the dispatched claude
+	// run carries the X-Satellites-Dispatched-Task-ID header — the
+	// satellites-server reads the header in its tool-call telemetry
+	// middleware and emits KindToolCallStart / KindToolCallEnd against
+	// this task's task_log stream.
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	cmd.Env = append(cmd.Env, "SATELLITES_DISPATCHED_TASK_ID="+task.ID)
 	// sty_3e27a3f5: when the orchestrator-invoked RunDispatched path
 	// sets stdoutTee/stderrTee, the subprocess output is mirrored live
 	// to the operator's terminal. The worktree log file is always

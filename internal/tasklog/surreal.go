@@ -20,9 +20,10 @@ type SurrealStore struct {
 	// pub/sub fan-out runs in-memory because satellites-server is
 	// single-instance today; multi-instance fan-out is out of scope
 	// (see gap-log §5). Mirrors MemoryStore.subs.
-	mu     sync.Mutex
-	subs   map[string][]*subFn
-	wsByID map[string]string
+	mu          sync.Mutex
+	subs        map[string][]*subFn
+	wsByID      map[string]string
+	nextSeqByID map[string]int64 // server-side allocator cache, seeded from DB on first call
 }
 
 const selectCols = "meta::id(id) AS id, task_id, workspace_id, project_id, seq, ts, kind, payload, created_at"
@@ -31,9 +32,10 @@ const selectCols = "meta::id(id) AS id, task_id, workspace_id, project_id, seq, 
 // + replay/workspace indexes the producer + SSE handler depend on.
 func NewSurrealStore(db *surrealdb.DB) *SurrealStore {
 	s := &SurrealStore{
-		db:     db,
-		subs:   make(map[string][]*subFn),
-		wsByID: make(map[string]string),
+		db:          db,
+		subs:        make(map[string][]*subFn),
+		wsByID:      make(map[string]string),
+		nextSeqByID: make(map[string]int64),
 	}
 	ctx := context.Background()
 	_, _ = surrealdb.Query[any](ctx, db, "DEFINE TABLE IF NOT EXISTS task_logs SCHEMALESS", nil)
@@ -66,6 +68,9 @@ func (s *SurrealStore) Append(ctx context.Context, e Entry, now time.Time) (Entr
 
 	s.mu.Lock()
 	s.wsByID[e.TaskID] = e.WorkspaceID
+	if cur := s.nextSeqByID[e.TaskID]; e.Seq+1 > cur {
+		s.nextSeqByID[e.TaskID] = e.Seq + 1
+	}
 	live := append([]*subFn(nil), s.subs[e.TaskID]...)
 	s.mu.Unlock()
 	for _, sub := range live {
@@ -161,6 +166,56 @@ func (s *SurrealStore) Subscribe(ctx context.Context, taskID string, memberships
 		s.mu.Unlock()
 	}
 	return sub.ch, cancel, nil
+}
+
+// NextSeq implements Store for SurrealStore. Allocator runs in-process
+// (satellites-server is single-instance today; cf. gap-log §5). On
+// first lookup for a task we probe Surreal for the max(seq) to seed the
+// counter so server-side rows interleave correctly with any
+// producer-supplied seqs that landed before this server boot.
+func (s *SurrealStore) NextSeq(ctx context.Context, taskID string) (int64, error) {
+	if taskID == "" {
+		return 0, fmt.Errorf("task_log: task_id required")
+	}
+	s.mu.Lock()
+	cur, ok := s.nextSeqByID[taskID]
+	s.mu.Unlock()
+	if !ok {
+		seed, err := s.seedSeqFromDB(ctx, taskID)
+		if err != nil {
+			return 0, err
+		}
+		s.mu.Lock()
+		if existing, ok2 := s.nextSeqByID[taskID]; ok2 {
+			cur = existing
+		} else {
+			cur = seed
+		}
+		s.nextSeqByID[taskID] = cur + 1
+		s.mu.Unlock()
+		return cur, nil
+	}
+	s.mu.Lock()
+	cur = s.nextSeqByID[taskID]
+	s.nextSeqByID[taskID] = cur + 1
+	s.mu.Unlock()
+	return cur, nil
+}
+
+// seedSeqFromDB returns the seq value to hand out next: one past the
+// highest existing seq for taskID, or 0 when no rows exist.
+func (s *SurrealStore) seedSeqFromDB(ctx context.Context, taskID string) (int64, error) {
+	rows, err := s.List(ctx, ListOptions{TaskID: taskID, Memberships: nil})
+	if err != nil {
+		return 0, fmt.Errorf("task_log: seed seq: %w", err)
+	}
+	var maxSeq int64 = -1
+	for _, r := range rows {
+		if r.Seq > maxSeq {
+			maxSeq = r.Seq
+		}
+	}
+	return maxSeq + 1, nil
 }
 
 // Compile-time assertion.

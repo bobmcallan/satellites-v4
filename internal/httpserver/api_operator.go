@@ -43,63 +43,63 @@ import (
 // supplied mux. Called from APIRegistrar.Register.
 func (a *APIRegistrar) registerOperatorRoutes(mux *http.ServeMux) {
 	// story
-	mux.HandleFunc("POST /api/v1/story/list", a.handleStoryList)
-	mux.HandleFunc("POST /api/v1/story/template-get", a.handleStoryTemplateGet)
-	mux.HandleFunc("POST /api/v1/story/template-list", a.handleStoryTemplateList)
-	mux.HandleFunc("POST /api/v1/story/export-walk", a.handleStoryExportWalk)
+	a.handle(mux, "POST /api/v1/story/list", a.handleStoryList)
+	a.handle(mux, "POST /api/v1/story/template-get", a.handleStoryTemplateGet)
+	a.handle(mux, "POST /api/v1/story/template-list", a.handleStoryTemplateList)
+	a.handle(mux, "POST /api/v1/story/export-walk", a.handleStoryExportWalk)
 
 	// task
-	mux.HandleFunc("POST /api/v1/task/list", a.handleTaskList)
+	a.handle(mux, "POST /api/v1/task/list", a.handleTaskList)
 
 	// project
-	mux.HandleFunc("POST /api/v1/project/get", a.handleProjectGet)
-	mux.HandleFunc("POST /api/v1/project/list", a.handleProjectList)
+	a.handle(mux, "POST /api/v1/project/get", a.handleProjectGet)
+	a.handle(mux, "POST /api/v1/project/list", a.handleProjectList)
 
 	// workspace
-	mux.HandleFunc("POST /api/v1/workspace/get", a.handleWorkspaceGet)
-	mux.HandleFunc("POST /api/v1/workspace/list", a.handleWorkspaceList)
-	mux.HandleFunc("POST /api/v1/workspace/member-list", a.handleWorkspaceMemberList)
+	a.handle(mux, "POST /api/v1/workspace/get", a.handleWorkspaceGet)
+	a.handle(mux, "POST /api/v1/workspace/list", a.handleWorkspaceList)
+	a.handle(mux, "POST /api/v1/workspace/member-list", a.handleWorkspaceMemberList)
 
 	// changelog
-	mux.HandleFunc("POST /api/v1/changelog/get", a.handleChangelogGet)
-	mux.HandleFunc("POST /api/v1/changelog/list", a.handleChangelogList)
+	a.handle(mux, "POST /api/v1/changelog/get", a.handleChangelogGet)
+	a.handle(mux, "POST /api/v1/changelog/list", a.handleChangelogList)
 
 	// document family — agent/contract/principle wrap document_list/search/get.
-	mux.HandleFunc("POST /api/v1/document/search", a.handleDocumentSearch)
-	mux.HandleFunc("POST /api/v1/agent/list", a.handleAgentList)
-	mux.HandleFunc("POST /api/v1/agent/search", a.handleAgentSearch)
-	mux.HandleFunc("POST /api/v1/agent/ephemeral-summary", a.handleAgentEphemeralSummary)
-	mux.HandleFunc("POST /api/v1/contract/list", a.handleContractList)
-	mux.HandleFunc("POST /api/v1/contract/search", a.handleContractSearch)
-	mux.HandleFunc("POST /api/v1/principle/get", a.handlePrincipleGet)
-	mux.HandleFunc("POST /api/v1/principle/search", a.handlePrincipleSearch)
+	a.handle(mux, "POST /api/v1/document/search", a.handleDocumentSearch)
+	a.handle(mux, "POST /api/v1/agent/list", a.handleAgentList)
+	a.handle(mux, "POST /api/v1/agent/search", a.handleAgentSearch)
+	a.handle(mux, "POST /api/v1/agent/ephemeral-summary", a.handleAgentEphemeralSummary)
+	a.handle(mux, "POST /api/v1/contract/list", a.handleContractList)
+	a.handle(mux, "POST /api/v1/contract/search", a.handleContractSearch)
+	a.handle(mux, "POST /api/v1/principle/get", a.handlePrincipleGet)
+	a.handle(mux, "POST /api/v1/principle/search", a.handlePrincipleSearch)
 
 	// Reviewer / role / skill — type-pinned wrappers of document_get/list/search.
 	// Added in sty_004f3d3a (read-tier gap-fill) — the mutate wrappers shipped in
 	// sty_f38bd573, the read wrappers were missed in sty_ef248ab2.
-	mux.HandleFunc("POST /api/v1/reviewer/get", a.handleReviewerGet)
-	mux.HandleFunc("POST /api/v1/reviewer/list", a.handleReviewerList)
-	mux.HandleFunc("POST /api/v1/reviewer/search", a.handleReviewerSearch)
-	mux.HandleFunc("POST /api/v1/role/get", a.handleRoleGet)
-	mux.HandleFunc("POST /api/v1/role/list", a.handleRoleList)
-	mux.HandleFunc("POST /api/v1/role/search", a.handleRoleSearch)
-	mux.HandleFunc("POST /api/v1/skill/get", a.handleSkillGet)
-	mux.HandleFunc("POST /api/v1/skill/list", a.handleSkillList)
-	mux.HandleFunc("POST /api/v1/skill/search", a.handleSkillSearch)
+	a.handle(mux, "POST /api/v1/reviewer/get", a.handleReviewerGet)
+	a.handle(mux, "POST /api/v1/reviewer/list", a.handleReviewerList)
+	a.handle(mux, "POST /api/v1/reviewer/search", a.handleReviewerSearch)
+	a.handle(mux, "POST /api/v1/role/get", a.handleRoleGet)
+	a.handle(mux, "POST /api/v1/role/list", a.handleRoleList)
+	a.handle(mux, "POST /api/v1/role/search", a.handleRoleSearch)
+	a.handle(mux, "POST /api/v1/skill/get", a.handleSkillGet)
+	a.handle(mux, "POST /api/v1/skill/list", a.handleSkillList)
+	a.handle(mux, "POST /api/v1/skill/search", a.handleSkillSearch)
 
 	// kv
-	mux.HandleFunc("POST /api/v1/kv/get", a.handleKVGet)
-	mux.HandleFunc("POST /api/v1/kv/list", a.handleKVList)
-	mux.HandleFunc("POST /api/v1/kv/get-resolved", a.handleKVGetResolved)
+	a.handle(mux, "POST /api/v1/kv/get", a.handleKVGet)
+	a.handle(mux, "POST /api/v1/kv/list", a.handleKVList)
+	a.handle(mux, "POST /api/v1/kv/get-resolved", a.handleKVGetResolved)
 
 	// repo
-	mux.HandleFunc("POST /api/v1/repo/get", a.handleRepoGet)
-	mux.HandleFunc("POST /api/v1/repo/list", a.handleRepoList)
-	mux.HandleFunc("POST /api/v1/repo/search", a.handleRepoSearch)
-	mux.HandleFunc("POST /api/v1/repo/search-text", a.handleRepoSearchText)
-	mux.HandleFunc("POST /api/v1/repo/get-symbol-source", a.handleRepoGetSymbolSource)
-	mux.HandleFunc("POST /api/v1/repo/get-file", a.handleRepoGetFile)
-	mux.HandleFunc("POST /api/v1/repo/get-outline", a.handleRepoGetOutline)
+	a.handle(mux, "POST /api/v1/repo/get", a.handleRepoGet)
+	a.handle(mux, "POST /api/v1/repo/list", a.handleRepoList)
+	a.handle(mux, "POST /api/v1/repo/search", a.handleRepoSearch)
+	a.handle(mux, "POST /api/v1/repo/search-text", a.handleRepoSearchText)
+	a.handle(mux, "POST /api/v1/repo/get-symbol-source", a.handleRepoGetSymbolSource)
+	a.handle(mux, "POST /api/v1/repo/get-file", a.handleRepoGetFile)
+	a.handle(mux, "POST /api/v1/repo/get-outline", a.handleRepoGetOutline)
 }
 
 // ----- story -----

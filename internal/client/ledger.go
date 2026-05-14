@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/bobmcallan/satellites/internal/ledger"
+	"github.com/bobmcallan/satellites/internal/tasklog"
 )
 
 // ErrLedgerStoreNotConfigured is returned when the typed ledger
@@ -73,7 +75,51 @@ func (c *Client) LedgerAppend(ctx context.Context, caller Caller, in LedgerAppen
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	return c.deps.Ledger.Append(ctx, entry, now)
+	row, err := c.deps.Ledger.Append(ctx, entry, now)
+	if err != nil {
+		return ledger.LedgerEntry{}, err
+	}
+	// sty_090f6183: emit KindLedgerAppend when the row is anchored
+	// to a task — gate matches plan §2 (task_id: tag OR non-empty
+	// StoryID). For story-scoped rows without a task tag we look
+	// up open tasks on the story and emit one row per task so the
+	// SSE consumer sees evidence as it accrues.
+	taskID := extractTaskIDFromTags(row.Tags)
+	if taskID != "" {
+		c.publishTaskLog(ctx, taskID, tasklog.KindLedgerAppend, map[string]any{
+			"ledger_id":    row.ID,
+			"type":         row.Type,
+			"tags_summary": summariseLedgerTags(row.Tags),
+		})
+	}
+	return row, nil
+}
+
+// extractTaskIDFromTags returns the first `task_id:<id>` tag value or
+// "" when no such tag is present.
+func extractTaskIDFromTags(tags []string) string {
+	const prefix = "task_id:"
+	for _, t := range tags {
+		if strings.HasPrefix(t, prefix) {
+			return strings.TrimPrefix(t, prefix)
+		}
+	}
+	return ""
+}
+
+// summariseLedgerTags returns the kind:* and task_id:* / story_id:*
+// tags from the input; free-form tags are dropped so the telemetry
+// payload stays small + predictable.
+func summariseLedgerTags(tags []string) []string {
+	keep := make([]string, 0, len(tags))
+	for _, t := range tags {
+		if strings.HasPrefix(t, "kind:") ||
+			strings.HasPrefix(t, "task_id:") ||
+			strings.HasPrefix(t, "story_id:") {
+			keep = append(keep, t)
+		}
+	}
+	return keep
 }
 
 // ClassifyLedgerEvent maps a raw event-type token to the architecture

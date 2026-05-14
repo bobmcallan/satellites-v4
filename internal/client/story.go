@@ -12,6 +12,8 @@ import (
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/project"
 	"github.com/bobmcallan/satellites/internal/story"
+	"github.com/bobmcallan/satellites/internal/task"
+	"github.com/bobmcallan/satellites/internal/tasklog"
 )
 
 // ErrStoryStoreNotConfiguredV2 (named to avoid collision with the
@@ -353,9 +355,27 @@ func (c *Client) StoryUpdate(ctx context.Context, caller Caller, in StoryUpdateI
 				return story.Story{}, fmt.Errorf("transition blocked by %s story template:\n  - %s", updated.Category, strings.Join(failures, "\n  - "))
 			}
 		}
+		previousStatus := updated.Status
 		updated, err = c.deps.Stories.UpdateStatus(ctx, in.ID, *in.Status, caller.UserID, now, in.Memberships)
 		if err != nil {
 			return story.Story{}, err
+		}
+		// sty_090f6183: emit KindStatusChange on each task scoped to
+		// the story so subscribers to any task on the story observe
+		// the story-level transition. Best-effort — telemetry never
+		// fails the underlying typed-method call.
+		if previousStatus != updated.Status && c.deps.Tasks != nil {
+			tasks, terr := c.deps.Tasks.List(ctx, task.ListOptions{StoryID: in.ID, Limit: 200}, nil)
+			if terr == nil {
+				payload := map[string]any{
+					"from":  previousStatus,
+					"to":    updated.Status,
+					"actor": caller.UserID,
+				}
+				for _, t := range tasks {
+					c.publishTaskLog(ctx, t.ID, tasklog.KindStatusChange, payload)
+				}
+			}
 		}
 	}
 

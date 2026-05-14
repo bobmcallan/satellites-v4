@@ -36,6 +36,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -43,6 +44,17 @@ import (
 
 	"github.com/bobmcallan/satellites/internal/cliexit"
 )
+
+// DispatchedTaskIDEnv names the operator-supplied env-var the dispatched
+// claude subprocess inherits (set by internal/agent/worker.client_claude).
+// When present, Call stamps the value on every outbound /api/v1/* request
+// via the X-Satellites-Dispatched-Task-ID header — the satellites-server's
+// tool-call telemetry middleware reads the header to emit
+// KindToolCallStart / KindToolCallEnd. sty_090f6183.
+const DispatchedTaskIDEnv = "SATELLITES_DISPATCHED_TASK_ID"
+
+// DispatchedTaskIDHeader is the HTTP header name the server reads.
+const DispatchedTaskIDHeader = "X-Satellites-Dispatched-Task-ID"
 
 // Client is the per-invocation HTTP remote.
 type Client struct {
@@ -126,6 +138,11 @@ func (c *Client) Call(ctx context.Context, toolName string, args any, dst any) (
 	req.Header.Set("Accept", "application/json")
 	if c.bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+c.bearer)
+	}
+	// sty_090f6183: forward the dispatched-task id when running inside
+	// a claude subprocess spawned by the satellites worker.
+	if tid := strings.TrimSpace(os.Getenv(DispatchedTaskIDEnv)); tid != "" {
+		req.Header.Set(DispatchedTaskIDHeader, tid)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

@@ -28,16 +28,34 @@ const (
 	KindStdout    = "stdout"
 	KindStderr    = "stderr"
 	KindStop      = "stop"
+
+	// sty_090f6183: six new server-side semantic-event kinds. Existing
+	// five process-lifecycle kinds (above) are emitted by the CLI-side
+	// dispatchteam wrapper; these six are emitted by the substrate's
+	// typed *client.Client methods + the HTTP middleware that wraps
+	// dispatched-agent /api/v1/* calls.
+	KindClaim         = "claim"
+	KindToolCallStart = "tool_call_start"
+	KindToolCallEnd   = "tool_call_end"
+	KindLedgerAppend  = "ledger_append"
+	KindStatusChange  = "status_change"
+	KindClose         = "close"
 )
 
 // validKinds bounds the producer surface so the SSE handler can render
 // any row it pulls back without an enum-mismatch surprise.
 var validKinds = map[string]struct{}{
-	KindStart:     {},
-	KindHeartbeat: {},
-	KindStdout:    {},
-	KindStderr:    {},
-	KindStop:      {},
+	KindStart:         {},
+	KindHeartbeat:     {},
+	KindStdout:        {},
+	KindStderr:        {},
+	KindStop:          {},
+	KindClaim:         {},
+	KindToolCallStart: {},
+	KindToolCallEnd:   {},
+	KindLedgerAppend:  {},
+	KindStatusChange:  {},
+	KindClose:         {},
 }
 
 // Entry is one task_log row. Field shape mirrors the Surreal table
@@ -113,15 +131,24 @@ type Store interface {
 	// is called by the consumer when done — releases the underlying
 	// channel slot. Append after Cancel is a no-op for this consumer.
 	Subscribe(ctx context.Context, taskID string, memberships []string) (ch <-chan Entry, cancel func(), err error)
+
+	// NextSeq allocates the next monotonically-increasing seq value for
+	// taskID. Server-side emitters (sty_090f6183: claim, tool_call_*,
+	// ledger_append, status_change, close) use this to avoid colliding
+	// with the CLI-side dispatchteam's per-process atomic.Int64. Seeded
+	// from len(rows[taskID]) on first call so server-side rows interleave
+	// correctly with any pre-existing producer-supplied seqs.
+	NextSeq(ctx context.Context, taskID string) (int64, error)
 }
 
 // MemoryStore is the in-process implementation backing unit tests and
 // the SSE path under test fixtures. Concurrency-safe.
 type MemoryStore struct {
-	mu     sync.Mutex
-	rows   map[string][]Entry  // task_id -> rows (append order == seq order, stable on monotonic Seq)
-	subs   map[string][]*subFn // task_id -> live subscribers
-	wsByID map[string]string   // task_id -> workspace_id, for membership scoping at Subscribe time
+	mu          sync.Mutex
+	rows        map[string][]Entry  // task_id -> rows (append order == seq order, stable on monotonic Seq)
+	subs        map[string][]*subFn // task_id -> live subscribers
+	wsByID      map[string]string   // task_id -> workspace_id, for membership scoping at Subscribe time
+	nextSeqByID map[string]int64    // task_id -> next seq to hand out for server-side emitters
 }
 
 // subFn carries one fan-out channel + a cancelled flag the producer
@@ -136,9 +163,10 @@ type subFn struct {
 // NewMemoryStore returns an empty MemoryStore.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		rows:   make(map[string][]Entry),
-		subs:   make(map[string][]*subFn),
-		wsByID: make(map[string]string),
+		rows:        make(map[string][]Entry),
+		subs:        make(map[string][]*subFn),
+		wsByID:      make(map[string]string),
+		nextSeqByID: make(map[string]int64),
 	}
 }
 
@@ -158,6 +186,9 @@ func (m *MemoryStore) Append(ctx context.Context, e Entry, now time.Time) (Entry
 	m.mu.Lock()
 	m.rows[e.TaskID] = append(m.rows[e.TaskID], e)
 	m.wsByID[e.TaskID] = e.WorkspaceID
+	if cur := m.nextSeqByID[e.TaskID]; e.Seq+1 > cur {
+		m.nextSeqByID[e.TaskID] = e.Seq + 1
+	}
 	live := append([]*subFn(nil), m.subs[e.TaskID]...)
 	m.mu.Unlock()
 
@@ -239,6 +270,25 @@ func (m *MemoryStore) Subscribe(ctx context.Context, taskID string, memberships 
 		m.mu.Unlock()
 	}
 	return sub.ch, cancel, nil
+}
+
+// NextSeq implements Store for MemoryStore. Allocator monotonically
+// advances past both prior server-allocated values and the highest
+// producer-supplied seq Append has observed. Seeds from len(rows[taskID])
+// on first call so server-side rows interleave correctly with any
+// pre-existing producer-supplied seqs.
+func (m *MemoryStore) NextSeq(ctx context.Context, taskID string) (int64, error) {
+	if taskID == "" {
+		return 0, errors.New("task_log: task_id required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cur, ok := m.nextSeqByID[taskID]
+	if !ok {
+		cur = int64(len(m.rows[taskID]))
+	}
+	m.nextSeqByID[taskID] = cur + 1
+	return cur, nil
 }
 
 // workspaceVisible mirrors task.workspaceVisible: nil memberships =

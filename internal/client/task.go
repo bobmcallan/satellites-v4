@@ -12,6 +12,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/story"
 	"github.com/bobmcallan/satellites/internal/task"
+	"github.com/bobmcallan/satellites/internal/tasklog"
 )
 
 // ErrTaskStoreNotConfigured is returned when the typed task surface is
@@ -237,6 +238,12 @@ func (c *Client) TaskClaim(ctx context.Context, caller Caller, in TaskClaimInput
 			CreatedBy:  caller.UserID,
 		}, now)
 	}
+	// sty_090f6183: emit KindClaim semantic event. Payload mirrors plan §2.
+	c.publishTaskLog(ctx, t.ID, tasklog.KindClaim, map[string]any{
+		"task_id":    t.ID,
+		"claimed_by": workerID,
+		"claimed_at": now.UTC().Format(time.RFC3339Nano),
+	})
 	return t, nil
 }
 
@@ -294,10 +301,22 @@ func (c *Client) TaskUpdate(ctx context.Context, caller Caller, in TaskUpdateInp
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	// sty_090f6183: emit KindStatusChange BEFORE Close so the SSE
+	// consumer observes status_change → close in producer order.
+	c.publishTaskLog(ctx, current.ID, tasklog.KindStatusChange, map[string]any{
+		"from":  current.Status,
+		"to":    task.StatusClosed,
+		"actor": caller.UserID,
+	})
 	closed, err := c.deps.Tasks.Close(ctx, current.ID, outcome, now, in.Memberships)
 	if err != nil {
 		return TaskUpdateOutput{}, fmt.Errorf("task close: %v", err)
 	}
+	// sty_090f6183: emit KindClose AFTER successful Close.
+	c.publishTaskLog(ctx, closed.ID, tasklog.KindClose, map[string]any{
+		"outcome":             closed.Outcome,
+		"evidence_ledger_ids": in.EvidenceLedgerIDs,
+	})
 	return TaskUpdateOutput{
 		TaskID:            closed.ID,
 		Status:            closed.Status,

@@ -15,6 +15,19 @@ import (
 // Wire-layer callers map this to a per-verb "unavailable" envelope.
 var ErrTaskLogStoreNotConfigured = errors.New("task_log store not configured")
 
+// Re-exported task_log kind constants. The wire layer (httpserver,
+// mcpserver) and CLI consumer call PublishTaskLog with these strings;
+// re-exporting here keeps the wire layer free of internal/tasklog
+// imports (pr_mcp_cli_shared_path).
+const (
+	TaskLogKindClaim         = tasklog.KindClaim
+	TaskLogKindToolCallStart = tasklog.KindToolCallStart
+	TaskLogKindToolCallEnd   = tasklog.KindToolCallEnd
+	TaskLogKindLedgerAppend  = tasklog.KindLedgerAppend
+	TaskLogKindStatusChange  = tasklog.KindStatusChange
+	TaskLogKindClose         = tasklog.KindClose
+)
+
 // TaskLogAppendInput is the typed input for task_log_append. seq is
 // producer-supplied; ts may be left zero and the typed method fills it
 // with the caller-supplied Now.
@@ -221,6 +234,81 @@ func (c *Client) TaskLogSubscribe(ctx context.Context, caller Caller, in TaskLog
 		rawCancel()
 	}
 	return out, cancel, nil
+}
+
+// publishTaskLog is the shared emitter the server-side semantic-event
+// kinds (sty_090f6183: claim / tool_call_* / ledger_append /
+// status_change / close) call into. It allocates a per-task seq via
+// Store.NextSeq, marshals the supplied payload, and appends the row.
+// Errors are swallowed after a warn-log so a telemetry hiccup never
+// fails the underlying typed-method call.
+//
+// resolveProjectID, when non-empty, is stamped on the row directly;
+// when empty + the task store is configured the helper resolves the
+// project from the task row. Same shape for resolveWorkspaceID.
+func (c *Client) publishTaskLog(ctx context.Context, taskID, kind string, payload any) {
+	if c == nil || c.deps.TaskLogs == nil || taskID == "" || kind == "" {
+		return
+	}
+	workspaceID, projectID := c.resolveTaskWorkspaceProject(ctx, taskID)
+	if workspaceID == "" {
+		return
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		if c.deps.Logger != nil {
+			c.deps.Logger.Warn().Str("task_id", taskID).Str("kind", kind).Str("error", err.Error()).Msg("task_log publish: marshal failed")
+		}
+		return
+	}
+	seq, err := c.deps.TaskLogs.NextSeq(ctx, taskID)
+	if err != nil {
+		if c.deps.Logger != nil {
+			c.deps.Logger.Warn().Str("task_id", taskID).Str("kind", kind).Str("error", err.Error()).Msg("task_log publish: next_seq failed")
+		}
+		return
+	}
+	now := time.Now().UTC()
+	entry := tasklog.Entry{
+		TaskID:      taskID,
+		WorkspaceID: workspaceID,
+		ProjectID:   projectID,
+		Seq:         seq,
+		TS:          now,
+		Kind:        kind,
+		Payload:     body,
+	}
+	if _, err := c.deps.TaskLogs.Append(ctx, entry, now); err != nil {
+		if c.deps.Logger != nil {
+			c.deps.Logger.Warn().Str("task_id", taskID).Str("kind", kind).Int64("seq", seq).Str("error", err.Error()).Msg("task_log publish: append failed")
+		}
+	}
+}
+
+// resolveTaskWorkspaceProject returns (workspace_id, project_id) for
+// the given task_id by looking up the task row server-internally
+// (memberships=nil bypasses workspace scoping; safe because the helper
+// is only called from inside an already-authorised typed method).
+// Returns ("", "") when the task store is missing or lookup fails so
+// the caller short-circuits emission.
+func (c *Client) resolveTaskWorkspaceProject(ctx context.Context, taskID string) (string, string) {
+	if c.deps.Tasks == nil {
+		return "", ""
+	}
+	t, err := c.deps.Tasks.GetByID(ctx, taskID, nil)
+	if err != nil {
+		return "", ""
+	}
+	return t.WorkspaceID, t.ProjectID
+}
+
+// PublishTaskLog is the exported shim the httpserver tool-call
+// telemetry middleware uses to emit KindToolCallStart / KindToolCallEnd
+// for dispatched-agent requests. It delegates to the shared
+// publishTaskLog path so the wire layer never names internal/tasklog
+// (pr_mcp_cli_shared_path).
+func (c *Client) PublishTaskLog(ctx context.Context, taskID, kind string, payload any) {
+	c.publishTaskLog(ctx, taskID, kind, payload)
 }
 
 // toListEntry projects a tasklog.Entry into the typed wire shape.

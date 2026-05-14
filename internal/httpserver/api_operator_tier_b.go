@@ -29,15 +29,15 @@ import (
 
 // registerOperatorTierBRoutes wires the Tier B mutating routes.
 func (a *APIRegistrar) registerOperatorTierBRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/v1/agent/apikey-create", a.handleAgentAPIKeyCreate)
-	mux.HandleFunc("POST /api/v1/agent/apikey-list", a.handleAgentAPIKeyList)
-	mux.HandleFunc("POST /api/v1/agent/apikey-delete", a.handleAgentAPIKeyDelete)
-	mux.HandleFunc("POST /api/v1/agent/compose", a.handleAgentCompose)
-	mux.HandleFunc("POST /api/v1/project/seed-run", a.handleProjectSeedRun)
-	mux.HandleFunc("POST /api/v1/system/seed-run", a.handleSystemSeedRun)
-	mux.HandleFunc("POST /api/v1/document/ingest-file", a.handleDocumentIngestFile)
+	a.handle(mux, "POST /api/v1/agent/apikey-create", a.handleAgentAPIKeyCreate)
+	a.handle(mux, "POST /api/v1/agent/apikey-list", a.handleAgentAPIKeyList)
+	a.handle(mux, "POST /api/v1/agent/apikey-delete", a.handleAgentAPIKeyDelete)
+	a.handle(mux, "POST /api/v1/agent/compose", a.handleAgentCompose)
+	a.handle(mux, "POST /api/v1/project/seed-run", a.handleProjectSeedRun)
+	a.handle(mux, "POST /api/v1/system/seed-run", a.handleSystemSeedRun)
+	a.handle(mux, "POST /api/v1/document/ingest-file", a.handleDocumentIngestFile)
 	// sty_e68ce6fb: portal replicate (last verbStub).
-	mux.HandleFunc("POST /api/v1/portal/replicate", a.handlePortalReplicate)
+	a.handle(mux, "POST /api/v1/portal/replicate", a.handlePortalReplicate)
 }
 
 // ----- agent_apikey -----

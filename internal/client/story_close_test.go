@@ -86,11 +86,15 @@ func newStoryCloseFixture(t *testing.T, category string, opts storyCloseFixtureO
 
 	var reviewTask task.Task
 	if !opts.SkipReviewTask {
+		reviewKind := opts.StoryReviewKind
+		if reviewKind == "" {
+			reviewKind = task.KindReview
+		}
 		reviewTask, err = taskStore.Enqueue(ctx, task.Task{
 			WorkspaceID: ws.ID,
 			ProjectID:   "proj_test",
 			StoryID:     st.ID,
-			Kind:        task.KindReview,
+			Kind:        reviewKind,
 			Action:      "contract:story_review",
 			Origin:      task.OriginStoryStage,
 			Status:      task.StatusPublished,
@@ -145,6 +149,10 @@ func newStoryCloseFixture(t *testing.T, category string, opts storyCloseFixtureO
 }
 
 // storyCloseFixtureOpts toggles the gap each table case exercises.
+// StoryReviewKind picks the kind of the minted contract:story_review
+// task (sty_87148b8b): zero value falls back to task.KindReview to
+// preserve the pre-existing cases; set to task.KindWork to exercise
+// the canonical workflow shape the post-sty_b97dda00 substrate emits.
 type storyCloseFixtureOpts struct {
 	LeaveWorkOpen    bool
 	SkipReviewTask   bool
@@ -154,6 +162,7 @@ type storyCloseFixtureOpts struct {
 	SeedTemplate     bool
 	TemplateJSON     string
 	Fields           map[string]any
+	StoryReviewKind  string
 }
 
 // happyOpts returns the gate-passing baseline: closed work + closed
@@ -189,6 +198,33 @@ func TestStoryClose_PassWalksStoryToDone(t *testing.T) {
 		}
 	}
 	assert.True(t, foundEvidence, "close-evidence row absent: %+v", rows)
+	st, err := f.c.deps.Stories.GetByID(context.Background(), f.storyID, f.caller.Memberships)
+	require.NoError(t, err)
+	assert.Equal(t, story.StatusDone, st.Status)
+}
+
+// TestStoryClose_PassWithKindWorkStoryReview (sty_87148b8b) — the
+// canonical post-sty_b97dda00 workflow mints the contract:story_review
+// task as kind=work (workflow doc + agent.delivers declare it as the
+// story_reviewer agent's deliverable). Before the kind-agnostic
+// widening of the close handler this fixture would surface
+// `story_review:absent` because the verdict-row scan filtered out the
+// kind=work shape. The test asserts the gate now passes on the
+// canonical chain.
+func TestStoryClose_PassWithKindWorkStoryReview(t *testing.T) {
+	opts := happyOpts()
+	opts.StoryReviewKind = task.KindWork
+	f := newStoryCloseFixture(t, "improvement", opts)
+	require.Equal(t, task.KindWork, f.reviewTask.Kind, "fixture must mint kind=work story_review task")
+	out, err := f.c.StoryClose(context.Background(), f.caller, StoryCloseInput{
+		StoryID:     f.storyID,
+		Memberships: f.caller.Memberships,
+		Now:         f.now.Add(10 * time.Minute),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "pass", out.Status, "kind=work story_review must pass; gaps=%+v", out.Gaps)
+	assert.Equal(t, story.StatusDone, out.StoryStatus)
+	assert.NotEmpty(t, out.EvidenceID)
 	st, err := f.c.deps.Stories.GetByID(context.Background(), f.storyID, f.caller.Memberships)
 	require.NoError(t, err)
 	assert.Equal(t, story.StatusDone, st.Status)

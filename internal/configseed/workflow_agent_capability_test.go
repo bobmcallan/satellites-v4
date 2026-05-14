@@ -209,3 +209,41 @@ func containsString(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// TestStoryReviewHandlerKindAgnostic (sty_87148b8b) is the third leg of
+// the workflow + agent + handler alignment tripod. The workflow doc
+// declares the contract:story_review slot as kind=work and the
+// story_reviewer agent's frontmatter `delivers:` advertises the
+// matching capability (asserted by TestWorkflowAgentCapabilities). This
+// lint asserts the substrate read site — the story_close handler —
+// no longer filters those tasks out by kind:
+//
+//  1. the kind-agnostic helper `latestStoryReviewTask(tasks)` is in
+//     use, AND
+//  2. the prior kind=review-only call shape
+//     `latestReviewTask(tasks, "contract:story_review")` has been
+//     removed (no compat alias — pr_no_unrequested_compat).
+//
+// Without this lint a regression to the kind-filtered handler ships
+// silently and the workflow chain's canonical kind=work shape gets
+// fielded as `story_review:absent` at close time.
+func TestStoryReviewHandlerKindAgnostic(t *testing.T) {
+	t.Parallel()
+
+	handler, err := filepath.Abs(filepath.Join("..", "..", "internal", "client", "story_close.go"))
+	if err != nil {
+		t.Fatalf("abs handler path: %v", err)
+	}
+	content, err := os.ReadFile(handler)
+	if err != nil {
+		t.Fatalf("read %s: %v", handler, err)
+	}
+	src := string(content)
+
+	if !strings.Contains(src, "latestStoryReviewTask(tasks)") {
+		t.Errorf("%s: kind-agnostic helper call `latestStoryReviewTask(tasks)` not found — handler must dispatch via the kind-agnostic helper added in sty_87148b8b", handler)
+	}
+	if strings.Contains(src, `latestReviewTask(tasks, "contract:story_review")`) {
+		t.Errorf("%s: kind-filtered helper call `latestReviewTask(tasks, \"contract:story_review\")` still present — sty_87148b8b removes the kind=review-only filter; do not keep a compat alias", handler)
+	}
+}

@@ -126,7 +126,7 @@ func (c *Client) StoryClose(ctx context.Context, caller Caller, in StoryCloseInp
 	}
 
 	// AC3(a,b,e) — story_review task + verdict.
-	reviewTask := latestReviewTask(tasks, "contract:story_review")
+	reviewTask := latestStoryReviewTask(tasks)
 	var verdictRow *ledger.LedgerEntry
 	switch {
 	case reviewTask == nil:
@@ -201,13 +201,22 @@ func (c *Client) StoryClose(ctx context.Context, caller Caller, in StoryCloseInp
 	}, nil
 }
 
-// latestReviewTask returns the most recently created Kind=review task on
-// the chain whose Action matches; nil when none exists.
-func latestReviewTask(tasks []task.Task, action string) *task.Task {
+// latestStoryReviewTask returns the most recently created
+// contract:story_review task on the chain regardless of Kind (sty_87148b8b).
+//
+// The canonical post-sty_b97dda00 workflow mints the story_review task as
+// kind=work (workflow doc + story_reviewer.delivers both declare it). The
+// historical tactical replay used during sty_8f99ef39 minted the same task
+// as kind=review. Either shape is now valid for the close gate — the
+// invariant the handler enforces is "the chain carries a closed
+// contract:story_review task whose verdict row is verdict:pass", not the
+// task's kind. The narrower kind=review-only filter that previously lived
+// here is gone (no compat alias).
+func latestStoryReviewTask(tasks []task.Task) *task.Task {
 	var picked *task.Task
 	for i := range tasks {
 		t := &tasks[i]
-		if t.Kind != task.KindReview || t.Action != action {
+		if t.Action != "contract:story_review" {
 			continue
 		}
 		if picked == nil || t.CreatedAt.After(picked.CreatedAt) {

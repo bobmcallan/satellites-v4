@@ -129,12 +129,12 @@ func TestTaskRunFollow_StreamsLifecycle(t *testing.T) {
 	// agent_id is fine for task_add; the dispatched-claude shape is
 	// independent of agent body content.
 	agentResp := callAPIv1(t, ctx, baseURL, envBearer, "document_get", map[string]any{
-		"name": "story_close_agent",
+		"name": "story_reviewer",
 		"type": "agent",
 	})
 	agentID, _ := agentResp["id"].(string)
 	if agentID == "" {
-		t.Fatalf("document_get(story_close_agent) returned no id: %+v", agentResp)
+		t.Fatalf("document_get(story_reviewer) returned no id: %+v", agentResp)
 	}
 	taskResp := callAPIv1(t, ctx, baseURL, envBearer, "task_add", map[string]any{
 		"agent_id": agentID,

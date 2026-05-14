@@ -20,9 +20,8 @@ lifecycle:
   commits; submits the plan task list via `task_submit`.
 - `releaser_agent` — delivers `contract:push` and
   `contract:merge_to_main`.
-- `story_close_agent` — delivers `contract:story_close`.
 - `story_reviewer` — reviews `contract:plan`, `contract:push`,
-  `contract:merge_to_main`, `contract:story_close`. Read-only;
+  `contract:merge_to_main`. Read-only;
   the autonomous reviewer service uses this body as its rubric.
 - `development_reviewer` — reviews `contract:develop`. Read-only.
 - `agent_gemini_reviewer` — provider-chain config for the

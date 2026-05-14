@@ -20,7 +20,7 @@ defines:
 
 ## System contracts
 
-The default lifecycle ships five system contracts:
+The default lifecycle ships four system contracts:
 
 | Contract | Phase | Delivers | Reviews |
 |---|---|---|---|
@@ -28,7 +28,6 @@ The default lifecycle ships five system contracts:
 | `develop` | implementation | `developer_agent` | `development_reviewer` |
 | `push` | ship to origin | `releaser_agent` | `story_reviewer` |
 | `merge_to_main` | local sync | `releaser_agent` | `story_reviewer` |
-| `story_close` | terminal transition | `story_close_agent` | `story_reviewer` |
 
 ## Configuration
 

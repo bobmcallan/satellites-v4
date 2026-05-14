@@ -10,7 +10,6 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
-	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
@@ -31,16 +30,7 @@ func (s *Server) handleSatellitesInit(ctx context.Context, req mcpgo.CallToolReq
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	body, _ := json.Marshal(map[string]any{
-		"state":               out.State,
-		"target_install_path": out.TargetInstallPath,
-		"target_config_path":  out.TargetConfigPath,
-		"default_config":      out.DefaultConfig,
-		"install":             out.Install,
-		"auth_bootstrap":      out.AuthBootstrap,
-		"current_version":     out.CurrentVersion,
-		"fetched_at":          out.FetchedAt.Format(time.RFC3339),
-	})
+	body, _ := json.Marshal(out)
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 

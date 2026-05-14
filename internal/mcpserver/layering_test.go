@@ -31,6 +31,7 @@ package mcpserver
 // the import, confirm it PASSES.
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
@@ -188,4 +189,138 @@ func TestTransportLayering(t *testing.T) {
 		t.Errorf("stale legacyAllowlist entry: %s no longer imports %s — remove the entry from legacyAllowlist (it shipped via sty_4db0e025 per-noun convergence).",
 			s.file, s.importPath)
 	}
+}
+
+// TestSatellitesInitNoMapAnyPayload (sty_a4c98504) guards against
+// re-introducing the field-selection bug fixed by this story. The
+// MCP `satellites_init` handler must marshal the typed
+// SatellitesInitOutput directly — wrapping it (or any value) in a
+// `map[string]any{...}` / `map[string]interface{}{...}` literal
+// passed to `json.Marshal` re-creates the dropped-fields class
+// (the original eight-field map omitted `workspace_overrides` +
+// `chain_coverage`).
+//
+// The test parses satellites_init_handlers.go in full AST mode
+// (not parser.ImportsOnly) and walks handleSatellitesInit's
+// function body looking for any CallExpr that resolves to
+// json.Marshal (or its qualified equivalent) whose argument list
+// contains a map[string]any / map[string]interface{} composite
+// literal. A hit fails the test with file:line.
+//
+// Synthetic-violation drill is documented in review-criteria
+// (ldg_23b8622a) §4: re-wrap the typed value in a map literal,
+// confirm the test fails naming the call site; revert, confirm it
+// passes.
+func TestSatellitesInitNoMapAnyPayload(t *testing.T) {
+	t.Parallel()
+
+	const targetFunc = "handleSatellitesInit"
+	const targetFile = "satellites_init_handlers.go"
+
+	fset := token.NewFileSet()
+	path, err := filepath.Abs(targetFile)
+	if err != nil {
+		t.Fatalf("abs %s: %v", targetFile, err)
+	}
+	file, err := parser.ParseFile(fset, path, nil, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse %s: %v", targetFile, err)
+	}
+
+	var fn *ast.FuncDecl
+	for _, decl := range file.Decls {
+		fd, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		if fd.Name == nil || fd.Name.Name != targetFunc {
+			continue
+		}
+		fn = fd
+		break
+	}
+	if fn == nil {
+		t.Fatalf("could not locate %s in %s", targetFunc, targetFile)
+	}
+	if fn.Body == nil {
+		t.Fatalf("%s has no body", targetFunc)
+	}
+
+	type hit struct {
+		pos     token.Position
+		argDesc string
+	}
+	var hits []hit
+
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if !isJSONMarshalCall(call.Fun) {
+			return true
+		}
+		for _, arg := range call.Args {
+			if desc, bad := mapAnyCompositeDesc(arg); bad {
+				hits = append(hits, hit{pos: fset.Position(arg.Pos()), argDesc: desc})
+			}
+		}
+		return true
+	})
+
+	for _, h := range hits {
+		t.Errorf("pr_mcp_cli_shared_path / sty_a4c98504 regression: %s:%d:%d passes %s to json.Marshal — marshal the typed *client.SatellitesInitOutput directly instead.",
+			targetFile, h.pos.Line, h.pos.Column, h.argDesc)
+	}
+}
+
+// isJSONMarshalCall returns true when the call expression's Fun
+// resolves to a top-level `json.Marshal` (i.e. a SelectorExpr whose
+// X is an Ident named `json` and whose Sel is `Marshal`). Anything
+// else — `json.MarshalIndent`, a re-aliased import, a shadowed local
+// — does not match. The handler is the only call site we guard;
+// over-matching elsewhere is intentional out-of-scope.
+func isJSONMarshalCall(fun ast.Expr) bool {
+	sel, ok := fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	if sel.Sel == nil || sel.Sel.Name != "Marshal" {
+		return false
+	}
+	ident, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	return ident.Name == "json"
+}
+
+// mapAnyCompositeDesc returns a non-empty description + true when
+// expr is a composite literal of type `map[string]any` or
+// `map[string]interface{}`. Used to flag arguments passed to
+// json.Marshal that re-introduce the dropped-fields class.
+func mapAnyCompositeDesc(expr ast.Expr) (string, bool) {
+	comp, ok := expr.(*ast.CompositeLit)
+	if !ok {
+		return "", false
+	}
+	mt, ok := comp.Type.(*ast.MapType)
+	if !ok {
+		return "", false
+	}
+	keyIdent, ok := mt.Key.(*ast.Ident)
+	if !ok || keyIdent.Name != "string" {
+		return "", false
+	}
+	switch v := mt.Value.(type) {
+	case *ast.Ident:
+		if v.Name == "any" {
+			return "map[string]any composite literal", true
+		}
+	case *ast.InterfaceType:
+		if v.Methods == nil || len(v.Methods.List) == 0 {
+			return "map[string]interface{} composite literal", true
+		}
+	}
+	return "", false
 }

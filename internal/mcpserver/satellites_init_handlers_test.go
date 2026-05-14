@@ -82,8 +82,31 @@ func TestHandleSatellitesInit_HappyPath(t *testing.T) {
 			Command string `json:"command"`
 			EnvHint string `json:"env_hint"`
 		} `json:"auth_bootstrap"`
-		CurrentVersion string `json:"current_version"`
-		FetchedAt      string `json:"fetched_at"`
+		CurrentVersion     string `json:"current_version"`
+		FetchedAt          string `json:"fetched_at"`
+		WorkspaceOverrides struct {
+			Orchestrator struct {
+				Scope          string `json:"scope"`
+				DocID          string `json:"doc_id"`
+				Recommendation string `json:"recommendation"`
+			} `json:"orchestrator"`
+			Workflow struct {
+				Scope          string `json:"scope"`
+				DocID          string `json:"doc_id"`
+				Recommendation string `json:"recommendation"`
+			} `json:"workflow"`
+		} `json:"workspace_overrides"`
+		ChainCoverage struct {
+			WorkflowSource string `json:"workflow_source"`
+			WorkflowDocID  string `json:"workflow_doc_id"`
+			Contracts      []struct {
+				Name    string `json:"name"`
+				FoundAt string `json:"found_at"`
+				DocID   string `json:"doc_id"`
+			} `json:"contracts"`
+			MissingContracts []string `json:"missing_contracts"`
+			Recommendation   string   `json:"recommendation"`
+		} `json:"chain_coverage"`
 	}
 	if err := json.Unmarshal([]byte(text), &payload); err != nil {
 		t.Fatalf("unmarshal: %v\n%s", err, text)
@@ -113,6 +136,24 @@ func TestHandleSatellitesInit_HappyPath(t *testing.T) {
 	}
 	if payload.FetchedAt == "" {
 		t.Errorf("fetched_at empty")
+	}
+	// workspace_overrides and chain_coverage must round-trip through
+	// the wire adapter — sty_a4c98504 regression: the hand-rolled
+	// map[string]any in the old handler dropped both keys.
+	if payload.WorkspaceOverrides.Orchestrator.Scope == "" {
+		t.Errorf("workspace_overrides.orchestrator.scope empty (key likely missing from wire payload)")
+	}
+	if payload.WorkspaceOverrides.Orchestrator.Recommendation == "" {
+		t.Errorf("workspace_overrides.orchestrator.recommendation empty")
+	}
+	if payload.WorkspaceOverrides.Workflow.Scope == "" {
+		t.Errorf("workspace_overrides.workflow.scope empty (key likely missing from wire payload)")
+	}
+	if payload.WorkspaceOverrides.Workflow.Recommendation == "" {
+		t.Errorf("workspace_overrides.workflow.recommendation empty")
+	}
+	if payload.ChainCoverage.Recommendation == "" {
+		t.Errorf("chain_coverage.recommendation empty (key likely missing from wire payload)")
 	}
 }
 

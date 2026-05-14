@@ -1,15 +1,18 @@
-// task_log_uploader.go — implements the per-run chunk uploader for
-// `satellites-client task run`. Wraps stdout / stderr, batches complete
-// lines, and emits one task_log_append per batch via the typed cliremote
-// surface. Flushes when 100 lines accumulate OR 250 ms elapse since the
-// last flush, whichever fires first (sty_8c17b89d AC2).
+// uploader.go — implements the per-run chunk uploader extracted from
+// cmd/satellites-client/task_log_uploader.go (sty_5aa20f1b). Both the
+// sync CLI dispatch and the daemon goroutine instantiate one uploader
+// per stream (stdout / stderr); each Write splits at '\n' boundaries,
+// batches complete lines, and emits one task_log_append per batch via
+// the typed cliremote surface. Flushes when 100 lines accumulate OR
+// 250 ms elapse since the last flush, whichever fires first
+// (sty_8c17b89d AC2).
 //
-// The uploader is fire-and-forget: local terminal output goes through
-// the existing MultiWriter chain in internal/agent/worker/client_claude.go
-// unchanged; upload errors are logged at the caller's logger and never
-// abort the dispatched task.
+// The uploader is fire-and-forget: local terminal / log-file output
+// goes through the existing MultiWriter chain unchanged; upload errors
+// are logged at the caller's logger and never abort the dispatched
+// task.
 
-package main
+package dispatchteam
 
 import (
 	"bytes"
@@ -28,22 +31,22 @@ const (
 	chunkFlushInterval  = 250 * time.Millisecond
 )
 
-// nextSeqFunc returns the next monotonic seq for the run. The lifecycle
-// + chunk uploaders share one counter so the SSE stream sees a
-// strictly-monotonic seq across all kinds.
-type nextSeqFunc func() int64
+// NextSeqFunc returns the next monotonic seq for the run. The
+// lifecycle + chunk uploaders share one counter so the SSE stream
+// sees a strictly-monotonic seq across all kinds.
+type NextSeqFunc func() int64
 
-// taskLogUploader implements io.Writer. Each Write splits the buffer
+// TaskLogUploader implements io.Writer. Each Write splits the buffer
 // at '\n' boundaries; complete lines accumulate in `lines`. A flush
 // drains `lines` into one task_log_append call.
-type taskLogUploader struct {
+type TaskLogUploader struct {
 	api     *cliremote.Client
 	logger  arbor.ILogger
 	taskID  string
 	wsID    string
 	projID  string
 	kind    string
-	nextSeq nextSeqFunc
+	nextSeq NextSeqFunc
 
 	mu          sync.Mutex
 	leftover    []byte
@@ -57,10 +60,10 @@ type taskLogUploader struct {
 	doneCh chan struct{}
 }
 
-// newTaskLogUploader constructs an uploader. The caller MUST call Close
+// NewTaskLogUploader constructs an uploader. The caller MUST call Close
 // to flush any buffered remainder and stop the background ticker.
-func newTaskLogUploader(api *cliremote.Client, logger arbor.ILogger, taskID, wsID, projID, kind string, nextSeq nextSeqFunc) *taskLogUploader {
-	u := &taskLogUploader{
+func NewTaskLogUploader(api *cliremote.Client, logger arbor.ILogger, taskID, wsID, projID, kind string, nextSeq NextSeqFunc) *TaskLogUploader {
+	u := &TaskLogUploader{
 		api:         api,
 		logger:      logger,
 		taskID:      taskID,
@@ -81,7 +84,7 @@ func newTaskLogUploader(api *cliremote.Client, logger arbor.ILogger, taskID, wsI
 // next flush trigger. Always returns len(p), nil so it composes safely
 // under io.MultiWriter (an upload-side error must not short-circuit the
 // local-stdout sibling).
-func (u *taskLogUploader) Write(p []byte) (int, error) {
+func (u *TaskLogUploader) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -96,10 +99,6 @@ func (u *taskLogUploader) Write(p []byte) (int, error) {
 		u.leftover = u.leftover[idx+1:]
 		u.lines = append(u.lines, line)
 	}
-	// Carve out as many 100-line chunks as have accumulated. Anything
-	// short of 100 stays buffered for the time-tick path. flushBatch
-	// is called outside the lock so upload latency cannot stall the
-	// local-stdout sibling tee.
 	var batches [][]string
 	for len(u.lines) >= chunkFlushLineCount {
 		batch := append([]string(nil), u.lines[:chunkFlushLineCount]...)
@@ -118,7 +117,7 @@ func (u *taskLogUploader) Write(p []byte) (int, error) {
 
 // ticker fires every chunkFlushInterval; if any lines are buffered
 // it flushes them. Stops when Close() signals stopCh.
-func (u *taskLogUploader) ticker() {
+func (u *TaskLogUploader) ticker() {
 	defer close(u.doneCh)
 	t := time.NewTicker(chunkFlushInterval)
 	defer t.Stop()
@@ -141,7 +140,7 @@ func (u *taskLogUploader) ticker() {
 
 // Close stops the ticker, drains any buffered partial line into a
 // final flush, and waits for the ticker goroutine to exit.
-func (u *taskLogUploader) Close() {
+func (u *TaskLogUploader) Close() {
 	select {
 	case <-u.stopCh:
 		return
@@ -149,7 +148,6 @@ func (u *taskLogUploader) Close() {
 		close(u.stopCh)
 	}
 	<-u.doneCh
-	// Drain anything left (lines + partial leftover treated as a line).
 	u.mu.Lock()
 	tail := u.lines
 	u.lines = nil
@@ -164,9 +162,7 @@ func (u *taskLogUploader) Close() {
 }
 
 // flushBatch issues one task_log_append carrying the chunk's lines.
-// Errors log at warn and never block the caller — local-terminal
-// output is unaffected (AC2).
-func (u *taskLogUploader) flushBatch(lines []string) {
+func (u *TaskLogUploader) flushBatch(lines []string) {
 	payload, err := json.Marshal(map[string]any{"lines": lines})
 	if err != nil {
 		if u.logger != nil {
@@ -203,9 +199,9 @@ func (u *taskLogUploader) flushBatch(lines []string) {
 	u.mu.Unlock()
 }
 
-// stats returns the byte + chunk totals the lifecycle finaliser uses
+// Stats returns the byte + chunk totals the lifecycle finaliser uses
 // for the ledger pointer row.
-func (u *taskLogUploader) stats() (chunks int, bytesOut int64) {
+func (u *TaskLogUploader) Stats() (chunks int, bytesOut int64) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.flushOut, u.bytesOut

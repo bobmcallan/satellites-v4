@@ -20,14 +20,15 @@ import (
 // client package so the typed methods can be exercised without the
 // wire layer.
 type taskFixture struct {
-	t       *testing.T
-	now     time.Time
-	caller  Caller
-	c       *Client
-	devID   string
-	wsID    string
-	projID  string
-	storyID string
+	t         *testing.T
+	now       time.Time
+	caller    Caller
+	c         *Client
+	devID     string
+	wsID      string
+	projID    string
+	storyID   string
+	taskStore *task.MemoryStore
 }
 
 func newTaskFixture(t *testing.T) *taskFixture {
@@ -76,14 +77,15 @@ func newTaskFixture(t *testing.T) *taskFixture {
 	})
 
 	return &taskFixture{
-		t:       t,
-		now:     now,
-		caller:  Caller{UserID: "u_alice", Email: "google:alice@example.com", Memberships: []string{ws.ID}},
-		c:       c,
-		devID:   devDoc.ID,
-		wsID:    ws.ID,
-		projID:  "proj_test",
-		storyID: st.ID,
+		t:         t,
+		now:       now,
+		caller:    Caller{UserID: "u_alice", Email: "google:alice@example.com", Memberships: []string{ws.ID}},
+		c:         c,
+		devID:     devDoc.ID,
+		wsID:      ws.ID,
+		projID:    "proj_test",
+		storyID:   st.ID,
+		taskStore: taskStore,
 	}
 }
 
@@ -307,6 +309,147 @@ func TestTaskPlan_WritesPlannedStatus(t *testing.T) {
 	assert.Equal(t, task.StatusPlanned, out.Status)
 	assert.Equal(t, task.OriginStoryStage, out.Origin)
 	assert.NotEmpty(t, out.LedgerRootID, "ledger root id should be present when ledger store is wired")
+}
+
+// seedClosedFailureWork enqueues a closed=failure kind=work task on
+// the fixture's story matching the supplied action — the orphan that
+// the auto-supersession detection in TaskAdd should pick up.
+func (f *taskFixture) seedClosedFailureWork(action string, createdAt time.Time) task.Task {
+	f.t.Helper()
+	ctx := context.Background()
+	orphan, err := f.taskStore.Enqueue(ctx, task.Task{
+		WorkspaceID: f.wsID,
+		ProjectID:   f.projID,
+		StoryID:     f.storyID,
+		Kind:        task.KindWork,
+		Action:      action,
+		AgentID:     f.devID,
+		Origin:      task.OriginStoryStage,
+		Priority:    task.PriorityMedium,
+		Status:      task.StatusPublished,
+	}, createdAt)
+	require.NoError(f.t, err)
+	closed, err := f.taskStore.Close(ctx, orphan.ID, task.OutcomeFailure, createdAt.Add(time.Second), f.caller.Memberships)
+	require.NoError(f.t, err)
+	return closed
+}
+
+// TestTaskAdd_AutoSupersession_StampsPriorTaskID asserts AC1 happy
+// path: a closed=failure work develop predecessor on the story is
+// auto-linked to the new mint via PriorTaskID. sty_9d046bc7.
+func TestTaskAdd_AutoSupersession_StampsPriorTaskID(t *testing.T) {
+	f := newTaskFixture(t)
+	orphan := f.seedClosedFailureWork(task.ContractAction("develop"), f.now)
+
+	out, err := f.c.TaskAdd(context.Background(), f.caller, TaskAddInput{
+		AgentID:     f.devID,
+		Prompt:      "retry",
+		StoryID:     f.storyID,
+		Kind:        task.KindWork,
+		Action:      task.ContractAction("develop"),
+		Memberships: f.caller.Memberships,
+		Now:         f.now.Add(time.Minute),
+	})
+	require.NoError(t, err)
+
+	got, err := f.c.TaskGet(context.Background(), f.caller, TaskGetInput{
+		ID:          out.TaskID,
+		Memberships: f.caller.Memberships,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, orphan.ID, got.PriorTaskID, "auto-supersession must stamp prior_task_id on the new mint")
+}
+
+// TestTaskAdd_AutoSupersession_NoOrphan_LeavesEmpty asserts the
+// detection is a no-op when there is no closed=failure predecessor on
+// the story.
+func TestTaskAdd_AutoSupersession_NoOrphan_LeavesEmpty(t *testing.T) {
+	f := newTaskFixture(t)
+
+	out, err := f.c.TaskAdd(context.Background(), f.caller, TaskAddInput{
+		AgentID:     f.devID,
+		Prompt:      "first attempt",
+		StoryID:     f.storyID,
+		Kind:        task.KindWork,
+		Action:      task.ContractAction("develop"),
+		Memberships: f.caller.Memberships,
+		Now:         f.now,
+	})
+	require.NoError(t, err)
+
+	got, err := f.c.TaskGet(context.Background(), f.caller, TaskGetInput{
+		ID:          out.TaskID,
+		Memberships: f.caller.Memberships,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, got.PriorTaskID, "no orphan ⇒ prior_task_id stays empty")
+}
+
+// TestTaskAdd_AutoSupersession_AlreadyLinked_Skips asserts the
+// detection skips orphans already pointed at by another successor
+// on the chain.
+func TestTaskAdd_AutoSupersession_AlreadyLinked_Skips(t *testing.T) {
+	f := newTaskFixture(t)
+	orphan := f.seedClosedFailureWork(task.ContractAction("develop"), f.now)
+
+	// Successor already pointing at orphan via PriorTaskID.
+	_, err := f.taskStore.Enqueue(context.Background(), task.Task{
+		WorkspaceID: f.wsID,
+		ProjectID:   f.projID,
+		StoryID:     f.storyID,
+		Kind:        task.KindWork,
+		Action:      task.ContractAction("develop"),
+		AgentID:     f.devID,
+		Origin:      task.OriginStoryStage,
+		Priority:    task.PriorityMedium,
+		Status:      task.StatusPublished,
+		PriorTaskID: orphan.ID,
+	}, f.now.Add(30*time.Second))
+	require.NoError(t, err)
+
+	out, err := f.c.TaskAdd(context.Background(), f.caller, TaskAddInput{
+		AgentID:     f.devID,
+		Prompt:      "third attempt",
+		StoryID:     f.storyID,
+		Kind:        task.KindWork,
+		Action:      task.ContractAction("develop"),
+		Memberships: f.caller.Memberships,
+		Now:         f.now.Add(time.Minute),
+	})
+	require.NoError(t, err)
+
+	got, err := f.c.TaskGet(context.Background(), f.caller, TaskGetInput{
+		ID:          out.TaskID,
+		Memberships: f.caller.Memberships,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, got.PriorTaskID, "orphan already linked ⇒ new mint stays unlinked")
+}
+
+// TestTaskAdd_AutoSupersession_ActionMismatch_LeavesEmpty asserts
+// the detection only fires on (kind, action) match — an orphan with
+// a different action does not auto-link.
+func TestTaskAdd_AutoSupersession_ActionMismatch_LeavesEmpty(t *testing.T) {
+	f := newTaskFixture(t)
+	_ = f.seedClosedFailureWork(task.ContractAction("plan"), f.now)
+
+	out, err := f.c.TaskAdd(context.Background(), f.caller, TaskAddInput{
+		AgentID:     f.devID,
+		Prompt:      "develop attempt",
+		StoryID:     f.storyID,
+		Kind:        task.KindWork,
+		Action:      task.ContractAction("develop"),
+		Memberships: f.caller.Memberships,
+		Now:         f.now.Add(time.Minute),
+	})
+	require.NoError(t, err)
+
+	got, err := f.c.TaskGet(context.Background(), f.caller, TaskGetInput{
+		ID:          out.TaskID,
+		Memberships: f.caller.Memberships,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, got.PriorTaskID, "action mismatch ⇒ prior_task_id stays empty")
 }
 
 // TestTaskPlan_RejectsMissingOrigin locks the validation gate.

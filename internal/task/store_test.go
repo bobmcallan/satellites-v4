@@ -336,3 +336,56 @@ func TestMemoryStore_IterationDefault(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, got.Iteration)
 }
+
+// TestMemoryStore_SetPriorTaskID verifies sty_9d046bc7 — the
+// SetPriorTaskID backfill primitive stamps PriorTaskID on the active
+// row and refuses to overwrite a non-empty value (idempotence). Used
+// by tools/migrate_prior_task_id; not exposed via any MCP/HTTP/CLI
+// verb.
+func TestMemoryStore_SetPriorTaskID(t *testing.T) {
+	t.Parallel()
+	store := task.NewMemoryStore()
+	now := time.Now().UTC()
+	ctx := context.Background()
+
+	orphan, err := store.Enqueue(ctx, task.Task{
+		WorkspaceID: "w",
+		Origin:      task.OriginStoryStage,
+		Priority:    task.PriorityMedium,
+		Status:      task.StatusPublished,
+		Kind:        task.KindWork,
+		Action:      task.ContractAction("develop"),
+	}, now)
+	require.NoError(t, err)
+	closed, err := store.Close(ctx, orphan.ID, task.OutcomeFailure, now.Add(time.Second), []string{"w"})
+	require.NoError(t, err)
+
+	active, err := store.Enqueue(ctx, task.Task{
+		WorkspaceID: "w",
+		Origin:      task.OriginStoryStage,
+		Priority:    task.PriorityMedium,
+		Status:      task.StatusPublished,
+		Kind:        task.KindWork,
+		Action:      task.ContractAction("develop"),
+	}, now.Add(2*time.Second))
+	require.NoError(t, err)
+
+	// Happy path: stamp the linkage.
+	updated, err := store.SetPriorTaskID(ctx, active.ID, closed.ID, now.Add(3*time.Second), []string{"w"})
+	require.NoError(t, err)
+	assert.Equal(t, closed.ID, updated.PriorTaskID)
+
+	got, err := store.GetByID(ctx, active.ID, []string{"w"})
+	require.NoError(t, err)
+	assert.Equal(t, closed.ID, got.PriorTaskID)
+
+	// Idempotence: a second call against the already-linked row is a
+	// no-op and returns the row unchanged.
+	again, err := store.SetPriorTaskID(ctx, active.ID, "task_other", now.Add(4*time.Second), []string{"w"})
+	require.NoError(t, err)
+	assert.Equal(t, closed.ID, again.PriorTaskID, "SetPriorTaskID must not overwrite an already-linked row")
+
+	// Membership scoping: a caller without the workspace cannot mutate.
+	_, err = store.SetPriorTaskID(ctx, active.ID, closed.ID, now.Add(5*time.Second), []string{"other"})
+	assert.ErrorIs(t, err, task.ErrNotFound)
+}

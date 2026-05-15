@@ -505,6 +505,51 @@ func (c *Client) TaskAdd(ctx context.Context, caller Caller, in TaskAddInput) (T
 		storyMinted = true
 	}
 
+	// Auto-supersession (sty_9d046bc7): when minting a fresh kind=work
+	// task whose (story_id, kind, action) matches a closed=failure
+	// predecessor with no successor pointing at it, stamp prior_task_id
+	// on the new row so runMergeToMainHotPath's chain-shape gate accepts
+	// the linked chain. Only fires for kind=work + non-empty action;
+	// review chains use parent_task_id and are out of scope.
+	priorTaskID := ""
+	if kind == task.KindWork && action != "" {
+		chain, lerr := c.deps.Tasks.List(ctx, task.ListOptions{
+			StoryID:         st.ID,
+			IncludeArchived: false,
+		}, in.Memberships)
+		if lerr == nil {
+			linked := make(map[string]bool, len(chain))
+			for _, t := range chain {
+				if t.PriorTaskID != "" {
+					linked[t.PriorTaskID] = true
+				}
+			}
+			sort.Slice(chain, func(i, j int) bool {
+				return chain[i].CreatedAt.Before(chain[j].CreatedAt)
+			})
+			for i := len(chain) - 1; i >= 0; i-- {
+				p := chain[i]
+				if p.Kind != task.KindWork {
+					continue
+				}
+				if p.Action != action {
+					continue
+				}
+				if p.Status != task.StatusClosed {
+					continue
+				}
+				if p.Outcome != task.OutcomeFailure {
+					continue
+				}
+				if linked[p.ID] {
+					continue
+				}
+				priorTaskID = p.ID
+				break
+			}
+		}
+	}
+
 	work, err := c.deps.Tasks.Enqueue(ctx, task.Task{
 		WorkspaceID: st.WorkspaceID,
 		ProjectID:   st.ProjectID,
@@ -516,6 +561,7 @@ func (c *Client) TaskAdd(ctx context.Context, caller Caller, in TaskAddInput) (T
 		Origin:      task.OriginStoryStage,
 		Priority:    priority,
 		Status:      task.StatusPublished,
+		PriorTaskID: priorTaskID,
 	}, now)
 	if err != nil {
 		return TaskAddOutput{}, fmt.Errorf("task enqueue: %v", err)

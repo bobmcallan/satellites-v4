@@ -111,6 +111,14 @@ type Store interface {
 	// ErrInvalidTransition if the task is not currently planned.
 	// Memberships-scoped.
 	Publish(ctx context.Context, id string, now time.Time, memberships []string) (Task, error)
+
+	// SetPriorTaskID stamps PriorTaskID on the task with id=activeID.
+	// Idempotent: returns the row unchanged if PriorTaskID is already
+	// non-empty. Used exclusively by tools/migrate_prior_task_id to
+	// backfill the linkage on chains that pre-date the auto-supersession
+	// detection in client.TaskAdd (sty_9d046bc7). Not exposed via any
+	// MCP/HTTP/CLI verb. Memberships-scoped.
+	SetPriorTaskID(ctx context.Context, activeID, priorID string, now time.Time, memberships []string) (Task, error)
 }
 
 // MemoryStore is a concurrency-safe in-process Store used by unit tests.
@@ -430,6 +438,32 @@ func (m *MemoryStore) Publish(ctx context.Context, id string, now time.Time, mem
 	t.Status = StatusPublished
 	m.rows[id] = t
 	go m.emit(context.Background(), t)
+	return t, nil
+}
+
+// SetPriorTaskID implements Store for MemoryStore. Idempotent: when
+// the active row already carries a non-empty PriorTaskID, returns the
+// row unchanged.
+func (m *MemoryStore) SetPriorTaskID(ctx context.Context, activeID, priorID string, now time.Time, memberships []string) (Task, error) {
+	if activeID == "" {
+		return Task{}, errors.New("task: active_id required")
+	}
+	if priorID == "" {
+		return Task{}, errors.New("task: prior_id required")
+	}
+	m.mu.Lock()
+	t, ok := m.rows[activeID]
+	if !ok || !workspaceVisible(t.WorkspaceID, memberships) {
+		m.mu.Unlock()
+		return Task{}, ErrNotFound
+	}
+	if t.PriorTaskID != "" {
+		m.mu.Unlock()
+		return t, nil
+	}
+	t.PriorTaskID = priorID
+	m.rows[activeID] = t
+	m.mu.Unlock()
 	return t, nil
 }
 

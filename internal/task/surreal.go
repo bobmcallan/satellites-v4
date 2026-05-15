@@ -405,6 +405,28 @@ func (s *SurrealStore) Publish(ctx context.Context, id string, now time.Time, me
 	return t, nil
 }
 
+// SetPriorTaskID implements Store for SurrealStore. Idempotent: when
+// the active row already carries a non-empty PriorTaskID, returns the
+// row unchanged. Backfill primitive for tools/migrate_prior_task_id
+// (sty_9d046bc7); not exposed via any MCP/HTTP/CLI verb.
+func (s *SurrealStore) SetPriorTaskID(ctx context.Context, activeID, priorID string, now time.Time, memberships []string) (Task, error) {
+	t, err := s.GetByID(ctx, activeID, memberships)
+	if err != nil {
+		return Task{}, err
+	}
+	if priorID == "" {
+		return Task{}, fmt.Errorf("task: prior_id required")
+	}
+	if t.PriorTaskID != "" {
+		return t, nil
+	}
+	t.PriorTaskID = priorID
+	if werr := s.write(ctx, t); werr != nil {
+		return Task{}, werr
+	}
+	return t, nil
+}
+
 // Save implements Store for SurrealStore — generic upsert used by
 // migrations that mutate fields outside the lifecycle helpers.
 func (s *SurrealStore) Save(ctx context.Context, t Task, now time.Time) error {

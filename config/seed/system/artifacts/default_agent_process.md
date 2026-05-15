@@ -53,10 +53,22 @@ Branch on `state` and `auth_bootstrap.kind`:
   2. `printf "%s  ${target_install_path}\n" "${install.sha256}" | sha256sum -c -` — abort on mismatch.
   3. `chmod +x "${target_install_path}"`
   4. Write `${target_config_path}` from `default_config` + the
-     `agent_api_key.key` field on the payload (cleartext is non-empty
-     only on a fresh mint; on `source=="existing_key"` the operator
-     already has the key from a prior install).
-  5. `"${target_install_path}" agent verify` — exits 0 when the
+     `agent_api_key.key` field on the payload. Branch on
+     `agent_api_key.source`:
+     - `source == "minted_at_init"` — `agent_api_key.key` carries the
+       cleartext; embed it directly in the TOML.
+     - `source == "existing_key"` — `agent_api_key.key` is empty by
+       design (the secret is revealed once at mint). If the colocated
+       `satellites-client.toml` does NOT already exist (or does not
+       carry a usable `token`), recover by rotating: call
+       `agent_apikey_delete(id=<agent_api_key.id>)` then
+       `agent_apikey_create(name=<agent_api_key.name>, project_id=<agent_api_key.project_id>)`.
+       The create response carries the freshly-minted cleartext; embed
+       it in the TOML the consumer writes out.
+  5. Ensure the consumer project's `.gitignore` excludes
+     `.satellites/` (idempotent: append the line if absent; skip if
+     present). The cleartext-bearing TOML must never be committed.
+  6. `"${target_install_path}" agent verify` — exits 0 when the
      install is healthy.
 - `state ∈ {"install_required", "update_available"}` AND
   `auth_bootstrap.kind == "auth_login"`: run

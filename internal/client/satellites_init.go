@@ -148,7 +148,17 @@ type SatellitesInitAuthBootstrap struct {
 	Kind    string `json:"kind"`
 	Command string `json:"command,omitempty"`
 	EnvHint string `json:"env_hint,omitempty"`
-	Source  string `json:"source,omitempty"`
+	// Source distinguishes how the agent_api_key was obtained:
+	//   - "minted_at_init" — freshly minted; AgentAPIKey.Key carries the
+	//     cleartext.
+	//   - "existing_key" — re-used from a prior call; AgentAPIKey.Key is
+	//     empty by design (the secret is revealed once at mint). On a
+	//     clean install with no colocated satellites-client.toml, the
+	//     caller must rotate via agent_apikey_delete(id=...) then
+	//     agent_apikey_create(name=..., project_id=...) and embed the
+	//     freshly-minted cleartext in the TOML it writes out. See the
+	//     install sequence in the `default_agent_process` artifact.
+	Source string `json:"source,omitempty"`
 }
 
 // SatellitesInitAgentAPIKey is the agent API key minted (or re-used) on
@@ -156,7 +166,9 @@ type SatellitesInitAuthBootstrap struct {
 // project-bound, authenticated MCP session. Cleartext is non-empty
 // ONLY on a fresh mint (Source="minted_at_init"); on Source="existing_key"
 // the caller already has the cleartext from a prior install or must
-// regenerate via agent_apikey_create. sty_6b1e207a.
+// rotate via agent_apikey_delete(id=...) then agent_apikey_create(
+// name=..., project_id=...) — see the install sequence in the
+// `default_agent_process` artifact. sty_6b1e207a.
 type SatellitesInitAgentAPIKey struct {
 	ID          string     `json:"id"`
 	Key         string     `json:"key,omitempty"`

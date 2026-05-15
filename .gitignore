@@ -36,6 +36,11 @@ scripts/satellites.toml
 # `git worktree remove` once the dispatched branch lands.
 .satellites-agents/
 
+# satellites-client install dir colocated under any consumer project
+# root: holds the cleartext-bearing satellites-client.toml, run logs,
+# and per-task worktrees. Never commit any of its contents.
+.satellites/
+
 # Dependencies
 /vendor/
 

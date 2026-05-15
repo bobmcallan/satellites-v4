@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -153,6 +154,42 @@ func branchGlob(template, devTaskID string) string {
 	return strings.ReplaceAll(s, "{base_sha}", "*")
 }
 
+// parseBaseSHAFromBranch extracts the rendered `{base_sha}` substring
+// from branch given the original template. Single source of truth on
+// cfg.BranchTemplate: pairs with `renderBranchName` (the writer) and
+// `branchGlob` (the reader) so the commit hot-path's empty-push gate
+// reads the base SHA from the same template the worktree path used
+// to render the branch in the first place. sty_85b9ec3e.
+//
+// Implementation: escape the template's literal segments via
+// regexp.QuoteMeta, substitute `{task_id}` → `.+?` (non-greedy so the
+// trailing `{base_sha}` capture wins), `{base_sha}` → `([^/]+)`, and
+// match against branch. Returns the captured group on success.
+//
+// Errors when the template has no `{base_sha}` placeholder (a custom
+// operator template not encoding the base SHA in the branch name).
+// The commit runner surfaces this as a failure rather than silently
+// skipping the gate — operators who deviate from the canonical
+// template opt in to maintaining the same invariant themselves.
+func parseBaseSHAFromBranch(template, branch string) (string, error) {
+	if !strings.Contains(template, "{base_sha}") {
+		return "", fmt.Errorf("parse base sha: template %q has no {base_sha} placeholder", template)
+	}
+	pattern := regexp.QuoteMeta(template)
+	pattern = strings.ReplaceAll(pattern, regexp.QuoteMeta("{task_id}"), `.+?`)
+	pattern = strings.ReplaceAll(pattern, regexp.QuoteMeta("{base_sha}"), `([^/]+)`)
+	pattern = "^" + pattern + "$"
+	rx, err := regexp.Compile(pattern)
+	if err != nil {
+		return "", fmt.Errorf("parse base sha: compile %q: %w", pattern, err)
+	}
+	m := rx.FindStringSubmatch(branch)
+	if len(m) != 2 {
+		return "", fmt.Errorf("parse base sha: branch %q does not match template %q", branch, template)
+	}
+	return m[1], nil
+}
+
 // resolveLocalBranch returns the local branch name matching the glob
 // derived from cfg.BranchTemplate (with {task_id} substituted for
 // devTaskID and {base_sha} replaced by `*`). Errors when none /
@@ -225,15 +262,39 @@ func (c *claudeClient) resolveWorkBranch(ctx context.Context, ti taskInfo) (stri
 // Steps:
 //
 //  1. Resolve branch (trigger override → task_walk → local branch list).
-//  2. git log -1 --pretty=fuller <branch>     — pre-push commit context.
-//  3. git push origin <branch>:<branch>       — non-force publish.
-//  4. git ls-remote origin <branch>           — origin SHA confirmation.
-//  5. ledger_append with kind:evidence shape.
-//  6. task_update closed success.
+//  2. Empty-push gate: `git rev-parse <branch>` against the parsed
+//     `{base_sha}` suffix expanded via `git rev-parse <baseSHA>`.
+//     Equal SHAs short-circuit with a substrate-level failure before
+//     log / push / ls-remote run. sty_85b9ec3e.
+//  3. git log -1 --pretty=fuller <branch>     — pre-push commit context.
+//  4. git push origin <branch>:<branch>       — non-force publish.
+//  5. git ls-remote origin <branch>           — origin SHA confirmation.
+//  6. ledger_append with kind:evidence shape.
+//  7. task_update closed success.
 func (c *claudeClient) runCommitHotPath(ctx context.Context, env TaskEnvelope, ti taskInfo, _ agentInfo, _ contractInfo, _ storyInfo) (Outcome, error) {
 	branch, err := c.resolveWorkBranch(ctx, ti)
 	if err != nil {
 		return OutcomeFailure, fmt.Errorf("commit: %w", err)
+	}
+
+	headOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "rev-parse", branch)
+	if err != nil {
+		return OutcomeFailure, fmt.Errorf("commit: git rev-parse %s: %w", branch, err)
+	}
+	headSHA := strings.TrimSpace(string(headOut))
+
+	baseSHA, err := parseBaseSHAFromBranch(c.cfg.BranchTemplate, branch)
+	if err != nil {
+		return OutcomeFailure, fmt.Errorf("commit: %w", err)
+	}
+	baseFullOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "rev-parse", baseSHA)
+	if err != nil {
+		return OutcomeFailure, fmt.Errorf("commit: git rev-parse %s: %w", baseSHA, err)
+	}
+	baseFullSHA := strings.TrimSpace(string(baseFullOut))
+
+	if headSHA == baseFullSHA {
+		return OutcomeFailure, fmt.Errorf("commit: work branch has no new commits relative to base (HEAD=%s base=%s)", headSHA, baseFullSHA)
 	}
 
 	logOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "log", "-1", "--pretty=fuller", branch)

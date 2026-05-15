@@ -104,6 +104,60 @@ func TestComposePrompt_ThinPointerShape(t *testing.T) {
 	}
 }
 
+// TestComposePrompt_DevelopActionEpilogue (sty_85b9ec3e AC3) — the
+// develop-action epilogue carries all five literal substrings the
+// AC2 invariant names: "stage and commit", "conventional-commit
+// format", "git add", "git commit", and the escalation sentence
+// "Closing without committing is a critical substrate failure".
+func TestComposePrompt_DevelopActionEpilogue(t *testing.T) {
+	got := composePrompt(promptInputs{
+		Task: taskInfo{
+			ID: "task_dev_x", StoryID: "sty_y", ProjectID: "proj_y",
+			WorkspaceID: "wksp_y", Action: "contract:develop",
+		},
+		Agent:    agentInfo{Name: "developer_agent"},
+		Contract: contractInfo{Name: "develop"},
+		Story:    storyInfo{ID: "sty_y"},
+		WorkDir:  "/tmp/wt",
+	})
+
+	assert.Contains(t, got, "stage and commit",
+		"develop prompt must explicitly require stage+commit before close")
+	assert.Contains(t, got, "conventional-commit format",
+		"develop prompt must cite the commit format")
+	assert.Contains(t, got, "git add",
+		"develop prompt must show the literal command")
+	assert.Contains(t, got, "git commit",
+		"develop prompt must show the literal command")
+	assert.Contains(t, got, "Closing without committing is a critical substrate failure",
+		"develop prompt must escalate the failure mode")
+}
+
+// TestComposePrompt_NonDevelopActionUnchanged (sty_85b9ec3e AC3
+// negative) — the develop epilogue is action-gated. For other
+// contracts (plan, commit, merge_to_main) the prompt remains the
+// thin-pointer shape with no develop-specific block.
+func TestComposePrompt_NonDevelopActionUnchanged(t *testing.T) {
+	for _, action := range []string{"contract:plan", "contract:commit", "contract:merge_to_main"} {
+		t.Run(action, func(t *testing.T) {
+			got := composePrompt(promptInputs{
+				Task: taskInfo{
+					ID: "task_x", StoryID: "sty_y", ProjectID: "proj_y",
+					WorkspaceID: "wksp_y", Action: action,
+				},
+				Agent:    agentInfo{Name: "any_agent"},
+				Contract: contractInfo{Name: strings.TrimPrefix(action, "contract:")},
+				Story:    storyInfo{ID: "sty_y"},
+				WorkDir:  "/tmp/wt",
+			})
+			assert.NotContains(t, got, "Develop-phase commit requirement",
+				"epilogue must be action-gated; non-develop actions stay byte-identical")
+			assert.NotContains(t, got, "Closing without committing is a critical substrate failure",
+				"escalation sentence must not leak into non-develop prompts")
+		})
+	}
+}
+
 func TestRenderBranchName(t *testing.T) {
 	cases := []struct {
 		template, taskID, baseSHA, want string

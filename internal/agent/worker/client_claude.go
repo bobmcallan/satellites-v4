@@ -254,9 +254,36 @@ Working directory: {{work_dir}}
 Begin.
 `
 
+// developActionEpilogue is appended verbatim to the rendered prompt
+// when Task.Action == "contract:develop". The block is action-gated so
+// non-develop prompts remain byte-identical to today. The literal
+// substrings the AC3 regression test asserts ("stage and commit",
+// "conventional-commit format", "git add", "git commit", and
+// "Closing without committing is a critical substrate failure") all
+// live in this string — sty_85b9ec3e.
+const developActionEpilogue = `
+Develop-phase commit requirement (cardinal):
+
+Before closing this task, you MUST stage and commit your code changes
+via the project's conventional-commit format:
+  git add <files>
+  git commit -m "<type>(<scope>): <subject>"
+The downstream contract:commit phase will detect a work branch whose
+HEAD equals its base SHA and fail with a substrate-level empty-push
+error. Closing without committing is a critical substrate failure.
+`
+
 // composePrompt renders the thin-pointer prompt for the dispatched
 // agent. Pure: takes the four fetch results + the runtime paths.
 // Tested directly in client_claude_test.go.
+//
+// For Action == "contract:develop", an action-specific epilogue is
+// appended that names the stage-and-commit requirement verbatim. The
+// agent body fetched via the prompt's `satellites-client agent get`
+// pointer carries the same sentence, but a thin-pointer template that
+// surfaces only the close imperative is fragile against agents that
+// act on the prompt's structural sequencing before integrating the
+// fetched body. sty_85b9ec3e.
 func composePrompt(in promptInputs) string {
 	r := strings.NewReplacer(
 		"{{task_id}}", in.Task.ID,
@@ -268,7 +295,11 @@ func composePrompt(in promptInputs) string {
 		"{{contract_name}}", in.Contract.Name,
 		"{{work_dir}}", in.WorkDir,
 	)
-	return r.Replace(promptTemplate)
+	out := r.Replace(promptTemplate)
+	if in.Task.Action == "contract:develop" {
+		out += developActionEpilogue
+	}
+	return out
 }
 
 // fetchTaskInfo POSTs to /api/v1/task/get and decodes the row into

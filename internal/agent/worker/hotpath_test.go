@@ -216,6 +216,10 @@ func TestRunHotPath_DispatchesByContractName(t *testing.T) {
 // `phase:commit` tag.
 func TestRunCommitHotPath_HappyPath(t *testing.T) {
 	s := newHotpathStub(t)
+	// Empty-push gate (sty_85b9ec3e): HEAD distinct from base lets the
+	// runner through to log/push/ls-remote.
+	s.gitOutputs["rev-parse agent-task_dev-from-833a28e"] = "feedfacecafe1234\n"
+	s.gitOutputs["rev-parse 833a28e"] = "833a28edeadbeef0000\n"
 	s.gitOutputs["log -1 --pretty=fuller agent-task_dev-from-833a28e"] =
 		"commit deadbeef\nAuthor: ...\n\n    refactor(auth): foo\n"
 	s.gitOutputs["push origin agent-task_dev-from-833a28e:agent-task_dev-from-833a28e"] =
@@ -240,12 +244,15 @@ func TestRunCommitHotPath_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, OutcomeSuccess, outcome)
 
-	// gitRunner saw exactly three commands (log, push, ls-remote) —
-	// branch resolution via trigger skipped the chain walk.
-	require.Len(t, s.gitCmds, 3, "trigger override should skip branch-list git call")
-	assert.Equal(t, []string{"DIR=/repo", "log", "-1", "--pretty=fuller", "agent-task_dev-from-833a28e"}, s.gitCmds[0])
-	assert.Equal(t, []string{"DIR=/repo", "push", "origin", "agent-task_dev-from-833a28e:agent-task_dev-from-833a28e"}, s.gitCmds[1])
-	assert.Equal(t, []string{"DIR=/repo", "ls-remote", "origin", "agent-task_dev-from-833a28e"}, s.gitCmds[2])
+	// gitRunner sequence: rev-parse <branch>, rev-parse <baseSHA>, log,
+	// push, ls-remote. Branch resolution via trigger skipped the
+	// chain walk.
+	require.Len(t, s.gitCmds, 5, "trigger override should skip branch-list git call")
+	assert.Equal(t, []string{"DIR=/repo", "rev-parse", "agent-task_dev-from-833a28e"}, s.gitCmds[0])
+	assert.Equal(t, []string{"DIR=/repo", "rev-parse", "833a28e"}, s.gitCmds[1])
+	assert.Equal(t, []string{"DIR=/repo", "log", "-1", "--pretty=fuller", "agent-task_dev-from-833a28e"}, s.gitCmds[2])
+	assert.Equal(t, []string{"DIR=/repo", "push", "origin", "agent-task_dev-from-833a28e:agent-task_dev-from-833a28e"}, s.gitCmds[3])
+	assert.Equal(t, []string{"DIR=/repo", "ls-remote", "origin", "agent-task_dev-from-833a28e"}, s.gitCmds[4])
 
 	// Evidence row tags carry phase:commit (renamed from phase:push).
 	led := s.findAPICall("ledger_append")
@@ -281,6 +288,9 @@ func TestRunCommitHotPath_InferBranchFromChain(t *testing.T) {
 	walkBytes, _ := json.Marshal(walk)
 	s.setAPIResp("task_walk", string(walkBytes))
 	s.gitOutputs["branch --list agent-task_dev_b-from-*"] = "  agent-task_dev_b-from-833a28e\n"
+	// Empty-push gate (sty_85b9ec3e): HEAD distinct from base.
+	s.gitOutputs["rev-parse agent-task_dev_b-from-833a28e"] = "feedface00112233\n"
+	s.gitOutputs["rev-parse 833a28e"] = "833a28edeadbeef00\n"
 	s.gitOutputs["log -1 --pretty=fuller agent-task_dev_b-from-833a28e"] = "commit feedface\n"
 	s.gitOutputs["push origin agent-task_dev_b-from-833a28e:agent-task_dev_b-from-833a28e"] =
 		"To origin\n * [new branch]      agent-task_dev_b-from-833a28e -> agent-task_dev_b-from-833a28e\n"
@@ -311,6 +321,128 @@ func TestRunCommitHotPath_InferBranchFromChain(t *testing.T) {
 		}
 	}
 	assert.True(t, sawBranchList, "branch --list should target the latest successful develop iteration; got %v", s.gitCmds)
+}
+
+// TestRunCommitHotPath_EmptyPushFails (sty_85b9ec3e AC1) — when the
+// work branch HEAD resolves to the same SHA as the rendered
+// `{base_sha}` suffix, the runner trips the empty-push gate BEFORE
+// running git log / git push / git ls-remote. No ledger row is
+// written, no task_update is issued. The returned error carries the
+// literal AC1 substrings: `commit: work branch has no new commits
+// relative to base`, `HEAD=<sha>`, `base=<sha>`.
+func TestRunCommitHotPath_EmptyPushFails(t *testing.T) {
+	s := newHotpathStub(t)
+	// Both rev-parse calls return the same SHA — the gate must trip.
+	s.gitOutputs["rev-parse client-task_dev-from-001b1591"] = "001b1591aa3f7abd6b973c8fad57471fa0078085\n"
+	s.gitOutputs["rev-parse 001b1591"] = "001b1591aa3f7abd6b973c8fad57471fa0078085\n"
+	// Intentionally NOT scripting log/push/ls-remote outputs: if the
+	// runner reaches those calls the gate has failed open and the test
+	// surfaces it as a gitOutputs miss (default empty bytes, no error
+	// — so we additionally assert on the recorded gitCmds shape).
+
+	cc := s.client(config.AgentConfig{
+		RepoPath:       "/repo",
+		BranchTemplate: "client-{task_id}-from-{base_sha}",
+	})
+
+	trigger, _ := json.Marshal(map[string]string{
+		"branch": "client-task_dev-from-001b1591",
+	})
+	ti := taskInfo{
+		ID: "task_commit", StoryID: "sty_x", ProjectID: "proj_x",
+		Action: "contract:commit", Trigger: trigger,
+	}
+
+	outcome, err := cc.runHotPath(context.Background(),
+		TaskEnvelope{ID: "task_commit", ProjectID: "proj_x"},
+		ti, agentInfo{}, contractInfo{Name: "commit"}, storyInfo{ID: "sty_x"})
+
+	assert.Equal(t, OutcomeFailure, outcome)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(),
+		"commit: work branch has no new commits relative to base",
+		"error must name the substrate-level empty-push failure")
+	assert.Contains(t, err.Error(), "HEAD=", "error must embed HEAD= literal")
+	assert.Contains(t, err.Error(), "base=", "error must embed base= literal")
+
+	// Gate must short-circuit BEFORE push / ls-remote.
+	for _, cmd := range s.gitCmds {
+		joined := strings.Join(cmd, " ")
+		assert.NotContains(t, joined, "push",
+			"gate must short-circuit before git push")
+		assert.NotContains(t, joined, "ls-remote",
+			"gate must short-circuit before git ls-remote")
+	}
+	// Evidence row + task close MUST NOT run on a tripped gate.
+	assert.Nil(t, s.findAPICall("ledger_append"),
+		"gate must short-circuit before kind:evidence is appended")
+	assert.Nil(t, s.findAPICall("task_update"),
+		"gate must short-circuit before task_update is issued")
+}
+
+// TestParseBaseSHAFromBranch (sty_85b9ec3e) — the helper that mirrors
+// renderBranchName / branchGlob on cfg.BranchTemplate. Extracts the
+// `{base_sha}` suffix substring from a rendered branch given the
+// original template. Errors when the template lacks the placeholder
+// (the commit hot-path's empty-push gate surfaces that as a clear
+// failure rather than silently skipping the check).
+func TestParseBaseSHAFromBranch(t *testing.T) {
+	cases := []struct {
+		name     string
+		template string
+		branch   string
+		want     string
+		wantErr  string
+	}{
+		{
+			name:     "canonical_client_prefix",
+			template: "client-{task_id}-from-{base_sha}",
+			branch:   "client-task_5a2d08f3-from-7ebe51f",
+			want:     "7ebe51f",
+		},
+		{
+			name:     "legacy_agent_prefix",
+			template: "agent-{task_id}-from-{base_sha}",
+			branch:   "agent-task_dev-from-833a28e",
+			want:     "833a28e",
+		},
+		{
+			name:     "no_from_segment",
+			template: "dev-{task_id}-{base_sha}",
+			branch:   "dev-task_xyz-deadbeef",
+			want:     "deadbeef",
+		},
+		{
+			name:     "base_sha_only_template",
+			template: "{base_sha}",
+			branch:   "1234abc",
+			want:     "1234abc",
+		},
+		{
+			name:     "template_missing_base_sha_placeholder",
+			template: "static-branch",
+			branch:   "static-branch",
+			wantErr:  "no {base_sha} placeholder",
+		},
+		{
+			name:     "branch_does_not_match_template",
+			template: "client-{task_id}-from-{base_sha}",
+			branch:   "completely-different",
+			wantErr:  "does not match template",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseBaseSHAFromBranch(tc.template, tc.branch)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
 
 // seedMergeToMainHappyStubs primes the gitOutputs + ghOutputs + pprod
@@ -660,6 +792,9 @@ func TestHotPath_RoutesThroughAPIv1(t *testing.T) {
 	walkBytes, _ := json.Marshal(walk)
 	s.setAPIResp("task_walk", string(walkBytes))
 	s.gitOutputs["branch --list agent-task_dev-from-*"] = "  agent-task_dev-from-833a28e\n"
+	// Empty-push gate (sty_85b9ec3e): HEAD distinct from base.
+	s.gitOutputs["rev-parse agent-task_dev-from-833a28e"] = "feedface00112233\n"
+	s.gitOutputs["rev-parse 833a28e"] = "833a28edeadbeef00\n"
 	s.gitOutputs["log -1 --pretty=fuller agent-task_dev-from-833a28e"] = "commit feedface\n"
 	s.gitOutputs["push origin agent-task_dev-from-833a28e:agent-task_dev-from-833a28e"] =
 		"To origin\n * [new branch]      agent-task_dev-from-833a28e -> agent-task_dev-from-833a28e\n"

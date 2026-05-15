@@ -855,12 +855,37 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	// on initialize so the response carries Mcp-Session-Id, but accept
 	// empty session ids on non-initialize calls so legacy callers that
 	// pass session_id as a body argument still work.
+	//
+	// sty_0be97c3e: re-stamp the AuthMiddleware-resolved CallerIdentity
+	// from r.Context() onto the tool-handler ctx. Without this hook,
+	// mcp-go's session-context wrapper builds a fresh context that does
+	// not carry the request's values, so auth.UserFrom(ctx) inside tool
+	// handlers returns (_, false) even on authed requests.
 	s.streamable = mcpserver.NewStreamableHTTPServer(s.mcp,
 		mcpserver.WithSessionIdManager(&tolerantSessionIDManager{
 			inner: &mcpserver.StatelessGeneratingSessionIdManager{},
 		}),
+		mcpserver.WithHTTPContextFunc(propagateCallerIdentity),
 	)
 	return s
+}
+
+// propagateCallerIdentity is the mcp-go WithHTTPContextFunc hook that
+// carries the AuthMiddleware-resolved CallerIdentity across mcp-go's
+// session-context boundary into tool handlers. The scoped project id
+// and request base URL stamped by ServeHTTP also need to ride along,
+// since the same boundary drops them. sty_0be97c3e.
+func propagateCallerIdentity(ctx context.Context, r *http.Request) context.Context {
+	if id, ok := auth.UserFrom(r.Context()); ok {
+		ctx = auth.WithCaller(ctx, id)
+	}
+	if scoped := ScopedProjectIDFrom(r.Context()); scoped != "" {
+		ctx = withScopedProjectID(ctx, scoped)
+	}
+	if base := requestBaseURLFrom(r.Context()); base != "" {
+		ctx = withRequestBaseURL(ctx, base)
+	}
+	return ctx
 }
 
 // tolerantSessionIDManager is a SessionIdManager that mints UUIDs on

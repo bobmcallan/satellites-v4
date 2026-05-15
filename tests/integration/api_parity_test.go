@@ -438,18 +438,6 @@ func buildParityCases() []parityCase {
 			},
 		},
 		{
-			name: "task_plan",
-			args: func(_ *testing.T, _ context.Context, ff *parityFixtures) map[string]any {
-				return map[string]any{
-					"agent_id": ff.systemAgentID,
-					"story_id": ff.storyID,
-					"prompt":   "parity task_plan",
-					"action":   "contract:develop",
-					"origin":   "story_stage",
-				}
-			},
-		},
-		{
 			// story_add is invoked twice (one MCP, one /api/v1) per the parity
 			// matrix; the title must be unique per call to avoid colliding
 			// with the bootstrap fixture or the first-leg invocation.

@@ -42,7 +42,8 @@ var expectedRoutes = []string{
 	"POST /api/v1/task/claim",
 	"POST /api/v1/task/update",
 	"POST /api/v1/task/add",
-	"POST /api/v1/task/plan",
+	// /api/v1/task/plan retired in sty_27516920 — task_add(prior_task_id=…)
+	// covers the missing authoring surface; zero live consumers remained.
 	// sty_8c17b89d: task_log routes (append+list thin forwarders; stream is the SSE carve-out).
 	"POST /api/v1/task/log/append",
 	"POST /api/v1/task/log/list",
@@ -151,8 +152,8 @@ var expectedRoutes = []string{
 // /api/v1/story/field-set (folded into /api/v1/story/update), so the
 // expected count is 105 → 103.
 func TestAPI_RoutesRegistered(t *testing.T) {
-	if got := len(expectedRoutes); got != 109 {
-		t.Fatalf("expected 109 routes, got %d (update the slice as the verb set grows)", got)
+	if got := len(expectedRoutes); got != 108 {
+		t.Fatalf("expected 108 routes, got %d (update the slice as the verb set grows)", got)
 	}
 
 	reg := NewAPIRegistrar(client.New(client.Deps{StartedAt: time.Now().UTC()}))

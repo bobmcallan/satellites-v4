@@ -73,7 +73,6 @@ func (a *APIRegistrar) Register(mux *http.ServeMux) {
 	a.handle(mux, "POST /api/v1/task/claim", a.handleTaskClaim)
 	a.handle(mux, "POST /api/v1/task/update", a.handleTaskUpdate)
 	a.handle(mux, "POST /api/v1/task/add", a.handleTaskAdd)
-	a.handle(mux, "POST /api/v1/task/plan", a.handleTaskPlan)
 	// sty_8c17b89d: task_log routes — append + list are thin
 	// forwarders; stream is the SSE long-lived-connection carve-out.
 	a.handle(mux, "POST /api/v1/task/log/append", a.handleTaskLogAppend)
@@ -714,6 +713,8 @@ func (a *APIRegistrar) handleTaskUpdate(w http.ResponseWriter, r *http.Request) 
 		Status            string   `json:"status"`
 		Outcome           string   `json:"outcome"`
 		EvidenceLedgerIDs []string `json:"evidence_ledger_ids"`
+		PriorTaskID       *string  `json:"prior_task_id"`
+		ParentTaskID      *string  `json:"parent_task_id"`
 	}
 	if err := decodeJSONBody(r, &req); err != nil {
 		writeAPIError(w, err)
@@ -726,6 +727,8 @@ func (a *APIRegistrar) handleTaskUpdate(w http.ResponseWriter, r *http.Request) 
 		Status:            req.Status,
 		Outcome:           req.Outcome,
 		EvidenceLedgerIDs: req.EvidenceLedgerIDs,
+		PriorTaskID:       req.PriorTaskID,
+		ParentTaskID:      req.ParentTaskID,
 		Memberships:       cc.Memberships,
 		Now:               time.Now().UTC(),
 	})
@@ -738,12 +741,14 @@ func (a *APIRegistrar) handleTaskUpdate(w http.ResponseWriter, r *http.Request) 
 
 func (a *APIRegistrar) handleTaskAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		AgentID  string `json:"agent_id"`
-		Prompt   string `json:"prompt"`
-		StoryID  string `json:"story_id"`
-		Kind     string `json:"kind"`
-		Action   string `json:"action"`
-		Priority string `json:"priority"`
+		AgentID      string `json:"agent_id"`
+		Prompt       string `json:"prompt"`
+		StoryID      string `json:"story_id"`
+		Kind         string `json:"kind"`
+		Action       string `json:"action"`
+		Priority     string `json:"priority"`
+		PriorTaskID  string `json:"prior_task_id"`
+		ParentTaskID string `json:"parent_task_id"`
 	}
 	if err := decodeJSONBody(r, &req); err != nil {
 		writeAPIError(w, err)
@@ -775,72 +780,18 @@ func (a *APIRegistrar) handleTaskAdd(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	out, err := a.client.TaskAdd(r.Context(), cc, client.TaskAddInput{
-		AgentID:     req.AgentID,
-		Prompt:      req.Prompt,
-		StoryID:     req.StoryID,
-		Kind:        req.Kind,
-		Action:      req.Action,
-		Priority:    req.Priority,
-		Memberships: cc.Memberships,
-		Resolve:     resolve,
-		Now:         time.Now().UTC(),
-	})
-	if err != nil {
-		writeAPIError(w, err)
-		return
-	}
-	writeAPIJSON(w, out)
-}
-
-func (a *APIRegistrar) handleTaskPlan(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Origin           string          `json:"origin"`
-		WorkspaceID      string          `json:"workspace_id"`
-		ProjectID        string          `json:"project_id"`
-		Kind             string          `json:"kind"`
-		AgentID          string          `json:"agent_id"`
-		ParentTaskID     string          `json:"parent_task_id"`
-		PriorTaskID      string          `json:"prior_task_id"`
-		Priority         string          `json:"priority"`
-		Trigger          json.RawMessage `json:"trigger"`
-		ExpectedDuration string          `json:"expected_duration"`
-	}
-	if err := decodeJSONBody(r, &req); err != nil {
-		writeAPIError(w, err)
-		return
-	}
-	cc := a.clientCaller(r)
-	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
-	projectID := req.ProjectID
-	if projectID == "" {
-		projectID, _ = a.client.ResolveProjectID(r.Context(), "", "", cc, cc.Memberships)
-	}
-	wsID := req.WorkspaceID
-	if wsID == "" {
-		wsID = a.client.ResolveProjectWorkspaceID(r.Context(), projectID)
-	}
-	in := client.TaskPlanInput{
-		Origin:       req.Origin,
-		WorkspaceID:  wsID,
-		ProjectID:    projectID,
-		Kind:         req.Kind,
 		AgentID:      req.AgentID,
-		ParentTaskID: req.ParentTaskID,
-		PriorTaskID:  req.PriorTaskID,
+		Prompt:       req.Prompt,
+		StoryID:      req.StoryID,
+		Kind:         req.Kind,
+		Action:       req.Action,
 		Priority:     req.Priority,
-		Trigger:      []byte(req.Trigger),
+		PriorTaskID:  req.PriorTaskID,
+		ParentTaskID: req.ParentTaskID,
 		Memberships:  cc.Memberships,
+		Resolve:      resolve,
 		Now:          time.Now().UTC(),
-	}
-	if req.ExpectedDuration != "" {
-		d, derr := time.ParseDuration(req.ExpectedDuration)
-		if derr != nil {
-			writeAPIError(w, errors.New("expected_duration must be a Go duration string"))
-			return
-		}
-		in.ExpectedDuration = d
-	}
-	out, err := a.client.TaskPlan(r.Context(), cc, in)
+	})
 	if err != nil {
 		writeAPIError(w, err)
 		return

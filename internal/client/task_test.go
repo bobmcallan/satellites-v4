@@ -289,28 +289,6 @@ func TestTaskWalk_StoryNotFound(t *testing.T) {
 	require.ErrorIs(t, err, ErrStoryNotFound)
 }
 
-// TestTaskPlan_WritesPlannedStatus locks the plan-tier creation shape:
-// origin required; status=planned; ledger root id returned when ledger
-// is wired.
-func TestTaskPlan_WritesPlannedStatus(t *testing.T) {
-	f := newTaskFixture(t)
-	out, err := f.c.TaskPlan(context.Background(), f.caller, TaskPlanInput{
-		Origin:      task.OriginStoryStage,
-		WorkspaceID: f.wsID,
-		ProjectID:   f.projID,
-		Kind:        task.KindWork,
-		AgentID:     f.devID,
-		Priority:    task.PriorityMedium,
-		Memberships: f.caller.Memberships,
-		Now:         f.now,
-	})
-	require.NoError(t, err)
-	assert.NotEmpty(t, out.TaskID)
-	assert.Equal(t, task.StatusPlanned, out.Status)
-	assert.Equal(t, task.OriginStoryStage, out.Origin)
-	assert.NotEmpty(t, out.LedgerRootID, "ledger root id should be present when ledger store is wired")
-}
-
 // seedClosedFailureWork enqueues a closed=failure kind=work task on
 // the fixture's story matching the supplied action — the orphan that
 // the auto-supersession detection in TaskAdd should pick up.
@@ -452,14 +430,226 @@ func TestTaskAdd_AutoSupersession_ActionMismatch_LeavesEmpty(t *testing.T) {
 	assert.Empty(t, got.PriorTaskID, "action mismatch ⇒ prior_task_id stays empty")
 }
 
-// TestTaskPlan_RejectsMissingOrigin locks the validation gate.
-func TestTaskPlan_RejectsMissingOrigin(t *testing.T) {
+// TestTaskAdd_AcceptsPriorAndParent (sty_27516920 AC1): explicit
+// prior_task_id + parent_task_id round-trip onto the persisted row.
+func TestTaskAdd_AcceptsPriorAndParent(t *testing.T) {
 	f := newTaskFixture(t)
-	_, err := f.c.TaskPlan(context.Background(), f.caller, TaskPlanInput{
+	prior := f.seedClosedFailureWork(task.ContractAction("develop"), f.now)
+	parent, err := f.taskStore.Enqueue(context.Background(), task.Task{
 		WorkspaceID: f.wsID,
+		ProjectID:   f.projID,
+		StoryID:     f.storyID,
+		Kind:        task.KindWork,
+		Action:      task.ContractAction("develop"),
+		AgentID:     f.devID,
+		Origin:      task.OriginStoryStage,
+		Priority:    task.PriorityMedium,
+		Status:      task.StatusPublished,
+	}, f.now.Add(time.Second))
+	require.NoError(t, err)
+
+	out, err := f.c.TaskAdd(context.Background(), f.caller, TaskAddInput{
+		AgentID:      f.devID,
+		Prompt:       "explicit linkage",
+		StoryID:      f.storyID,
+		Kind:         task.KindWork,
+		Action:       task.ContractAction("develop"),
+		PriorTaskID:  prior.ID,
+		ParentTaskID: parent.ID,
+		Memberships:  f.caller.Memberships,
+		Now:          f.now.Add(time.Minute),
+	})
+	require.NoError(t, err)
+
+	got, err := f.c.TaskGet(context.Background(), f.caller, TaskGetInput{
+		ID:          out.TaskID,
+		Memberships: f.caller.Memberships,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, prior.ID, got.PriorTaskID, "explicit prior_task_id must round-trip")
+	assert.Equal(t, parent.ID, got.ParentTaskID, "explicit parent_task_id must round-trip")
+}
+
+// TestTaskAdd_RejectsUnknownPrior (sty_27516920 AC1): unknown
+// prior_task_id surfaces prior_task_not_found.
+func TestTaskAdd_RejectsUnknownPrior(t *testing.T) {
+	f := newTaskFixture(t)
+	_, err := f.c.TaskAdd(context.Background(), f.caller, TaskAddInput{
+		AgentID:     f.devID,
+		Prompt:      "x",
+		StoryID:     f.storyID,
+		Action:      task.ContractAction("develop"),
+		PriorTaskID: "task_does_not_exist",
 		Memberships: f.caller.Memberships,
 		Now:         f.now,
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "origin")
+	assert.Contains(t, err.Error(), "prior_task_not_found")
+}
+
+// TestTaskAdd_RejectsUnknownParent (sty_27516920 AC1): unknown
+// parent_task_id surfaces parent_task_not_found.
+func TestTaskAdd_RejectsUnknownParent(t *testing.T) {
+	f := newTaskFixture(t)
+	_, err := f.c.TaskAdd(context.Background(), f.caller, TaskAddInput{
+		AgentID:      f.devID,
+		Prompt:       "x",
+		StoryID:      f.storyID,
+		Action:       task.ContractAction("develop"),
+		ParentTaskID: "task_does_not_exist",
+		Memberships:  f.caller.Memberships,
+		Now:          f.now,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parent_task_not_found")
+}
+
+// TestTaskAdd_ExplicitPriorOverridesAutoSupersession (sty_27516920
+// AC1): when both a viable orphan AND a caller-supplied PriorTaskID
+// exist, the caller wins — the persisted PriorTaskID is the supplied
+// value, not the orphan.
+func TestTaskAdd_ExplicitPriorOverridesAutoSupersession(t *testing.T) {
+	f := newTaskFixture(t)
+	orphan := f.seedClosedFailureWork(task.ContractAction("develop"), f.now)
+	// A distinct task the caller will reference instead of the orphan.
+	explicit, err := f.taskStore.Enqueue(context.Background(), task.Task{
+		WorkspaceID: f.wsID,
+		ProjectID:   f.projID,
+		StoryID:     f.storyID,
+		Kind:        task.KindWork,
+		Action:      task.ContractAction("develop"),
+		AgentID:     f.devID,
+		Origin:      task.OriginStoryStage,
+		Priority:    task.PriorityMedium,
+		Status:      task.StatusPublished,
+	}, f.now.Add(10*time.Second))
+	require.NoError(t, err)
+
+	out, err := f.c.TaskAdd(context.Background(), f.caller, TaskAddInput{
+		AgentID:     f.devID,
+		Prompt:      "caller wins",
+		StoryID:     f.storyID,
+		Kind:        task.KindWork,
+		Action:      task.ContractAction("develop"),
+		PriorTaskID: explicit.ID,
+		Memberships: f.caller.Memberships,
+		Now:         f.now.Add(time.Minute),
+	})
+	require.NoError(t, err)
+
+	got, err := f.c.TaskGet(context.Background(), f.caller, TaskGetInput{
+		ID:          out.TaskID,
+		Memberships: f.caller.Memberships,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, explicit.ID, got.PriorTaskID, "explicit value must win over auto-supersession candidate")
+	assert.NotEqual(t, orphan.ID, got.PriorTaskID, "auto-supersession orphan must not override caller's explicit value")
+}
+
+// TestTaskUpdate_PatchesLinkage (sty_27516920 AC2): status omitted,
+// PriorTaskID/ParentTaskID pointers route through SetLinkage on the
+// non-terminal target.
+func TestTaskUpdate_PatchesLinkage(t *testing.T) {
+	f := newTaskFixture(t)
+	target, err := f.c.TaskAdd(context.Background(), f.caller, TaskAddInput{
+		AgentID:     f.devID,
+		Prompt:      "x",
+		StoryID:     f.storyID,
+		Action:      task.ContractAction("develop"),
+		Memberships: f.caller.Memberships,
+		Now:         f.now,
+	})
+	require.NoError(t, err)
+	prior, err := f.taskStore.Enqueue(context.Background(), task.Task{
+		WorkspaceID: f.wsID,
+		ProjectID:   f.projID,
+		StoryID:     f.storyID,
+		Kind:        task.KindWork,
+		Action:      task.ContractAction("develop"),
+		AgentID:     f.devID,
+		Origin:      task.OriginStoryStage,
+		Priority:    task.PriorityMedium,
+		Status:      task.StatusPublished,
+	}, f.now.Add(time.Second))
+	require.NoError(t, err)
+
+	priorID := prior.ID
+	emptyParent := ""
+	_, err = f.c.TaskUpdate(context.Background(), f.caller, TaskUpdateInput{
+		ID:           target.TaskID,
+		PriorTaskID:  &priorID,
+		ParentTaskID: &emptyParent,
+		Memberships:  f.caller.Memberships,
+		Now:          f.now.Add(2 * time.Second),
+	})
+	require.NoError(t, err)
+
+	got, err := f.c.TaskGet(context.Background(), f.caller, TaskGetInput{
+		ID:          target.TaskID,
+		Memberships: f.caller.Memberships,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, priorID, got.PriorTaskID, "linkage patch must persist the supplied prior_task_id")
+	assert.Equal(t, "", got.ParentTaskID, "linkage patch with empty pointer must clear the field")
+}
+
+// TestTaskUpdate_RejectsLinkagePatchOnClosed (sty_27516920 AC2):
+// terminal rows are immutable — linkage patch surfaces
+// task_already_terminal.
+func TestTaskUpdate_RejectsLinkagePatchOnClosed(t *testing.T) {
+	f := newTaskFixture(t)
+	add, err := f.c.TaskAdd(context.Background(), f.caller, TaskAddInput{
+		AgentID:     f.devID,
+		Prompt:      "x",
+		StoryID:     f.storyID,
+		Action:      task.ContractAction("develop"),
+		Memberships: f.caller.Memberships,
+		Now:         f.now,
+	})
+	require.NoError(t, err)
+	_, err = f.c.TaskUpdate(context.Background(), f.caller, TaskUpdateInput{
+		ID:          add.TaskID,
+		Status:      task.StatusClosed,
+		Outcome:     task.OutcomeSuccess,
+		Memberships: f.caller.Memberships,
+		Now:         f.now.Add(time.Second),
+	})
+	require.NoError(t, err)
+
+	newPrior := "task_unreachable"
+	_, err = f.c.TaskUpdate(context.Background(), f.caller, TaskUpdateInput{
+		ID:          add.TaskID,
+		PriorTaskID: &newPrior,
+		Memberships: f.caller.Memberships,
+		Now:         f.now.Add(2 * time.Second),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "task_already_terminal")
+}
+
+// TestTaskUpdate_RejectsStatusPlusLinkage (sty_27516920 AC2):
+// combining status mutation + linkage patch in one call is rejected so
+// the caller chains them.
+func TestTaskUpdate_RejectsStatusPlusLinkage(t *testing.T) {
+	f := newTaskFixture(t)
+	add, err := f.c.TaskAdd(context.Background(), f.caller, TaskAddInput{
+		AgentID:     f.devID,
+		Prompt:      "x",
+		StoryID:     f.storyID,
+		Action:      task.ContractAction("develop"),
+		Memberships: f.caller.Memberships,
+		Now:         f.now,
+	})
+	require.NoError(t, err)
+	newPrior := "task_anything"
+	_, err = f.c.TaskUpdate(context.Background(), f.caller, TaskUpdateInput{
+		ID:          add.TaskID,
+		Status:      task.StatusClosed,
+		Outcome:     task.OutcomeSuccess,
+		PriorTaskID: &newPrior,
+		Memberships: f.caller.Memberships,
+		Now:         f.now.Add(time.Second),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "linkage patch cannot combine with status mutation")
 }

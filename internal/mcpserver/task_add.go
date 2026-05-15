@@ -59,14 +59,16 @@ func (s *Server) handleTaskAdd(ctx context.Context, req mcpgo.CallToolRequest) (
 // session + URL context plumbing in mcpserver.
 func (s *Server) buildTaskAddInput(req mcpgo.CallToolRequest, memberships []string) client.TaskAddInput {
 	return client.TaskAddInput{
-		AgentID:     strings.TrimSpace(req.GetString("agent_id", "")),
-		Prompt:      req.GetString("prompt", ""),
-		StoryID:     strings.TrimSpace(req.GetString("story_id", "")),
-		Kind:        strings.TrimSpace(req.GetString("kind", "")),
-		Action:      strings.TrimSpace(req.GetString("action", "")),
-		Priority:    strings.TrimSpace(req.GetString("priority", "")),
-		Memberships: memberships,
-		Now:         s.nowUTC(),
+		AgentID:      strings.TrimSpace(req.GetString("agent_id", "")),
+		Prompt:       req.GetString("prompt", ""),
+		StoryID:      strings.TrimSpace(req.GetString("story_id", "")),
+		Kind:         strings.TrimSpace(req.GetString("kind", "")),
+		Action:       strings.TrimSpace(req.GetString("action", "")),
+		Priority:     strings.TrimSpace(req.GetString("priority", "")),
+		PriorTaskID:  strings.TrimSpace(req.GetString("prior_task_id", "")),
+		ParentTaskID: strings.TrimSpace(req.GetString("parent_task_id", "")),
+		Memberships:  memberships,
+		Now:          s.nowUTC(),
 		Resolve: client.TaskAddResolveDeps{
 			CallerActiveProjectID: func(ctx context.Context, c client.Caller) string {
 				return s.callerActiveProjectID(ctx, auth.CallerIdentity{UserID: c.UserID, Email: c.Email})

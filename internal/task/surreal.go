@@ -427,6 +427,41 @@ func (s *SurrealStore) SetPriorTaskID(ctx context.Context, activeID, priorID str
 	return t, nil
 }
 
+// SetLinkage implements Store for SurrealStore. Rejects mutation on
+// closed/archived rows with ErrInvalidTransition. Idempotent when
+// both pointers match the persisted values. sty_27516920.
+func (s *SurrealStore) SetLinkage(ctx context.Context, id string, priorID, parentID *string, now time.Time, memberships []string) (Task, error) {
+	if id == "" {
+		return Task{}, fmt.Errorf("task: id required")
+	}
+	if priorID == nil && parentID == nil {
+		return Task{}, fmt.Errorf("task: SetLinkage requires at least one of prior_task_id or parent_task_id")
+	}
+	t, err := s.GetByID(ctx, id, memberships)
+	if err != nil {
+		return Task{}, err
+	}
+	if t.Status == StatusClosed || t.Status == StatusArchived {
+		return Task{}, fmt.Errorf("%w: linkage patch rejected on terminal status %s", ErrInvalidTransition, t.Status)
+	}
+	changed := false
+	if priorID != nil && t.PriorTaskID != *priorID {
+		t.PriorTaskID = *priorID
+		changed = true
+	}
+	if parentID != nil && t.ParentTaskID != *parentID {
+		t.ParentTaskID = *parentID
+		changed = true
+	}
+	if !changed {
+		return t, nil
+	}
+	if werr := s.write(ctx, t); werr != nil {
+		return Task{}, werr
+	}
+	return t, nil
+}
+
 // Save implements Store for SurrealStore — generic upsert used by
 // migrations that mutate fields outside the lifecycle helpers.
 func (s *SurrealStore) Save(ctx context.Context, t Task, now time.Time) error {

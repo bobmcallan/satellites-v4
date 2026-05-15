@@ -129,3 +129,72 @@ func TestRunWorkspace_RealSeedShipsFourLifecycleContracts(t *testing.T) {
 		}
 	}
 }
+
+// TestVersionBumpRubric_PresentInBothBodies (sty_f8d0157f) locks the
+// `.version`-bump rubric clause into the loaded `commit` and
+// `merge_to_main` contract rows. Exercises the seed-loader
+// apply-to-store path (per pr_local_iteration) so the assertion runs
+// against the row body the reviewer agent will read at dispatch,
+// not raw markdown on disk. Models the precedent at L96-131.
+func TestVersionBumpRubric_PresentInBothBodies(t *testing.T) {
+	t.Parallel()
+	seedDir, err := filepath.Abs(filepath.Join("..", "..", "config", "seed"))
+	if err != nil {
+		t.Fatalf("abs seed dir: %v", err)
+	}
+	const ws = "wksp_5b3257d1"
+
+	docs := document.NewMemoryStore()
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	if _, err := RunWorkspace(context.Background(), docs, seedDir, ws, "system", now); err != nil {
+		t.Fatalf("RunWorkspace: %v", err)
+	}
+
+	rows, err := docs.List(context.Background(), document.ListOptions{
+		Type:  document.TypeContract,
+		Scope: document.ScopeWorkspace,
+	}, nil)
+	if err != nil {
+		t.Fatalf("List contracts: %v", err)
+	}
+
+	bodies := map[string]string{}
+	for _, r := range rows {
+		if r.WorkspaceID != ws {
+			continue
+		}
+		if r.Name == "commit" || r.Name == "merge_to_main" {
+			bodies[r.Name] = r.Body
+		}
+	}
+	for _, name := range []string{"commit", "merge_to_main"} {
+		if _, ok := bodies[name]; !ok {
+			t.Fatalf("expected loaded contract row %q in workspace %s", name, ws)
+		}
+	}
+
+	commonSentinels := []string{
+		"## Version bump policy",
+		"[satellites-server]",
+		"[satellites-client]",
+		"[satellites-agent]",
+		"cmd/satellites-server/**",
+		"cmd/satellites-client/**",
+		"cmd/satellites-agent/**",
+	}
+	for name, body := range bodies {
+		for _, s := range commonSentinels {
+			if !strings.Contains(body, s) {
+				t.Errorf("%s.md loaded body missing sentinel %q", name, s)
+			}
+		}
+	}
+
+	// merge_to_main must scope the check across the branch
+	// collectively (not per-commit at merge time), so a docs-only
+	// tail commit doesn't trip the rule when an earlier commit
+	// already bumped the binary.
+	if mb := bodies["merge_to_main"]; !strings.Contains(mb, "collectively") && !strings.Contains(mb, "across the branch") {
+		t.Errorf("merge_to_main.md loaded body missing branch-aggregate scoping sentinel (expected %q or %q)", "collectively", "across the branch")
+	}
+}

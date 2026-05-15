@@ -34,6 +34,32 @@ source files and version metadata.
   line confirming a non-force update).
 - Confirmation that no force, branch deletion, or unrelated tag
   push occurred.
+- Per-binary attestation: for every commit in the push range,
+  the diff against the parent shows a `.version` bump in the
+  section matching each touched binary (see `## Version bump
+  policy` below). Capture `git diff HEAD~N..HEAD -- .version`
+  output in the evidence row.
+
+## Version bump policy
+
+Every commit on the branch in the push range MUST bump
+`[satellites-server]`, `[satellites-client]`, or
+`[satellites-agent]` in `.version` for whichever binary the commit
+touches. The reviewer rejects evidence whose diff against
+`HEAD~N..HEAD` shows no `.version` bump for a touched binary.
+
+Touched-binary resolution (changed-files heuristic):
+
+- `cmd/satellites-server/**` → `[satellites-server]`
+- `cmd/satellites-client/**` → `[satellites-client]`
+- `cmd/satellites-agent/**` → `[satellites-agent]`
+- `internal/**`, `config/**`, `docs/**`, root files: default to
+  the binary indicated by the commit title's conventional-commit
+  scope (`feat(satellites-client): …`). When the title is
+  scope-agnostic, bump every binary whose `cmd/<binary>/**` tree
+  consumes the touched code path (when in doubt, bump all three).
+
+Multi-binary commits bump every touched binary in the same diff.
 
 ## Review policy
 
@@ -53,3 +79,9 @@ only judgment that runs.
 - On rejection (non-fast-forward, hook failure, remote refusal),
   surface the error and stop. Recovery belongs in a fresh story,
   not a retry-with-force.
+- No-bump push is a reject: if any commit in the push range
+  touches a binary's code paths (per the heuristic above) and the
+  same commit's diff against its parent does not bump that
+  binary's `.version` section, the reviewer rejects the close
+  evidence and the operator amends or follows up with a bump
+  commit before re-attempting.

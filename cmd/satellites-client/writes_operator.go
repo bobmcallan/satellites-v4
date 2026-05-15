@@ -163,10 +163,26 @@ func newProjectAddCmd() *cobra.Command {
 			if name == "" {
 				return nil, cliexit.Newf(cliexit.Usage, "project add: --name is required")
 			}
-			return map[string]any{"name": name}, nil
+			out := map[string]any{"name": name}
+			if cmd.Flags().Changed("repo-url") {
+				v, _ := cmd.Flags().GetString("repo-url")
+				out["repo_url"] = v
+			}
+			if cmd.Flags().Changed("description") {
+				v, _ := cmd.Flags().GetString("description")
+				out["description"] = v
+			}
+			if cmd.Flags().Changed("workspace-id") {
+				v, _ := cmd.Flags().GetString("workspace-id")
+				out["workspace_id"] = v
+			}
+			return out, nil
 		}),
 	}
 	c.Flags().String("name", "", "Project name (required).")
+	c.Flags().String("repo-url", "", "Optional git remote — binds the project to its canonical remote at mint time.")
+	c.Flags().String("description", "", "Optional free-form description.")
+	c.Flags().String("workspace-id", "", "Optional workspace scope; defaults to the caller's default workspace.")
 	_ = c.MarkFlagRequired("name")
 	return c
 }
@@ -174,7 +190,7 @@ func newProjectAddCmd() *cobra.Command {
 func newProjectUpdateCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "update",
-		Short: "Update a project's name / mcp_url.",
+		Short: "Update a project's mutable fields (name / description / mcp_url / status).",
 		RunE: writeHandler("project_update", func(cmd *cobra.Command, args []string) (any, error) {
 			id, _ := cmd.Flags().GetString("id")
 			if id == "" {
@@ -189,12 +205,22 @@ func newProjectUpdateCmd() *cobra.Command {
 				v, _ := cmd.Flags().GetString("mcp-url")
 				out["mcp_url"] = v
 			}
+			if cmd.Flags().Changed("description") {
+				v, _ := cmd.Flags().GetString("description")
+				out["description"] = v
+			}
+			if cmd.Flags().Changed("status") {
+				v, _ := cmd.Flags().GetString("status")
+				out["status"] = v
+			}
 			return out, nil
 		}),
 	}
 	c.Flags().String("id", "", "Project id (required).")
 	c.Flags().String("name", "", "New name.")
 	c.Flags().String("mcp-url", "", "Override MCP URL.")
+	c.Flags().String("description", "", "New description (empty string clears).")
+	c.Flags().String("status", "", "Status: active | archived. project_delete is the cascade path.")
 	_ = c.MarkFlagRequired("id")
 	return c
 }

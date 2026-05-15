@@ -128,13 +128,30 @@ func TestMCPInfoToolRespondsOverHTTP(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &payload); err != nil {
 		t.Fatalf("payload decode: %v; raw=%s", err, text)
 	}
-	for _, k := range []string{"version", "build", "commit", "user_email", "started_at"} {
+	// sty_0be97c3e: payload is now {server, caller, recent_activity}.
+	for _, k := range []string{"server", "caller", "recent_activity"} {
 		if _, ok := payload[k]; !ok {
 			t.Errorf("payload missing %q: %+v", k, payload)
 		}
 	}
-	if payload["user_email"] != "apikey" {
-		t.Errorf("user_email = %v, want \"apikey\"", payload["user_email"])
+	server, _ := payload["server"].(map[string]any)
+	for _, k := range []string{"version", "build", "commit", "started_at"} {
+		if _, ok := server[k]; !ok {
+			t.Errorf("server block missing %q: %+v", k, server)
+		}
+	}
+	// AC1: the AuthMiddleware-resolved CallerIdentity must reach the
+	// tool handler ctx. For the env-keyset bearer the path stamps the
+	// "apikey" sentinel email; the regression is the field being empty.
+	caller, _ := payload["caller"].(map[string]any)
+	if caller == nil {
+		t.Fatalf("payload missing caller block: %+v", payload)
+	}
+	if email, _ := caller["email"].(string); email == "" {
+		t.Errorf("caller.email empty over apikey bearer — context propagation regressed")
+	}
+	if authKind, _ := caller["auth_kind"].(string); authKind == "" {
+		t.Errorf("caller.auth_kind empty — source not propagated")
 	}
 }
 

@@ -106,13 +106,20 @@ func TestAgentAPIKey_EndToEnd(t *testing.T) {
 	//    first so the streamable HTTP server has the protocol handshake.
 	rpcInit(t, ctx, mcpURL, cleartext)
 	infoResp := callTool(t, ctx, mcpURL, cleartext, "satellites_info", map[string]any{})
-	if _, ok := infoResp["version"]; !ok {
-		t.Errorf("info response missing version: %+v", infoResp)
+	server, _ := infoResp["server"].(map[string]any)
+	if _, ok := server["version"]; !ok {
+		t.Errorf("info response missing server.version: %+v", infoResp)
 	}
-	// The Bearer is owned by the dev user; confirm the response
-	// reflects the owner email, not the literal "apikey" sentinel.
-	if email, _ := infoResp["user_email"].(string); email != "dev@local" {
-		t.Errorf("user_email = %q, want dev@local", email)
+	// sty_0be97c3e — AC4: the substrate apikey path resolves to the
+	// owner's email, not the literal "apikey" sentinel from the
+	// env-keyset path. Confirms the WithHTTPContextFunc hook carries
+	// the resolved CallerIdentity through to the tool ctx.
+	caller, _ := infoResp["caller"].(map[string]any)
+	if email, _ := caller["email"].(string); email != "dev@local" {
+		t.Errorf("caller.email = %q, want dev@local", email)
+	}
+	if authKind, _ := caller["auth_kind"].(string); !strings.HasPrefix(authKind, "apikey:") {
+		t.Errorf("caller.auth_kind = %q, want apikey:<id> prefix", authKind)
 	}
 
 	// 4. agent_apikey_list with the cookie. Assert no cleartext leak.

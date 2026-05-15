@@ -13,26 +13,20 @@ code.
 ## Primitives
 
 - **projects** — top-level work surface; carry intent + active principles.
-- **stories** — units of deliverable work (user stories) scoped to a project.
+- **stories** — units of deliverable work scoped to a project.
 - **tasks** — the dispatch unit; what a single agent acts on.
-- **documents** — typed markdown: agents, contracts, principles, skills, workflows, help.
+- **documents** — typed markdown (agents, contracts, principles, skills, workflows, help).
 - **ledger** — append-only audit log; evidence and verdicts.
 
 ## Bootstrap
 
 When a user prompt references substrate primitives (story id, task
 id, contract name, agent name) or asks about the project, make
-`project_set(repo_url=<git remote get-url origin>)` your first call.
-It binds your session to the project, returns the project's intent
-prose and active principles in one roundtrip, and lets every
-subsequent project-scoped verb default to the bound project.
-
-For unrelated prompts the bootstrap is unnecessary. The handshake
-orients — it does not demand a roundtrip on every turn.
-
-`project_get(id=<project_id>)` returns the same orientation bundle
-without re-resolving the repo URL. Use it on later turns when the
-intent or principles need a refresh.
+`project_set(repo_url=<git remote get-url origin>)` your first call —
+it binds your session to the project and returns intent + active
+principles in one roundtrip. On later turns, `project_get(id=<project_id>)`
+returns the same bundle without re-resolving the repo URL. For
+unrelated prompts the bootstrap is unnecessary.
 
 ## satellites_init install sequence
 
@@ -81,33 +75,21 @@ Re-running `satellites_init` on a project-bound session is
 idempotent: the apikey row is keyed by (caller, project, agent_name)
 so a second call returns the existing key's metadata.
 
-## Fetching context
+## How to fetch context, and operating principle
 
-The default substrate surface is the `satellites-client` CLI invoked
-via Bash — grouped by noun (`task get <id>`, `ledger append --type
-evidence ...`, `story update-status ...`). Auto-JSON when stdout is
-not a tty; pipe to `jq`. Auth + server URL resolve from the loader's
-config chain (flag > env > .satellites/ > satellites/ (legacy) >
-bin/ > XDG).
-
-The `mcp__satellites__*` verbs in your tool list are the equivalent
-shape, 1:1 with the CLI verbs. Names and parameters in either form
-are authoritative.
-
-## Operating principle
-
-Read the documents that describe your role, your project, and your
-task. Act on what they say. Write evidence to the ledger. Prose is
-authoritative — fetch rules, do not infer them.
+The substrate surface is the `satellites-client` CLI invoked via Bash
+(grouped by noun: `task get <id>`, `ledger append --type evidence …`,
+`story update-status …`). Auto-JSON when stdout is not a tty; pipe to
+`jq`. The `mcp__satellites__*` verbs are the 1:1 equivalent shape —
+either form is authoritative. Read the documents that describe your
+role, your project, and your task. Act on what they say. Write
+evidence to the ledger. Prose is authoritative — fetch rules, do not
+infer them.
 
 ## Async dispatch
 
-When the orchestrator has more than one story (or more than one
-slice of the same story) in flight at once, dispatch via
-`task run` (default async branch) and poll the chain instead of
-blocking the orchestrator's bash with `task run --sync`. The full
-pattern — author → run → poll → consume the
-`kind:agent-execute-evidence` row → recover from daemon crashes via
-`kind:daemon-orphaned-subprocess` rows + `prior_task_id` retries —
-lives in the sibling artifact `default_async_dispatch`. Polling
-cadence is 30s default, 30-60s sustainable band.
+When more than one slice is in flight, dispatch via `task run`
+(default async branch) and poll the chain rather than blocking on
+`--sync`. The full author → run → poll → consume-evidence → recover
+pattern lives in the sibling `default_async_dispatch` artifact;
+30-60s polling cadence.

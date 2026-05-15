@@ -120,14 +120,14 @@ func TestSatellitesInit(t *testing.T) {
 			if got.State != tc.wantState {
 				t.Errorf("state=%q want=%q (body=%s)", got.State, tc.wantState, string(raw))
 			}
-			if got.TargetInstallPath != "./satellites/satellites-client" {
+			if got.TargetInstallPath != "./.satellites/satellites-client" {
 				t.Errorf("target_install_path=%q", got.TargetInstallPath)
 			}
-			if got.TargetConfigPath != "./satellites/satellites-client.toml" {
+			if got.TargetConfigPath != "./.satellites/satellites-client.toml" {
 				t.Errorf("target_config_path=%q", got.TargetConfigPath)
 			}
-			if got.DefaultConfig.WorktreeRoot != "./satellites/worktree" ||
-				got.DefaultConfig.LogPath != "./satellites/logs" ||
+			if got.DefaultConfig.WorktreeRoot != "./.satellites/worktree" ||
+				got.DefaultConfig.LogPath != "./.satellites/logs" ||
 				got.DefaultConfig.BranchTemplate != "client-{task_id}-from-{base_sha}" {
 				t.Errorf("default_config drift: %+v", got.DefaultConfig)
 			}

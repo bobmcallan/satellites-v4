@@ -65,6 +65,13 @@ type OAuthServerConfig struct {
 	// UserStore — the V3 JWT-cookie shortcut doesn't apply here because
 	// V4 session cookies are opaque UUIDs.
 	ResolveSessionUser func(r *http.Request) string
+	// Users is the lookup surface for stamping identity claims (email,
+	// display name, provider) onto the access-token JWT at mint time.
+	// Optional — when nil, JWTs carry only sub/scope/client_id and the
+	// downstream bearer validator returns CallerIdentity with empty Email.
+	// Wired in main() so /oauth/token mints carry the same identity
+	// fields token_exchange already populates on sat_-prefixed tokens.
+	Users UserStoreByID
 }
 
 // OAuthServer is the MCP-spec OAuth 2.1 Authorization Server. Long-lived;
@@ -598,6 +605,11 @@ func (s *OAuthServer) handleRefreshTokenGrant(w http.ResponseWriter, r *http.Req
 }
 
 // mintAccessToken builds a JWTClaims and signs via CreateJWT (HS256).
+// When cfg.Users is non-nil, the user row is looked up and Email / Name /
+// Provider claims are stamped — the bearer validator unpacks these back
+// into CallerIdentity, restoring `caller.Email` for every downstream
+// MCP / HTTP handler. Lookup failure is non-fatal: a JWT without the
+// optional identity claims is still valid for sub-only auth paths.
 func (s *OAuthServer) mintAccessToken(userID, scope, clientID, issuer string) (string, error) {
 	now := time.Now()
 	claims := &JWTClaims{
@@ -607,6 +619,13 @@ func (s *OAuthServer) mintAccessToken(userID, scope, clientID, issuer string) (s
 		Iss:      issuer,
 		Iat:      now.Unix(),
 		Exp:      now.Add(s.cfg.AccessTokenTTL).Unix(),
+	}
+	if s.cfg.Users != nil {
+		if u, err := s.cfg.Users.GetByID(userID); err == nil {
+			claims.Email = u.Email
+			claims.Name = u.DisplayName
+			claims.Provider = u.Provider
+		}
 	}
 	return CreateJWT(claims, s.JWTSecretBytes())
 }

@@ -333,6 +333,101 @@ func TestOAuth_FullAuthCodeChain_PKCE(t *testing.T) {
 	}
 }
 
+// TestOAuth_AccessTokenCarriesIdentityClaims is the regression test for the
+// sty_0be97c3e Email-in-JWT fix: when OAuthServerConfig.Users is wired, the
+// access-token JWT minted by /oauth/token must carry Email + Name + Provider
+// claims so the downstream BearerValidator restores caller.Email on every
+// MCP / HTTP request. Without these claims, satellites_info returns
+// user_email:"" and satellites_init falls back to auth_login.
+func TestOAuth_AccessTokenCarriesIdentityClaims(t *testing.T) {
+	store := newMemOAuthStore()
+	users := NewMemoryUserStore()
+	const userID = "u_google:bobmcallan@gmail.com"
+	users.Add(User{ID: userID, Email: "google:bobmcallan@gmail.com", DisplayName: "Bob McAllan", Provider: "google"})
+	srv := NewOAuthServer(OAuthServerConfig{
+		JWTSecret:       "test-secret-32-bytes-or-more-for-hmac",
+		AccessTokenTTL:  1 * time.Hour,
+		RefreshTokenTTL: 24 * time.Hour,
+		CodeTTL:         10 * time.Minute,
+		Store:           store,
+		Users:           users,
+		DevMode:         true,
+	})
+	clientID, redirectURI := "client-abc", "http://localhost:9999/cb"
+	_ = store.SaveClient(context.Background(), &OAuthClient{
+		ClientID:                clientID,
+		RedirectURIs:            []string{redirectURI},
+		GrantTypes:              []string{"authorization_code", "refresh_token"},
+		ResponseTypes:           []string{"code"},
+		TokenEndpointAuthMethod: "none",
+	})
+	verifier := "test-verifier-with-enough-entropy-for-pkce-validation"
+	hash := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(hash[:])
+	_ = store.SaveCode(context.Background(), &OAuthCode{
+		Code: "C1", ClientID: clientID, UserID: userID, RedirectURI: redirectURI,
+		CodeChallenge: challenge, ExpiresAt: time.Now().Add(time.Minute),
+	})
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {"C1"},
+		"client_id":     {clientID},
+		"redirect_uri":  {redirectURI},
+		"code_verifier": {verifier},
+	}
+	r := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.HandleToken(w, r)
+	if w.Code != 200 {
+		t.Fatalf("token status = %d body=%s", w.Code, w.Body.String())
+	}
+	var tok map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &tok)
+	access, _ := tok["access_token"].(string)
+	refresh, _ := tok["refresh_token"].(string)
+	claims, err := ValidateJWT(access, srv.JWTSecretBytes())
+	if err != nil {
+		t.Fatalf("ValidateJWT: %v", err)
+	}
+	if claims.Sub != userID {
+		t.Errorf("claims.Sub = %q, want %q", claims.Sub, userID)
+	}
+	if claims.Email != "google:bobmcallan@gmail.com" {
+		t.Errorf("claims.Email = %q, want %q (regression: empty Email breaks satellites_info.user_email)", claims.Email, "google:bobmcallan@gmail.com")
+	}
+	if claims.Name != "Bob McAllan" {
+		t.Errorf("claims.Name = %q, want %q", claims.Name, "Bob McAllan")
+	}
+	if claims.Provider != "google" {
+		t.Errorf("claims.Provider = %q, want %q", claims.Provider, "google")
+	}
+	// Refresh path must also carry the identity claims so long-lived
+	// sessions don't lose Email on the first refresh.
+	rfForm := url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refresh},
+		"client_id":     {clientID},
+	}
+	rr := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(rfForm.Encode()))
+	rr.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rw := httptest.NewRecorder()
+	srv.HandleToken(rw, rr)
+	if rw.Code != 200 {
+		t.Fatalf("refresh status = %d body=%s", rw.Code, rw.Body.String())
+	}
+	var rotated map[string]any
+	_ = json.Unmarshal(rw.Body.Bytes(), &rotated)
+	rotatedAccess, _ := rotated["access_token"].(string)
+	rotatedClaims, err := ValidateJWT(rotatedAccess, srv.JWTSecretBytes())
+	if err != nil {
+		t.Fatalf("ValidateJWT refresh: %v", err)
+	}
+	if rotatedClaims.Email != "google:bobmcallan@gmail.com" {
+		t.Errorf("refresh claims.Email = %q, want preserved across refresh", rotatedClaims.Email)
+	}
+}
+
 func TestOAuth_PKCEFailureRejected(t *testing.T) {
 	store := newMemOAuthStore()
 	srv := NewOAuthServer(OAuthServerConfig{

@@ -951,17 +951,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // covers the same fields without burdening each adapter.
 func (s *Server) handleInfo(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	caller, _ := auth.UserFrom(ctx)
-	out, err := s.cli().SatellitesInfo(ctx, toClientCaller(caller), client.SatellitesInfoInput{})
+	cc := toClientCaller(caller)
+	cc.Memberships = s.resolveCallerMemberships(ctx, caller)
+	out, err := s.cli().SatellitesInfo(ctx, cc, client.SatellitesInfoInput{
+		SessionID: resolveSessionID(ctx, ""),
+		AuthKind:  caller.Source,
+	})
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	body, _ := json.Marshal(map[string]any{
-		"version":    out.Version,
-		"build":      out.Build,
-		"commit":     out.Commit,
-		"user_email": out.UserEmail,
-		"started_at": out.StartedAt.Format(time.RFC3339),
-	})
+	body, _ := json.Marshal(out)
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 

@@ -212,7 +212,12 @@ func (a *APIRegistrar) resolveScopedAndMemberships(r *http.Request, requestedPro
 
 func (a *APIRegistrar) handleSatellitesInfo(w http.ResponseWriter, r *http.Request) {
 	cc := a.clientCaller(r)
-	out, err := a.client.SatellitesInfo(r.Context(), cc, client.SatellitesInfoInput{})
+	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
+	id, _ := auth.UserFrom(r.Context())
+	out, err := a.client.SatellitesInfo(r.Context(), cc, client.SatellitesInfoInput{
+		SessionID: r.Header.Get("Mcp-Session-Id"),
+		AuthKind:  id.Source,
+	})
 	if err != nil {
 		writeAPIError(w, err)
 		return

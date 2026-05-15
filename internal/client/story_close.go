@@ -335,7 +335,7 @@ func (c *Client) resolvePprodCommit(ctx context.Context, caller Caller, in Story
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(out.Commit), nil
+	return strings.TrimSpace(out.Server.Commit), nil
 }
 
 // fieldFromTemplateFailure extracts the field name from a template's

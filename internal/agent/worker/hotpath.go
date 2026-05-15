@@ -419,9 +419,13 @@ func (c *claudeClient) effectivePprodPollInterval() time.Duration {
 }
 
 // satellitesInfoResp decodes the subset of satellites_info the
-// converge poll reads.
+// converge poll reads. Mirrors the {server, caller, recent_activity}
+// shape (sty_0be97c3e); only the server-side commit hash is needed
+// to detect when a pushed SHA has rolled onto pprod.
 type satellitesInfoResp struct {
-	Commit string `json:"commit"`
+	Server struct {
+		Commit string `json:"commit"`
+	} `json:"server"`
 }
 
 // pprodPollSample is one converge-poll observation captured for the
@@ -474,7 +478,7 @@ func (c *claudeClient) fetchPprodCommit(ctx context.Context) (string, error) {
 	if err := c.api.Call(ctx, "satellites_info", map[string]any{}, &info); err != nil {
 		return "", err
 	}
-	return info.Commit, nil
+	return info.Server.Commit, nil
 }
 
 // parseGHRunID extracts the databaseId of the latest run from

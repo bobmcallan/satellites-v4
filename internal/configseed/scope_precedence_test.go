@@ -190,6 +190,7 @@ func TestScopePrecedence_SystemTier_NoProjectStoryIDs(t *testing.T) {
 		filepath.Join(seedDir, "system", "agents", "claude_orchestrator.md"),
 		filepath.Join(seedDir, "system", "workflows", "default.md"),
 		filepath.Join(seedDir, "system", "artifacts", "default_agent_process.md"),
+		filepath.Join(seedDir, "system", "artifacts", "default_async_dispatch.md"),
 	}
 	storyIDPattern := regexCompileStoryID(t)
 	for _, path := range targets {

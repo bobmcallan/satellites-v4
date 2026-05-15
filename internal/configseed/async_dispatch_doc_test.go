@@ -15,14 +15,17 @@ import (
 // after a real seed load:
 //
 //   - config/seed/system/agents/claude_orchestrator.md
-//   - config/seed/system/artifacts/default_agent_process.md
+//   - config/seed/system/artifacts/default_async_dispatch.md
 //
-// AC1-AC5 substring assertions run against each loaded document body
-// (catches both a prose regression and a seed→store regression). The
-// AC2 sync check extracts each doc's `Async dispatch pattern`
-// subsection and asserts byte-equality modulo the header-level
-// `#` prefix on the first line — that proves the two docs carry the
-// same pattern / cadence / recovery / worked-example prose.
+// Per sty_0be97c3e the pattern moved out of `default_agent_process` into
+// its own artifact so the agent-process doc stays tight on the install
+// sequence + bootstrap surfaces. AC1-AC5 substring assertions run
+// against each loaded document body (catches both a prose regression
+// and a seed→store regression). The AC2 sync check extracts each
+// doc's `Async dispatch pattern` subsection and asserts byte-equality
+// modulo the header-level `#` prefix on the first line — that proves
+// the two docs carry the same pattern / cadence / recovery /
+// worked-example prose.
 func TestSeedLoad_AsyncDispatchDocs(t *testing.T) {
 	t.Parallel()
 	seedDir, err := filepath.Abs(filepath.Join("..", "..", "config", "seed"))
@@ -56,7 +59,7 @@ func TestSeedLoad_AsyncDispatchDocs(t *testing.T) {
 		"develop slices in parallel",          // AC5 anchor body
 	}
 
-	docNames := []string{"claude_orchestrator", "default_agent_process"}
+	docNames := []string{"claude_orchestrator", "default_async_dispatch"}
 	for _, name := range docNames {
 		name := name
 		t.Run(name, func(t *testing.T) {
@@ -89,15 +92,15 @@ func TestSeedLoad_AsyncDispatchDocs(t *testing.T) {
 			return extractAsyncDispatchSubsection(doc.Body)
 		}
 		orch := extract("claude_orchestrator")
-		artifact := extract("default_agent_process")
+		artifact := extract("default_async_dispatch")
 		if orch == "" {
 			t.Fatalf("claude_orchestrator: Async dispatch pattern subsection not found")
 		}
 		if artifact == "" {
-			t.Fatalf("default_agent_process: Async dispatch pattern subsection not found")
+			t.Fatalf("default_async_dispatch: Async dispatch pattern subsection not found")
 		}
 		if normalizeHeaderHashes(orch) != normalizeHeaderHashes(artifact) {
-			t.Errorf("AC2 sync drift: claude_orchestrator subsection body != default_agent_process subsection body (modulo header `#` prefix)")
+			t.Errorf("AC2 sync drift: claude_orchestrator subsection body != default_async_dispatch subsection body (modulo header `#` prefix)")
 		}
 	})
 }

@@ -196,17 +196,25 @@ func TestAPI_SatellitesInfo_HappyPath(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
 	}
 	var got struct {
-		UserEmail string `json:"user_email"`
-		StartedAt string `json:"started_at"`
+		Server struct {
+			StartedAt string `json:"started_at"`
+		} `json:"server"`
+		Caller struct {
+			Email    string `json:"email"`
+			AuthKind string `json:"auth_kind"`
+		} `json:"caller"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got.UserEmail != "operator@example.com" {
-		t.Errorf("user_email = %q, want operator@example.com", got.UserEmail)
+	if got.Caller.Email != "operator@example.com" {
+		t.Errorf("caller.email = %q, want operator@example.com", got.Caller.Email)
 	}
-	if got.StartedAt == "" {
-		t.Errorf("started_at empty")
+	if got.Caller.AuthKind != "apikey" {
+		t.Errorf("caller.auth_kind = %q, want apikey", got.Caller.AuthKind)
+	}
+	if got.Server.StartedAt == "" {
+		t.Errorf("server.started_at empty")
 	}
 }
 

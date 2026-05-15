@@ -167,19 +167,6 @@ func main() {
 			}
 			return user.ID
 		}
-		oauthServer = auth.NewOAuthServer(auth.OAuthServerConfig{
-			JWTSecret:          cfg.JWTSecret,
-			Issuer:             cfg.OAuthIssuer,
-			AccessTokenTTL:     cfg.OAuthAccessTokenTTL,
-			RefreshTokenTTL:    cfg.OAuthRefreshTokenTTL,
-			CodeTTL:            cfg.OAuthCodeTTL,
-			Store:              oauthStore,
-			Logger:             logger,
-			DevMode:            cfg.DevMode,
-			ResolveSessionUser: resolveSessionUser,
-		})
-		authHandlers.OAuthServer = oauthServer
-
 		surrealDocs := document.NewSurrealStore(conn)
 		docStore = surrealDocs
 		projStore = project.NewSurrealStore(conn)
@@ -197,6 +184,24 @@ func main() {
 		// across restarts, so cookies don't orphan after a deploy.
 		users = auth.NewSurrealUserStore(conn)
 		authHandlers.Users = users
+		// OAuthServer construction lands after the user/session store swap
+		// above so OAuthServerConfig.Users captures the Surreal-backed
+		// store by interface value (struct fields are captured by value,
+		// unlike the resolveSessionUser closure which captures `users` by
+		// reference and survives the swap). sty_0be97c3e.
+		oauthServer = auth.NewOAuthServer(auth.OAuthServerConfig{
+			JWTSecret:          cfg.JWTSecret,
+			Issuer:             cfg.OAuthIssuer,
+			AccessTokenTTL:     cfg.OAuthAccessTokenTTL,
+			RefreshTokenTTL:    cfg.OAuthRefreshTokenTTL,
+			CodeTTL:            cfg.OAuthCodeTTL,
+			Store:              oauthStore,
+			Logger:             logger,
+			DevMode:            cfg.DevMode,
+			ResolveSessionUser: resolveSessionUser,
+			Users:              users,
+		})
+		authHandlers.OAuthServer = oauthServer
 		// story_3191fbfc: substrate-managed agent api-key store. Same
 		// db handle as the user/session stores; idempotent table+index
 		// DEFINEs run on first call. Nil-store fall-back is the

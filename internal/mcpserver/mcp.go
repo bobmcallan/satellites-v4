@@ -261,13 +261,35 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	}
 
 	if s.deps.Projects != nil {
-		// project_add / project_update / project_delete MCP registrations
-		// removed in sty_4db0e025 slice C9 — operator authoring per
-		// sty_3dc39a5c "Removed from MCP" list. Reachable through /api/v1
-		// + the satellites-client CLI only. handleProjectAdd /
-		// handleProjectUpdate / handleProjectDelete remain so the typed
-		// methods on *client.Client continue to back the HTTP routes and
-		// CLI verbs.
+		// sty_690b06ee re-registers the project_* write verbs on MCP so
+		// an orchestrator with an authenticated session can author a new
+		// project end-to-end without dropping out to the CLI. The C9
+		// removal predated the orchestrator-bootstrap requirement; the
+		// typed methods on *client.Client are the shared business-logic
+		// surface (pr_mcp_cli_shared_path).
+		addProjTool := mcpgo.NewTool("project_add",
+			mcpgo.WithDescription("Mint a new project row in the caller's accessible workspace. Returns {project_id, workspace_id, repo_url_canonical, status}. When repo_url is supplied, the verb also mints the bound repo row (same canonicaliser project_set uses)."),
+			mcpgo.WithString("name", mcpgo.Required(), mcpgo.Description("Project name (display + slug source).")),
+			mcpgo.WithString("repo_url", mcpgo.Description("Optional git remote — accepts ssh/https/git:// forms. Binds the project to the canonical remote at mint time; equivalent to project_add + repo_add in one call.")),
+			mcpgo.WithString("workspace_id", mcpgo.Description("Optional workspace scope; defaults to the caller's default workspace.")),
+			mcpgo.WithString("description", mcpgo.Description("Optional free-form description.")),
+		)
+		s.mcp.AddTool(addProjTool, s.handleProjectAdd)
+
+		updateProjTool := mcpgo.NewTool("project_update",
+			mcpgo.WithDescription("Patch mutable fields on a project. Cannot change workspace_id or repo_url_canonical (immutable post-mint; rename a remote via repo_add)."),
+			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Project id (proj_<8hex>).")),
+			mcpgo.WithString("name", mcpgo.Description("Optional rename.")),
+			mcpgo.WithString("description", mcpgo.Description("Optional description set/clear (empty string clears).")),
+			mcpgo.WithString("status", mcpgo.Description("Optional status: active | archived. Use project_delete for the cascade archive; status=active here un-archives.")),
+		)
+		s.mcp.AddTool(updateProjTool, s.handleProjectUpdate)
+
+		deleteProjTool := mcpgo.NewTool("project_delete",
+			mcpgo.WithDescription("Soft-delete a project. Cascades: stories → cancelled; API keys → archived; project_set no longer resolves the project. Rejected with project_has_open_work when any story has open tasks. Ledger rows survive — append-only for audit."),
+			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Project id (proj_<8hex>).")),
+		)
+		s.mcp.AddTool(deleteProjTool, s.handleProjectDelete)
 
 		getProjTool := mcpgo.NewTool("project_get",
 			mcpgo.WithDescription("Return the orientation bundle for a project the caller owns: project row, mcp_url + mcp_config (paste-ready client snippets that scope an MCP client to this project via ?project_id=), intent_body, and active principles. Cross-owner access returns not-found."),
@@ -1303,8 +1325,18 @@ func (s *Server) handleProjectAdd(ctx context.Context, req mcpgo.CallToolRequest
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	view, p, err := s.cli().ProjectAddView(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email}, client.ProjectAddInput{
-		Name: name, WorkspaceID: s.resolveCallerWorkspaceID(ctx, caller), Now: s.nowUTC(),
+	memberships := s.resolveCallerMemberships(ctx, caller)
+	wsID := req.GetString("workspace_id", "")
+	if wsID == "" {
+		wsID = s.resolveCallerWorkspaceID(ctx, caller)
+	}
+	view, p, err := s.cli().ProjectAddView(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.ProjectAddInput{
+		Name:        name,
+		WorkspaceID: wsID,
+		RepoURL:     req.GetString("repo_url", ""),
+		Description: req.GetString("description", ""),
+		Memberships: memberships,
+		Now:         s.nowUTC(),
 	}, s.resolveBaseURL(ctx))
 	if err != nil {
 		return mcpgo.NewToolResultError(projectErrMessage(err)), nil
@@ -1438,9 +1470,18 @@ func (s *Server) handleProjectUpdate(ctx context.Context, req mcpgo.CallToolRequ
 	}
 	in := client.ProjectUpdateInput{ID: id, Name: req.GetString("name", ""),
 		Memberships: s.resolveCallerMemberships(ctx, caller), Now: s.nowUTC()}
-	if mcpURL, ok := req.GetArguments()["mcp_url"]; ok {
+	args := req.GetArguments()
+	if mcpURL, ok := args["mcp_url"]; ok {
 		mcpStr, _ := mcpURL.(string)
 		in.MCPURL = &mcpStr
+	}
+	if desc, ok := args["description"]; ok {
+		descStr, _ := desc.(string)
+		in.Description = &descStr
+	}
+	if status, ok := args["status"]; ok {
+		statusStr, _ := status.(string)
+		in.Status = &statusStr
 	}
 	view, _, err := s.cli().ProjectUpdateView(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email}, in, s.resolveBaseURL(ctx))
 	if err != nil {
@@ -1462,15 +1503,27 @@ func (s *Server) handleProjectDelete(ctx context.Context, req mcpgo.CallToolRequ
 	if _, ok := enforceScopedProject(ctx, id); !ok {
 		return mcpgo.NewToolResultError("project id does not match the URL-scoped project_id"), nil
 	}
-	updated, err := s.cli().ProjectDelete(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email}, client.ProjectDeleteInput{
+	body, out, err := s.cli().ProjectDeleteView(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email}, client.ProjectDeleteInput{
 		ID: id, Memberships: s.resolveCallerMemberships(ctx, caller), Now: s.nowUTC(),
 	})
 	if err != nil {
+		var hasOpen *client.ProjectHasOpenWorkError
+		if errors.As(err, &hasOpen) {
+			payload, _ := json.Marshal(map[string]any{
+				"error":         "project_has_open_work",
+				"project_id":    hasOpen.ProjectID,
+				"story_ids":     hasOpen.StoryIDs,
+				"open_task_ids": hasOpen.OpenTaskIDs,
+			})
+			return mcpgo.NewToolResultError(string(payload)), nil
+		}
 		return mcpgo.NewToolResultError(projectErrMessage(err)), nil
 	}
-	body, _ := json.Marshal(updated)
 	s.logger.Info().Str("method", "tools/call").Str("tool", "project_delete").
-		Str("project_id", id).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+		Str("project_id", id).
+		Int("stories_cancelled", out.StoriesCancelled).
+		Int("apikeys_archived", out.APIKeysArchived).
+		Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 

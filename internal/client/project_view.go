@@ -21,11 +21,14 @@ import (
 // ProjectView pairs the durable project row with the two computed
 // fields the JSON wire shape carries (mcp_url + mcp_config). Mirrors
 // the prior mcpserver.projectView; the JSON tag set is identical so
-// existing clients still parse the payload.
+// existing clients still parse the payload. RepoURLCanonical is
+// denormalised from the project's bound repo row at view-build time so
+// the orchestrator never has to walk the repo store separately.
 type ProjectView struct {
 	project.Project
-	MCPURL    string         `json:"mcp_url,omitempty"`
-	MCPConfig map[string]any `json:"mcp_config,omitempty"`
+	MCPURL           string         `json:"mcp_url,omitempty"`
+	MCPConfig        map[string]any `json:"mcp_config,omitempty"`
+	RepoURLCanonical string         `json:"repo_url_canonical,omitempty"`
 }
 
 // BuildProjectView resolves the mcp_url + mcp_config fields for p and
@@ -39,6 +42,16 @@ type ProjectView struct {
 // renders the not-configured empty-state).
 func (c *Client) BuildProjectView(p project.Project, baseURL string) ProjectView {
 	pv := ProjectView{Project: p}
+	if c.deps.Repos != nil && p.ID != "" {
+		if rows, err := c.deps.Repos.List(context.Background(), p.ID, nil); err == nil {
+			for _, r := range rows {
+				if r.GitRemote != "" {
+					pv.RepoURLCanonical = r.GitRemote
+					break
+				}
+			}
+		}
+	}
 	url := resolveProjectMCPURL(p.MCPURL, p.ID, baseURL)
 	if url == "" {
 		return pv
@@ -142,19 +155,42 @@ func (c *Client) ProjectUpdateView(ctx context.Context, caller Caller, in Projec
 	return c.BuildProjectView(p, baseURL), p, nil
 }
 
-// ProjectDeleteView archives a project and returns it as plain JSON
-// bytes (no view shape — the wire layer does not embed mcp_url on
-// delete responses).
-func (c *Client) ProjectDeleteView(ctx context.Context, caller Caller, in ProjectDeleteInput) ([]byte, project.Project, error) {
-	p, err := c.ProjectDelete(ctx, caller, in)
+// ProjectDeleteViewOutput pairs the archived project row with the
+// cascade counts the verb's wire envelope surfaces.
+type ProjectDeleteViewOutput struct {
+	project.Project
+	CascadeSummary CascadeSummary `json:"cascade_summary"`
+}
+
+// CascadeSummary is the typed wire shape ProjectDelete returns to the
+// orchestrator so the side-effect counts of the soft-delete are
+// auditable from the verb's response alone.
+type CascadeSummary struct {
+	StoriesCancelled int `json:"stories_cancelled"`
+	APIKeysArchived  int `json:"apikeys_archived"`
+}
+
+// ProjectDeleteView archives a project, runs the cascade, and returns
+// the JSON-encoded {project, cascade_summary} envelope alongside the
+// post-archive project row for log fields. The cascade side-effects
+// are not visible without this wrapper; pr_evidence_audit and AC3
+// both depend on the orchestrator seeing the counts.
+func (c *Client) ProjectDeleteView(ctx context.Context, caller Caller, in ProjectDeleteInput) ([]byte, ProjectDeleteOutput, error) {
+	out, err := c.ProjectDelete(ctx, caller, in)
 	if err != nil {
-		return nil, project.Project{}, err
+		return nil, ProjectDeleteOutput{}, err
 	}
-	body, err := json.Marshal(p)
+	body, err := json.Marshal(ProjectDeleteViewOutput{
+		Project: out.Project,
+		CascadeSummary: CascadeSummary{
+			StoriesCancelled: out.StoriesCancelled,
+			APIKeysArchived:  out.APIKeysArchived,
+		},
+	})
 	if err != nil {
-		return nil, project.Project{}, err
+		return nil, ProjectDeleteOutput{}, err
 	}
-	return body, p, nil
+	return body, out, nil
 }
 
 // ProjectSetViewOutput pairs ProjectSetOutput's status branches with

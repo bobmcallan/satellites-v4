@@ -47,6 +47,10 @@ type Store interface {
 	// override (the derived form takes over again).
 	SetMCPURL(ctx context.Context, id, mcpURL string, now time.Time) (Project, error)
 
+	// SetDescription stamps the free-form description on an existing
+	// project. Pass an empty string to clear.
+	SetDescription(ctx context.Context, id, description string, now time.Time) (Project, error)
+
 	// SetStatus flips a project's status (active ↔ archived). Soft-delete
 	// path; rows are never physically removed. Returns the updated Project.
 	SetStatus(ctx context.Context, id, status string, now time.Time) (Project, error)
@@ -160,6 +164,20 @@ func (m *MemoryStore) SetMCPURL(ctx context.Context, id, mcpURL string, now time
 		return Project{}, ErrNotFound
 	}
 	p.MCPURL = mcpURL
+	p.UpdatedAt = now
+	m.rows[id] = p
+	return p, nil
+}
+
+// SetDescription implements Store for MemoryStore.
+func (m *MemoryStore) SetDescription(ctx context.Context, id, description string, now time.Time) (Project, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.rows[id]
+	if !ok {
+		return Project{}, ErrNotFound
+	}
+	p.Description = description
 	p.UpdatedAt = now
 	m.rows[id] = p
 	return p, nil

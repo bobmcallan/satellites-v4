@@ -45,7 +45,7 @@ func (s *SurrealStore) Create(ctx context.Context, ownerUserID, workspaceID, nam
 // SurrealDB otherwise returns id as a RecordID object, which JSON-unmarshals
 // as empty into `ID string`. `meta::id(id) AS id` returns just the id portion
 // (e.g. "proj_xxx") without the table prefix.
-const selectCols = "meta::id(id) AS id, workspace_id, name, mcp_url, owner_user_id, status, created_at, updated_at"
+const selectCols = "meta::id(id) AS id, workspace_id, name, description, mcp_url, owner_user_id, status, created_at, updated_at"
 
 // GetByID implements Store for SurrealStore. Membership filter matches
 // memorystore semantics: nil = no scoping, empty = deny-all, non-empty =
@@ -114,6 +114,20 @@ func (s *SurrealStore) SetMCPURL(ctx context.Context, id, mcpURL string, now tim
 		return Project{}, err
 	}
 	existing.MCPURL = mcpURL
+	existing.UpdatedAt = now
+	if err := s.write(ctx, existing); err != nil {
+		return Project{}, err
+	}
+	return existing, nil
+}
+
+// SetDescription implements Store for SurrealStore.
+func (s *SurrealStore) SetDescription(ctx context.Context, id, description string, now time.Time) (Project, error) {
+	existing, err := s.GetByID(ctx, id, nil)
+	if err != nil {
+		return Project{}, err
+	}
+	existing.Description = description
 	existing.UpdatedAt = now
 	if err := s.write(ctx, existing); err != nil {
 		return Project{}, err

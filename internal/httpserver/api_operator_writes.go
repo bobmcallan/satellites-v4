@@ -251,80 +251,65 @@ func (a *APIRegistrar) handleStoryClose(w http.ResponseWriter, r *http.Request) 
 
 func (a *APIRegistrar) handleProjectAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name string `json:"name"`
+		Name        string `json:"name"`
+		RepoURL     string `json:"repo_url,omitempty"`
+		WorkspaceID string `json:"workspace_id,omitempty"`
+		Description string `json:"description,omitempty"`
 	}
 	if err := decodeJSONBody(r, &req); err != nil {
 		writeAPIError(w, err)
-		return
-	}
-	if req.Name == "" {
-		writeAPIStatus(w, http.StatusBadRequest, "name required")
-		return
-	}
-	cc := a.clientCaller(r)
-	if cc.UserID == "" {
-		writeAPIStatus(w, http.StatusUnauthorized, "no caller identity")
-		return
-	}
-	stores := a.client.Stores()
-	if stores.Projects == nil {
-		writeAPIError(w, errors.New("project store not configured"))
-		return
-	}
-	wsID := a.client.ResolveCallerWorkspaceID(r.Context(), cc)
-	p, err := stores.Projects.Create(r.Context(), cc.UserID, wsID, req.Name, time.Now().UTC())
-	if err != nil {
-		writeAPIError(w, err)
-		return
-	}
-	writeAPIJSON(w, p)
-}
-
-func (a *APIRegistrar) handleProjectUpdate(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ID     string  `json:"id"`
-		Name   string  `json:"name"`
-		MCPURL *string `json:"mcp_url,omitempty"`
-	}
-	if err := decodeJSONBody(r, &req); err != nil {
-		writeAPIError(w, err)
-		return
-	}
-	if req.ID == "" {
-		writeAPIStatus(w, http.StatusBadRequest, "id required")
 		return
 	}
 	cc := a.clientCaller(r)
 	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
-	stores := a.client.Stores()
-	if stores.Projects == nil {
-		writeAPIError(w, errors.New("project store not configured"))
+	wsID := req.WorkspaceID
+	if wsID == "" {
+		wsID = a.client.ResolveCallerWorkspaceID(r.Context(), cc)
+	}
+	view, _, err := a.client.ProjectAddView(r.Context(), cc, client.ProjectAddInput{
+		Name:        req.Name,
+		WorkspaceID: wsID,
+		RepoURL:     req.RepoURL,
+		Description: req.Description,
+		Memberships: cc.Memberships,
+		Now:         time.Now().UTC(),
+	}, "")
+	if err != nil {
+		writeProjectAPIError(w, err)
 		return
 	}
-	existing, err := stores.Projects.GetByID(r.Context(), req.ID, cc.Memberships)
-	if err != nil || existing.OwnerUserID != cc.UserID {
-		writeAPIStatus(w, http.StatusNotFound, "project not found")
+	writeAPIJSON(w, view)
+}
+
+func (a *APIRegistrar) handleProjectUpdate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID          string  `json:"id"`
+		Name        string  `json:"name"`
+		MCPURL      *string `json:"mcp_url,omitempty"`
+		Description *string `json:"description,omitempty"`
+		Status      *string `json:"status,omitempty"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeAPIError(w, err)
 		return
 	}
-	now := time.Now().UTC()
-	updated := existing
-	if req.Name != "" && req.Name != existing.Name {
-		next, rerr := stores.Projects.UpdateName(r.Context(), req.ID, req.Name, now)
-		if rerr != nil {
-			writeAPIError(w, rerr)
-			return
-		}
-		updated = next
+	cc := a.clientCaller(r)
+	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
+	in := client.ProjectUpdateInput{
+		ID:          req.ID,
+		Name:        req.Name,
+		MCPURL:      req.MCPURL,
+		Description: req.Description,
+		Status:      req.Status,
+		Memberships: cc.Memberships,
+		Now:         time.Now().UTC(),
 	}
-	if req.MCPURL != nil && *req.MCPURL != updated.MCPURL {
-		next, merr := stores.Projects.SetMCPURL(r.Context(), req.ID, *req.MCPURL, now)
-		if merr != nil {
-			writeAPIError(w, merr)
-			return
-		}
-		updated = next
+	view, _, err := a.client.ProjectUpdateView(r.Context(), cc, in, "")
+	if err != nil {
+		writeProjectAPIError(w, err)
+		return
 	}
-	writeAPIJSON(w, updated)
+	writeAPIJSON(w, view)
 }
 
 func (a *APIRegistrar) handleProjectDelete(w http.ResponseWriter, r *http.Request) {
@@ -335,28 +320,57 @@ func (a *APIRegistrar) handleProjectDelete(w http.ResponseWriter, r *http.Reques
 		writeAPIError(w, err)
 		return
 	}
-	if req.ID == "" {
-		writeAPIStatus(w, http.StatusBadRequest, "id required")
-		return
-	}
 	cc := a.clientCaller(r)
 	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
-	stores := a.client.Stores()
-	if stores.Projects == nil {
-		writeAPIError(w, errors.New("project store not configured"))
-		return
-	}
-	existing, err := stores.Projects.GetByID(r.Context(), req.ID, cc.Memberships)
-	if err != nil || existing.OwnerUserID != cc.UserID {
-		writeAPIStatus(w, http.StatusNotFound, "project not found")
-		return
-	}
-	updated, err := stores.Projects.SetStatus(r.Context(), req.ID, project.StatusArchived, time.Now().UTC())
+	body, _, err := a.client.ProjectDeleteView(r.Context(), cc, client.ProjectDeleteInput{
+		ID:          req.ID,
+		Memberships: cc.Memberships,
+		Now:         time.Now().UTC(),
+	})
 	if err != nil {
-		writeAPIError(w, err)
+		writeProjectAPIError(w, err)
 		return
 	}
-	writeAPIJSON(w, updated)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+// writeProjectAPIError renders the typed-error envelope for the
+// project_* HTTP routes. Mirrors writeAPIStatus's text shape for the
+// existing rejects, and adds the 422 / project_has_open_work envelope
+// per AC3 + plan §3.6.
+func writeProjectAPIError(w http.ResponseWriter, err error) {
+	var hasOpen *client.ProjectHasOpenWorkError
+	if errors.As(err, &hasOpen) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":         "project_has_open_work",
+			"project_id":    hasOpen.ProjectID,
+			"story_ids":     hasOpen.StoryIDs,
+			"open_task_ids": hasOpen.OpenTaskIDs,
+		})
+		return
+	}
+	switch {
+	case errors.Is(err, client.ErrProjectNameRequired):
+		writeAPIStatus(w, http.StatusBadRequest, "name required")
+	case errors.Is(err, client.ErrProjectIDRequired):
+		writeAPIStatus(w, http.StatusBadRequest, "id required")
+	case errors.Is(err, client.ErrNoCallerIdentity):
+		writeAPIStatus(w, http.StatusUnauthorized, "no caller identity")
+	case errors.Is(err, client.ErrProjectNotFound):
+		writeAPIStatus(w, http.StatusNotFound, "project not found")
+	case errors.Is(err, client.ErrProjectStatusInvalid):
+		writeAPIStatus(w, http.StatusBadRequest, "status must be active or archived")
+	case errors.Is(err, client.ErrRepoURLInvalid):
+		writeAPIStatus(w, http.StatusBadRequest, "repo_url_invalid")
+	case errors.Is(err, client.ErrRepoURLRequired):
+		writeAPIStatus(w, http.StatusBadRequest, "repo_url_required")
+	default:
+		writeAPIError(w, err)
+	}
 }
 
 // ----- workspace -----

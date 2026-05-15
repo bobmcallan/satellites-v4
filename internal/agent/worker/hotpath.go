@@ -304,75 +304,136 @@ func (c *claudeClient) appendHotCommitEvidence(ctx context.Context, env TaskEnve
 // origin, watches the GitHub Actions deploy workflow to completion,
 // and polls pprod's `satellites_info` until reported `commit` matches
 // the pushed SHA. Emits one `kind:release-evidence` ledger row on
-// success carrying every step's literal output. Failure at any step
-// stops the release without writing the row — the operator
-// reconciles before re-attempting.
+// success carrying every step's literal output.
+//
+// sty_63541aed:
+//   - AC3 refuse-on-dirty: aborts before any git mutation when the
+//     host repo's working tree has uncommitted changes — the runner is
+//     not licensed to discard them.
+//   - AC1 persisted close + pushed-but-unverified evidence: every
+//     failure path persists `task_update(closed, outcome=failure)`
+//     before returning so the substrate's view of the chain matches
+//     the CLI's exit code. Post-push failures additionally append a
+//     `kind:release-evidence` row tagged `release:pushed_unverified`
+//     so the orchestrator sees the SHA is on origin even if pprod
+//     never converged.
+//   - AC3 post-merge rollback: any failure after `git merge --ff-only`
+//     runs `git reset --hard <preMergeHEAD>` so the host repo's local
+//     main pointer is restored to where the runner found it.
 func (c *claudeClient) runMergeToMainHotPath(ctx context.Context, env TaskEnvelope, ti taskInfo, _ agentInfo, _ contractInfo, _ storyInfo) (Outcome, error) {
+	// AC3: refuse on dirty working tree BEFORE any mutation. The host
+	// repo's working tree must be clean — uncommitted changes from a
+	// prior dispatch or a concurrent operator edit are not ours to
+	// discard.
+	statusOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "status", "--porcelain")
+	if err != nil {
+		return c.failMergePrePush(ctx, env.ID, fmt.Errorf("merge_to_main: git status --porcelain: %w", err))
+	}
+	if len(bytes.TrimSpace(statusOut)) > 0 {
+		return c.failMergePrePush(ctx, env.ID, fmt.Errorf(
+			"merge_to_main: refusing on dirty working tree:\n%s",
+			strings.TrimSpace(string(statusOut))))
+	}
+
+	// AC3: capture the pre-merge HEAD as the rollback anchor for any
+	// post-merge failure path.
+	preHeadOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "rev-parse", "HEAD")
+	if err != nil {
+		return c.failMergePrePush(ctx, env.ID, fmt.Errorf("merge_to_main: pre-merge rev-parse HEAD: %w", err))
+	}
+	preMergeHEAD := strings.TrimSpace(string(preHeadOut))
+
 	branch, err := c.resolveWorkBranch(ctx, ti)
 	if err != nil {
-		return OutcomeFailure, fmt.Errorf("merge_to_main: %w", err)
+		return c.failMergePrePush(ctx, env.ID, fmt.Errorf("merge_to_main: %w", err))
 	}
 
 	tw, err := c.fetchTaskWalk(ctx, ti.StoryID)
 	if err != nil {
-		return OutcomeFailure, fmt.Errorf("merge_to_main: %w", err)
+		return c.failMergePrePush(ctx, env.ID, fmt.Errorf("merge_to_main: %w", err))
 	}
 	if err := verifyChainPriorWorkSuccess(tw, env.ID); err != nil {
-		return OutcomeFailure, fmt.Errorf("merge_to_main: %w", err)
+		return c.failMergePrePush(ctx, env.ID, fmt.Errorf("merge_to_main: %w", err))
 	}
 
 	fetchOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "fetch", "origin", "--quiet")
 	if err != nil {
-		return OutcomeFailure, fmt.Errorf("merge_to_main: git fetch: %w", err)
+		return c.failMergePrePush(ctx, env.ID, fmt.Errorf("merge_to_main: git fetch: %w", err))
 	}
 
 	preMainOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "rev-parse", "main")
 	if err != nil {
-		return OutcomeFailure, fmt.Errorf("merge_to_main: git rev-parse main: %w", err)
+		return c.failMergePrePush(ctx, env.ID, fmt.Errorf("merge_to_main: git rev-parse main: %w", err))
 	}
 
 	if _, err := c.gitRunner(ctx, c.cfg.RepoPath, "merge-base", "--is-ancestor", "main", branch); err != nil {
-		return OutcomeFailure, fmt.Errorf("merge_to_main: ff-only ancestor check: %w", err)
+		return c.failMergePrePush(ctx, env.ID, fmt.Errorf("merge_to_main: ff-only ancestor check: %w", err))
 	}
 
 	mergeOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "merge", "--ff-only", branch)
 	if err != nil {
-		return OutcomeFailure, fmt.Errorf("merge_to_main: git merge: %w", err)
+		return c.failMergePrePush(ctx, env.ID, fmt.Errorf("merge_to_main: git merge: %w", err))
 	}
+
+	// === Watershed: merge succeeded; from here on any failure
+	// rolls back the local main pointer to preMergeHEAD.
 
 	postMainOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "rev-parse", "main")
 	if err != nil {
-		return OutcomeFailure, fmt.Errorf("merge_to_main: post-merge rev-parse: %w", err)
+		return c.failMergePostMergePrePush(ctx, env.ID, preMergeHEAD,
+			fmt.Errorf("merge_to_main: post-merge rev-parse: %w", err))
 	}
 	pushedSHA := strings.TrimSpace(string(postMainOut))
 
 	pushMainOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "push", "origin", "main")
 	if err != nil {
-		return OutcomeFailure, fmt.Errorf("merge_to_main: git push origin main: %w", err)
+		return c.failMergePostMergePrePush(ctx, env.ID, preMergeHEAD,
+			fmt.Errorf("merge_to_main: git push origin main: %w", err))
 	}
+
+	// === Watershed: push to origin succeeded; from here on any
+	// failure additionally writes a `release:pushed_unverified`
+	// release-evidence row so the orchestrator can see the SHA is
+	// on origin even though convergence is unverified.
 
 	runListOut, err := c.runGH(ctx, "run", "list", "--branch", "main", "--limit", "1", "--json", "databaseId,headSha,status,conclusion")
 	if err != nil {
-		return OutcomeFailure, fmt.Errorf("merge_to_main: gh run list: %w", err)
+		return c.failMergePostPush(ctx, env, ti, branch, preMergeHEAD, pushedSHA,
+			fetchOut, preMainOut, mergeOut, postMainOut, pushMainOut,
+			"", nil, nil, nil,
+			fmt.Errorf("merge_to_main: gh run list: %w", err))
 	}
 	runID, err := parseGHRunID(runListOut)
 	if err != nil {
-		return OutcomeFailure, fmt.Errorf("merge_to_main: parse gh run list: %w", err)
+		return c.failMergePostPush(ctx, env, ti, branch, preMergeHEAD, pushedSHA,
+			fetchOut, preMainOut, mergeOut, postMainOut, pushMainOut,
+			"", runListOut, nil, nil,
+			fmt.Errorf("merge_to_main: parse gh run list: %w", err))
 	}
 
 	watchCtx, watchCancel := context.WithTimeout(ctx, c.effectiveGHWatchTimeout())
 	defer watchCancel()
 	watchOut, err := c.runGH(watchCtx, "run", "watch", runID, "--exit-status")
 	if err != nil {
-		return OutcomeFailure, fmt.Errorf("merge_to_main: gh run watch: %w", err)
+		return c.failMergePostPush(ctx, env, ti, branch, preMergeHEAD, pushedSHA,
+			fetchOut, preMainOut, mergeOut, postMainOut, pushMainOut,
+			runID, runListOut, watchOut, nil,
+			fmt.Errorf("merge_to_main: gh run watch: %w", err))
 	}
 
 	convergeSamples, err := c.pollPprodConverge(ctx, pushedSHA)
 	if err != nil {
-		return OutcomeFailure, fmt.Errorf("merge_to_main: %w", err)
+		return c.failMergePostPush(ctx, env, ti, branch, preMergeHEAD, pushedSHA,
+			fetchOut, preMainOut, mergeOut, postMainOut, pushMainOut,
+			runID, runListOut, watchOut, convergeSamples,
+			fmt.Errorf("merge_to_main: %w", err))
 	}
 
 	if err := c.appendHotMergeReleaseEvidence(ctx, env, ti, branch, pushedSHA, fetchOut, preMainOut, mergeOut, postMainOut, pushMainOut, runID, runListOut, watchOut, convergeSamples); err != nil {
+		// The release converged on pprod; don't roll back local main
+		// (rolling back wouldn't undo the deploy). Persist the close
+		// as failure so the chain reflects the evidence-append gap.
+		_ = c.closeTaskFailure(ctx, env.ID, fmt.Sprintf("merge_to_main: evidence: %v", err))
 		return OutcomeFailure, fmt.Errorf("merge_to_main: evidence: %w", err)
 	}
 
@@ -380,6 +441,54 @@ func (c *claudeClient) runMergeToMainHotPath(ctx context.Context, env TaskEnvelo
 		return OutcomeFailure, fmt.Errorf("merge_to_main: close task: %w", err)
 	}
 	return OutcomeSuccess, nil
+}
+
+// failMergePrePush persists task_update(closed, failure) for a
+// failure observed BEFORE git merge ran. No rollback (the merge
+// never advanced anything) and no release-evidence row (nothing was
+// pushed). The close call is best-effort: a substrate error does not
+// mask the original error the CLI surfaces.
+func (c *claudeClient) failMergePrePush(ctx context.Context, taskID string, originalErr error) (Outcome, error) {
+	_ = c.closeTaskFailure(ctx, taskID, originalErr.Error())
+	return OutcomeFailure, originalErr
+}
+
+// failMergePostMergePrePush handles a failure between
+// `git merge --ff-only` and the watershed push: the local main
+// pointer advanced; we roll it back to preMergeHEAD (AC3) and persist
+// the task close before returning. Best-effort throughout — neither
+// reset nor close errors mask the original failure.
+func (c *claudeClient) failMergePostMergePrePush(ctx context.Context, taskID, preMergeHEAD string, originalErr error) (Outcome, error) {
+	if preMergeHEAD != "" {
+		_, _ = c.gitRunner(ctx, c.cfg.RepoPath, "reset", "--hard", preMergeHEAD)
+	}
+	_ = c.closeTaskFailure(ctx, taskID, originalErr.Error())
+	return OutcomeFailure, originalErr
+}
+
+// failMergePostPush handles a failure AFTER `git push origin main`
+// has shipped the merge to origin: the release exists on origin but
+// pprod-convergence is unverified. The runner rolls back local main
+// to preMergeHEAD (AC3), appends a `release:pushed_unverified`
+// release-evidence row carrying every captured output + the literal
+// failure reason (AC1), and persists task_update(closed, failure)
+// before returning the original error. All side-effects are
+// best-effort — none mask the original error.
+func (c *claudeClient) failMergePostPush(
+	ctx context.Context, env TaskEnvelope, ti taskInfo,
+	branch, preMergeHEAD, pushedSHA string,
+	fetchOut, preMain, mergeOut, postMain, pushMainOut []byte,
+	runID string, runListOut, watchOut []byte, samples []pprodPollSample,
+	originalErr error,
+) (Outcome, error) {
+	if preMergeHEAD != "" {
+		_, _ = c.gitRunner(ctx, c.cfg.RepoPath, "reset", "--hard", preMergeHEAD)
+	}
+	_ = c.appendHotMergePushedUnverifiedEvidence(ctx, env, ti, branch, preMergeHEAD, pushedSHA,
+		fetchOut, preMain, mergeOut, postMain, pushMainOut,
+		runID, runListOut, watchOut, samples, originalErr)
+	_ = c.closeTaskFailure(ctx, env.ID, originalErr.Error())
+	return OutcomeFailure, originalErr
 }
 
 // runGH dispatches to the injected ghRunner; nil falls back to the
@@ -661,4 +770,112 @@ func (c *claudeClient) closeTaskSuccess(ctx context.Context, taskID string) erro
 		"status":  "closed",
 		"outcome": "success",
 	}, nil)
+}
+
+// closeTaskFailure persists task_update(status=closed, outcome=failure)
+// on the runner's task before returning failure (sty_63541aed AC1).
+// The reason is threaded into the request body for orchestrator-side
+// visibility; the substrate ignores unknown fields, so this is safe
+// to send today and forward-compatible with a future server-side
+// audit field. Callers invoke this best-effort: a substrate error is
+// logged via the underlying api client and does not mask the runner's
+// original failure.
+func (c *claudeClient) closeTaskFailure(ctx context.Context, taskID, reason string) error {
+	args := map[string]any{
+		"id":      taskID,
+		"status":  "closed",
+		"outcome": "failure",
+	}
+	if reason != "" {
+		args["reason"] = reason
+	}
+	return c.api.Call(ctx, "task_update", args, nil)
+}
+
+// appendHotMergePushedUnverifiedEvidence writes the
+// `kind:release-evidence` row variant emitted when the merge pushed
+// to origin but a subsequent post-push step (gh watch, pprod converge,
+// evidence-append) failed. Carries every captured output up to the
+// failure plus the literal failure reason, tagged
+// `release:pushed_unverified` so the story_close gate + downstream
+// readers can distinguish a shipped-but-unverified release from a
+// fully-converged one.
+func (c *claudeClient) appendHotMergePushedUnverifiedEvidence(
+	ctx context.Context, env TaskEnvelope, ti taskInfo,
+	branch, preMergeHEAD, pushedSHA string,
+	fetchOut, preMain, mergeOut, postMain, pushMainOut []byte,
+	runID string, runListOut, watchOut []byte, samples []pprodPollSample,
+	originalErr error,
+) error {
+	convergeLines := make([]string, 0, len(samples))
+	for _, s := range samples {
+		convergeLines = append(convergeLines, fmt.Sprintf("- %s commit=%s", s.At.Format(time.RFC3339), s.Commit))
+	}
+	convergeSection := strings.Join(convergeLines, "\n")
+	if convergeSection == "" {
+		convergeSection = "(no converge samples captured before failure)"
+	}
+	runWatchSection := strings.TrimSpace(string(watchOut))
+	if runWatchSection == "" {
+		runWatchSection = "(no gh run watch output captured before failure)"
+	}
+	runListSection := strings.TrimSpace(string(runListOut))
+	if runListSection == "" {
+		runListSection = "(no gh run list output captured before failure)"
+	}
+	content := fmt.Sprintf(
+		"## merge_to_main pushed-but-unverified release evidence — %s\n\n"+
+			"**Branch merged:** `%s`\n"+
+			"**Pushed SHA:** `%s` (on origin/main)\n"+
+			"**Pre-merge HEAD (rolled back to):** `%s`\n"+
+			"**GH workflow run id:** `%s`\n"+
+			"**Dispatch class:** hot (in-process runner).\n\n"+
+			"## Failure reason\n\n"+
+			"```\n%s\n```\n\n"+
+			"## 1. Pre-merge state\n\n"+
+			"```\n$ git -C <repo> fetch origin --quiet\n%s\n\n"+
+			"$ git -C <repo> rev-parse main\n%s\n```\n\n"+
+			"## 2. Merge command output (literal)\n\n"+
+			"```\n$ git -C <repo> merge --ff-only %s\n%s\n```\n\n"+
+			"## 3. Post-merge state\n\n"+
+			"```\n$ git -C <repo> rev-parse main\n%s\n```\n\n"+
+			"## 4. Main push to origin\n\n"+
+			"```\n$ git -C <repo> push origin main\n%s\n```\n\n"+
+			"Non-force update; the push succeeded — pushed SHA is on origin.\n\n"+
+			"## 5. GitHub Actions deploy watch\n\n"+
+			"`gh run list` (literal, may be partial):\n\n```\n%s\n```\n\n"+
+			"`gh run watch` (literal, may be partial):\n\n```\n%s\n```\n\n"+
+			"## 6. pprod converge polling\n\n"+
+			"%s\n\n"+
+			"## 7. Rollback\n\n"+
+			"`git reset --hard %s` issued (best-effort) to restore the host repo's local main pointer to the pre-merge anchor.\n\n"+
+			"## Principles cited\n\n"+
+			"- `pr_evidence` — every claim above is the literal captured output up to the failure point.\n"+
+			"- `pr_pipeline_authority` — the task is closed `outcome=failure` so the substrate's view of the chain matches this CLI exit. The orchestrator recovers via the standard chain-shape path (mint a fresh merge_to_main task carrying `prior_task_id`).\n",
+		ti.StoryID, branch, pushedSHA, preMergeHEAD, runID,
+		originalErr.Error(),
+		strings.TrimSpace(string(fetchOut)),
+		strings.TrimSpace(string(preMain)),
+		branch, strings.TrimSpace(string(mergeOut)),
+		strings.TrimSpace(string(postMain)),
+		strings.TrimSpace(string(pushMainOut)),
+		runListSection,
+		runWatchSection,
+		convergeSection,
+		preMergeHEAD,
+	)
+	tags := []string{
+		"task_id:" + env.ID,
+		"story_id:" + ti.StoryID,
+		"phase:merge_to_main",
+		"branch:" + branch,
+		"dispatch_class:hot",
+		"kind:release-evidence",
+		"release:pushed_unverified",
+		"pushed_sha:" + pushedSHA,
+	}
+	if runID != "" {
+		tags = append(tags, "gh_run_id:"+runID)
+	}
+	return c.appendEvidence(ctx, env.ProjectID, ti.StoryID, tags, content)
 }

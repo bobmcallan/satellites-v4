@@ -47,9 +47,12 @@ func (s *Server) handleTaskUpdate(ctx context.Context, req mcpgo.CallToolRequest
 
 // buildTaskUpdateInput assembles the typed TaskUpdate input from the
 // wire request. Lifts the wire-arg fan-out out of handleTaskUpdate so
-// the adapter stays inside the line-budget.
+// the adapter stays inside the line-budget. prior_task_id and
+// parent_task_id are pointer-discriminated on the typed input;
+// "absent on the wire" maps to nil, "present (even empty)" maps to a
+// non-nil pointer so callers can patch to empty.
 func (s *Server) buildTaskUpdateInput(req mcpgo.CallToolRequest, taskID string, memberships []string) client.TaskUpdateInput {
-	return client.TaskUpdateInput{
+	in := client.TaskUpdateInput{
 		ID:                taskID,
 		Status:            strings.TrimSpace(req.GetString("status", "")),
 		Outcome:           req.GetString("outcome", ""),
@@ -57,6 +60,26 @@ func (s *Server) buildTaskUpdateInput(req mcpgo.CallToolRequest, taskID string, 
 		Memberships:       memberships,
 		Now:               s.nowUTC(),
 	}
+	args := req.GetArguments()
+	if raw, ok := args["prior_task_id"]; ok {
+		v := strings.TrimSpace(asString(raw))
+		in.PriorTaskID = &v
+	}
+	if raw, ok := args["parent_task_id"]; ok {
+		v := strings.TrimSpace(asString(raw))
+		in.ParentTaskID = &v
+	}
+	return in
+}
+
+// asString coerces an arbitrary JSON-decoded value into a string —
+// strings are returned verbatim, other shapes degrade to "" so the
+// nil-vs-empty pointer discrimination on TaskUpdateInput is preserved.
+func asString(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
 }
 
 // logTaskUpdate emits the task_update audit row at the wire layer.

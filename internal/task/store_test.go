@@ -389,3 +389,76 @@ func TestMemoryStore_SetPriorTaskID(t *testing.T) {
 	_, err = store.SetPriorTaskID(ctx, active.ID, closed.ID, now.Add(5*time.Second), []string{"other"})
 	assert.ErrorIs(t, err, task.ErrNotFound)
 }
+
+// TestMemoryStore_SetLinkage verifies sty_27516920 — the field-level
+// patch primitive routes prior_task_id + parent_task_id onto a non-
+// terminal row, idempotently, and rejects terminal rows + cross-
+// workspace callers.
+func TestMemoryStore_SetLinkage(t *testing.T) {
+	t.Parallel()
+	store := task.NewMemoryStore()
+	now := time.Now().UTC()
+	ctx := context.Background()
+
+	target, err := store.Enqueue(ctx, task.Task{
+		WorkspaceID: "w",
+		Origin:      task.OriginStoryStage,
+		Priority:    task.PriorityMedium,
+		Status:      task.StatusPublished,
+		Kind:        task.KindWork,
+		Action:      task.ContractAction("develop"),
+	}, now)
+	require.NoError(t, err)
+
+	priorA := "task_alpha"
+	parentA := "task_beta"
+	patched, err := store.SetLinkage(ctx, target.ID, &priorA, &parentA, now.Add(time.Second), []string{"w"})
+	require.NoError(t, err)
+	assert.Equal(t, priorA, patched.PriorTaskID)
+	assert.Equal(t, parentA, patched.ParentTaskID)
+
+	// Idempotence: re-patching with identical values is a no-op.
+	again, err := store.SetLinkage(ctx, target.ID, &priorA, &parentA, now.Add(2*time.Second), []string{"w"})
+	require.NoError(t, err)
+	assert.Equal(t, priorA, again.PriorTaskID)
+	assert.Equal(t, parentA, again.ParentTaskID)
+
+	// Patch to empty: pointer-to-empty clears the field; pointer-nil
+	// leaves the other untouched.
+	emptyStr := ""
+	cleared, err := store.SetLinkage(ctx, target.ID, &emptyStr, nil, now.Add(3*time.Second), []string{"w"})
+	require.NoError(t, err)
+	assert.Equal(t, "", cleared.PriorTaskID)
+	assert.Equal(t, parentA, cleared.ParentTaskID, "nil pointer must leave the existing value alone")
+
+	// Cross-workspace scoping rejects.
+	_, err = store.SetLinkage(ctx, target.ID, &priorA, nil, now.Add(4*time.Second), []string{"other"})
+	assert.ErrorIs(t, err, task.ErrNotFound)
+
+	// Both pointers nil is a usage error.
+	_, err = store.SetLinkage(ctx, target.ID, nil, nil, now.Add(5*time.Second), []string{"w"})
+	require.Error(t, err)
+
+	// Closing the target then patching surfaces ErrInvalidTransition.
+	_, err = store.Close(ctx, target.ID, task.OutcomeSuccess, now.Add(6*time.Second), []string{"w"})
+	require.NoError(t, err)
+	_, err = store.SetLinkage(ctx, target.ID, &priorA, nil, now.Add(7*time.Second), []string{"w"})
+	assert.ErrorIs(t, err, task.ErrInvalidTransition)
+
+	// Archived rows are equally immutable.
+	archive, err := store.Enqueue(ctx, task.Task{
+		WorkspaceID: "w",
+		Origin:      task.OriginStoryStage,
+		Priority:    task.PriorityMedium,
+		Status:      task.StatusPublished,
+		Kind:        task.KindWork,
+		Action:      task.ContractAction("develop"),
+	}, now.Add(10*time.Second))
+	require.NoError(t, err)
+	_, err = store.Close(ctx, archive.ID, task.OutcomeSuccess, now.Add(11*time.Second), []string{"w"})
+	require.NoError(t, err)
+	_, err = store.Archive(ctx, archive.ID, now.Add(12*time.Second), []string{"w"})
+	require.NoError(t, err)
+	_, err = store.SetLinkage(ctx, archive.ID, &priorA, nil, now.Add(13*time.Second), []string{"w"})
+	assert.ErrorIs(t, err, task.ErrInvalidTransition)
+}

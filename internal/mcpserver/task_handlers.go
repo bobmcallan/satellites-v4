@@ -11,53 +11,6 @@ import (
 	"github.com/bobmcallan/satellites/internal/client"
 )
 
-// handleTaskPlan implements task_plan: write a task at status=planned —
-// the agent's drafting state. Subscribers do not see planned rows.
-// Thin forwarder to client.TaskPlan.
-func (s *Server) handleTaskPlan(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	caller, _ := auth.UserFrom(ctx)
-	memberships := s.resolveCallerMemberships(ctx, caller)
-	in := buildTaskPlanInput(req, memberships)
-	out, err := s.cli().TaskPlan(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, in)
-	if err != nil {
-		return mcpgo.NewToolResultError(err.Error()), nil
-	}
-	return jsonResult(map[string]any{
-		"task_id":        out.TaskID,
-		"ledger_root_id": out.LedgerRootID,
-		"workspace_id":   out.WorkspaceID,
-		"status":         out.Status,
-		"priority":       out.Priority,
-		"origin":         out.Origin,
-	})
-}
-
-// buildTaskPlanInput lifts the wire-arg fan-out out of handleTaskPlan
-// so the adapter stays inside the line-budget. expected_duration is
-// the one arg that needs parsing — bad input degrades to "no hint".
-func buildTaskPlanInput(req mcpgo.CallToolRequest, memberships []string) client.TaskPlanInput {
-	args := req.GetArguments()
-	var expected time.Duration
-	if raw := getString(args, "expected_duration"); raw != "" {
-		if d, err := time.ParseDuration(raw); err == nil {
-			expected = d
-		}
-	}
-	return client.TaskPlanInput{
-		Origin:           getString(args, "origin"),
-		WorkspaceID:      getString(args, "workspace_id"),
-		ProjectID:        getString(args, "project_id"),
-		Kind:             getString(args, "kind"),
-		AgentID:          getString(args, "agent_id"),
-		ParentTaskID:     getString(args, "parent_task_id"),
-		PriorTaskID:      getString(args, "prior_task_id"),
-		Priority:         getString(args, "priority"),
-		Trigger:          []byte(getString(args, "trigger")),
-		ExpectedDuration: expected,
-		Memberships:      memberships,
-	}
-}
-
 // handleTaskGet implements task_get with workspace scoping. Thin
 // forwarder to client.TaskGet.
 func (s *Server) handleTaskGet(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {

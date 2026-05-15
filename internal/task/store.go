@@ -119,6 +119,15 @@ type Store interface {
 	// detection in client.TaskAdd (sty_9d046bc7). Not exposed via any
 	// MCP/HTTP/CLI verb. Memberships-scoped.
 	SetPriorTaskID(ctx context.Context, activeID, priorID string, now time.Time, memberships []string) (Task, error)
+
+	// SetLinkage patches PriorTaskID and/or ParentTaskID on a
+	// non-terminal task. Pointer args distinguish "leave alone" (nil)
+	// from "patch to this value, including empty" (non-nil). Returns
+	// ErrInvalidTransition when the row is closed or archived;
+	// terminal rows are immutable. Idempotent when both pointers
+	// already match the persisted values. Memberships-scoped.
+	// sty_27516920.
+	SetLinkage(ctx context.Context, id string, priorID, parentID *string, now time.Time, memberships []string) (Task, error)
 }
 
 // MemoryStore is a concurrency-safe in-process Store used by unit tests.
@@ -463,6 +472,45 @@ func (m *MemoryStore) SetPriorTaskID(ctx context.Context, activeID, priorID stri
 	}
 	t.PriorTaskID = priorID
 	m.rows[activeID] = t
+	m.mu.Unlock()
+	return t, nil
+}
+
+// SetLinkage implements Store for MemoryStore. Rejects mutation on
+// closed/archived rows with ErrInvalidTransition (terminal rows are
+// immutable). Idempotent when both pointers match the persisted
+// values. sty_27516920.
+func (m *MemoryStore) SetLinkage(ctx context.Context, id string, priorID, parentID *string, now time.Time, memberships []string) (Task, error) {
+	if id == "" {
+		return Task{}, errors.New("task: id required")
+	}
+	if priorID == nil && parentID == nil {
+		return Task{}, errors.New("task: SetLinkage requires at least one of prior_task_id or parent_task_id")
+	}
+	m.mu.Lock()
+	t, ok := m.rows[id]
+	if !ok || !workspaceVisible(t.WorkspaceID, memberships) {
+		m.mu.Unlock()
+		return Task{}, ErrNotFound
+	}
+	if t.Status == StatusClosed || t.Status == StatusArchived {
+		m.mu.Unlock()
+		return Task{}, fmt.Errorf("%w: linkage patch rejected on terminal status %s", ErrInvalidTransition, t.Status)
+	}
+	changed := false
+	if priorID != nil && t.PriorTaskID != *priorID {
+		t.PriorTaskID = *priorID
+		changed = true
+	}
+	if parentID != nil && t.ParentTaskID != *parentID {
+		t.ParentTaskID = *parentID
+		changed = true
+	}
+	if !changed {
+		m.mu.Unlock()
+		return t, nil
+	}
+	m.rows[id] = t
 	m.mu.Unlock()
 	return t, nil
 }

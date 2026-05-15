@@ -247,14 +247,21 @@ func (c *Client) TaskClaim(ctx context.Context, caller Caller, in TaskClaimInput
 	return t, nil
 }
 
-// TaskUpdateInput captures the close-path mutation. status="closed" is
-// the only supported transition today; outcome="success"|"failure" is
-// required. Memberships scope the GetByID + Close lookups.
+// TaskUpdateInput captures task lifecycle + linkage mutations.
+// status="closed" routes through the existing close path (outcome
+// required). PriorTaskID/ParentTaskID are pointer-discriminated so
+// callers can distinguish "leave alone" (nil) from "patch to this
+// value, including empty" (non-nil); when non-nil and status=="" the
+// call routes to the field-level linkage patch on the substrate.
+// Combining a status mutation with a linkage patch in one call is
+// rejected — the caller chains them in two calls. sty_27516920.
 type TaskUpdateInput struct {
 	ID                string
 	Status            string
 	Outcome           string
 	EvidenceLedgerIDs []string
+	PriorTaskID       *string
+	ParentTaskID      *string
 	Memberships       []string
 	Now               time.Time
 }
@@ -267,9 +274,11 @@ type TaskUpdateOutput struct {
 	EvidenceLedgerIDs []string `json:"evidence_ledger_ids,omitempty"`
 }
 
-// TaskUpdate mutates a task's lifecycle state. The only supported
-// transition today is status=closed; future updates (priority change,
-// agent reassignment) join here as the substrate grows.
+// TaskUpdate mutates a task's lifecycle or linkage state. status=closed
+// routes through the existing close path; PriorTaskID/ParentTaskID
+// (pointer-discriminated) route through SetLinkage when status is
+// empty. Combining a status mutation with a linkage patch in one call
+// is rejected. sty_27516920.
 func (c *Client) TaskUpdate(ctx context.Context, caller Caller, in TaskUpdateInput) (TaskUpdateOutput, error) {
 	if c.deps.Tasks == nil {
 		return TaskUpdateOutput{}, ErrTaskStoreNotConfigured
@@ -277,8 +286,33 @@ func (c *Client) TaskUpdate(ctx context.Context, caller Caller, in TaskUpdateInp
 	if in.ID == "" {
 		return TaskUpdateOutput{}, errors.New("id required")
 	}
+	hasLinkagePatch := in.PriorTaskID != nil || in.ParentTaskID != nil
 	if in.Status == "" {
-		return TaskUpdateOutput{}, errors.New("status is required")
+		if !hasLinkagePatch {
+			return TaskUpdateOutput{}, errors.New("status is required (or supply prior_task_id/parent_task_id for linkage patch)")
+		}
+		now := in.Now
+		if now.IsZero() {
+			now = time.Now().UTC()
+		}
+		patched, err := c.deps.Tasks.SetLinkage(ctx, in.ID, in.PriorTaskID, in.ParentTaskID, now, in.Memberships)
+		if err != nil {
+			if errors.Is(err, task.ErrNotFound) {
+				return TaskUpdateOutput{}, fmt.Errorf("task_not_found: %s", in.ID)
+			}
+			if errors.Is(err, task.ErrInvalidTransition) {
+				return TaskUpdateOutput{}, fmt.Errorf("task_already_terminal: %s", in.ID)
+			}
+			return TaskUpdateOutput{}, fmt.Errorf("task_update: %v", err)
+		}
+		return TaskUpdateOutput{
+			TaskID:  patched.ID,
+			Status:  patched.Status,
+			Outcome: patched.Outcome,
+		}, nil
+	}
+	if hasLinkagePatch {
+		return TaskUpdateOutput{}, errors.New("task_update: linkage patch cannot combine with status mutation; chain them in two calls")
 	}
 	current, err := c.deps.Tasks.GetByID(ctx, in.ID, in.Memberships)
 	if err != nil {
@@ -326,20 +360,25 @@ func (c *Client) TaskUpdate(ctx context.Context, caller Caller, in TaskUpdateInp
 }
 
 // TaskAddInput captures the rich fields task_add accepts: agent + prompt
-// (required), with optional story_id, kind, action, priority. The
-// resolver state — project/workspace/session — is computed inside
-// TaskAdd against the supplied stores; the caller is responsible for
-// presenting auth + URL-scoping context via TaskAddResolveDeps.
+// (required), with optional story_id, kind, action, priority,
+// prior_task_id, parent_task_id. The resolver state —
+// project/workspace/session — is computed inside TaskAdd against the
+// supplied stores; the caller is responsible for presenting auth + URL-
+// scoping context via TaskAddResolveDeps. When PriorTaskID is supplied
+// explicitly the caller wins: the auto-supersession detection is
+// skipped. sty_27516920.
 type TaskAddInput struct {
-	AgentID     string
-	Prompt      string
-	StoryID     string
-	Kind        string
-	Action      string
-	Priority    string
-	Memberships []string
-	Resolve     TaskAddResolveDeps
-	Now         time.Time
+	AgentID      string
+	Prompt       string
+	StoryID      string
+	Kind         string
+	Action       string
+	Priority     string
+	PriorTaskID  string
+	ParentTaskID string
+	Memberships  []string
+	Resolve      TaskAddResolveDeps
+	Now          time.Time
 }
 
 // TaskAddResolveDeps wires the project/workspace resolution callbacks
@@ -505,14 +544,32 @@ func (c *Client) TaskAdd(ctx context.Context, caller Caller, in TaskAddInput) (T
 		storyMinted = true
 	}
 
+	// Caller-supplied linkage (sty_27516920) takes precedence over
+	// auto-supersession detection. Validate that the referenced rows
+	// exist under caller memberships so the substrate refuses
+	// orchestrator typos before the row lands.
+	priorTaskID := strings.TrimSpace(in.PriorTaskID)
+	parentTaskID := strings.TrimSpace(in.ParentTaskID)
+	if priorTaskID != "" {
+		if _, perr := c.deps.Tasks.GetByID(ctx, priorTaskID, in.Memberships); perr != nil {
+			return TaskAddOutput{}, fmt.Errorf("prior_task_not_found: %q", priorTaskID)
+		}
+	}
+	if parentTaskID != "" {
+		if _, perr := c.deps.Tasks.GetByID(ctx, parentTaskID, in.Memberships); perr != nil {
+			return TaskAddOutput{}, fmt.Errorf("parent_task_not_found: %q", parentTaskID)
+		}
+	}
+
 	// Auto-supersession (sty_9d046bc7): when minting a fresh kind=work
 	// task whose (story_id, kind, action) matches a closed=failure
 	// predecessor with no successor pointing at it, stamp prior_task_id
 	// on the new row so runMergeToMainHotPath's chain-shape gate accepts
 	// the linked chain. Only fires for kind=work + non-empty action;
-	// review chains use parent_task_id and are out of scope.
-	priorTaskID := ""
-	if kind == task.KindWork && action != "" {
+	// review chains use parent_task_id and are out of scope. Skipped
+	// when the caller supplied PriorTaskID explicitly (caller wins,
+	// sty_27516920).
+	if priorTaskID == "" && kind == task.KindWork && action != "" {
 		chain, lerr := c.deps.Tasks.List(ctx, task.ListOptions{
 			StoryID:         st.ID,
 			IncludeArchived: false,
@@ -551,17 +608,18 @@ func (c *Client) TaskAdd(ctx context.Context, caller Caller, in TaskAddInput) (T
 	}
 
 	work, err := c.deps.Tasks.Enqueue(ctx, task.Task{
-		WorkspaceID: st.WorkspaceID,
-		ProjectID:   st.ProjectID,
-		StoryID:     st.ID,
-		Kind:        kind,
-		Action:      action,
-		Description: prompt,
-		AgentID:     in.AgentID,
-		Origin:      task.OriginStoryStage,
-		Priority:    priority,
-		Status:      task.StatusPublished,
-		PriorTaskID: priorTaskID,
+		WorkspaceID:  st.WorkspaceID,
+		ProjectID:    st.ProjectID,
+		StoryID:      st.ID,
+		Kind:         kind,
+		Action:       action,
+		Description:  prompt,
+		AgentID:      in.AgentID,
+		Origin:       task.OriginStoryStage,
+		Priority:     priority,
+		Status:       task.StatusPublished,
+		PriorTaskID:  priorTaskID,
+		ParentTaskID: parentTaskID,
 	}, now)
 	if err != nil {
 		return TaskAddOutput{}, fmt.Errorf("task enqueue: %v", err)
@@ -591,134 +649,6 @@ func (c *Client) TaskAdd(ctx context.Context, caller Caller, in TaskAddInput) (T
 		StoryMinted: storyMinted,
 		Status:      work.Status,
 		AgentID:     in.AgentID,
-	}, nil
-}
-
-// TaskPlanInput captures the raw fields task_plan accepts (origin is
-// required; everything else has reasonable defaults). The verb mints a
-// task at status=planned — the agent's drafting state.
-type TaskPlanInput struct {
-	Origin           string
-	WorkspaceID      string
-	ProjectID        string
-	Kind             string
-	AgentID          string
-	ParentTaskID     string
-	PriorTaskID      string
-	Priority         string
-	Trigger          []byte
-	ExpectedDuration time.Duration
-	Memberships      []string
-	Now              time.Time
-}
-
-// TaskPlanOutput mirrors the wire payload of task_plan.
-type TaskPlanOutput struct {
-	TaskID       string `json:"task_id"`
-	LedgerRootID string `json:"ledger_root_id"`
-	WorkspaceID  string `json:"workspace_id"`
-	Status       string `json:"status"`
-	Priority     string `json:"priority"`
-	Origin       string `json:"origin"`
-}
-
-// TaskPlan writes a task at status=planned. Subscribers do not see
-// planned rows. Use TaskAdd for the published-task creation path.
-func (c *Client) TaskPlan(ctx context.Context, caller Caller, in TaskPlanInput) (TaskPlanOutput, error) {
-	return c.enqueueTask(ctx, caller, in, task.StatusPlanned, "task_plan")
-}
-
-// enqueueTask is the shared body of task_plan (and future internal
-// task-creation flows). status names the row's initial state; verbName
-// labels error messages.
-func (c *Client) enqueueTask(ctx context.Context, caller Caller, in TaskPlanInput, status, verbName string) (TaskPlanOutput, error) {
-	if c.deps.Tasks == nil {
-		return TaskPlanOutput{}, fmt.Errorf("%s unavailable: task store not configured", verbName)
-	}
-	origin := strings.TrimSpace(in.Origin)
-	if origin == "" {
-		return TaskPlanOutput{}, fmt.Errorf("%s requires origin", verbName)
-	}
-	workspaceID := in.WorkspaceID
-	if workspaceID == "" {
-		if len(in.Memberships) == 0 {
-			return TaskPlanOutput{}, fmt.Errorf("%s: no caller workspace memberships", verbName)
-		}
-		workspaceID = in.Memberships[0]
-	}
-	priority := in.Priority
-	if priority == "" {
-		priority = task.PriorityMedium
-	}
-	projectID := in.ProjectID
-	agentID := in.AgentID
-	parentTaskID := in.ParentTaskID
-	if parentTaskID != "" {
-		if parent, perr := c.deps.Tasks.GetByID(ctx, parentTaskID, in.Memberships); perr == nil {
-			if projectID == "" {
-				projectID = parent.ProjectID
-			}
-			if agentID == "" {
-				agentID = parent.AgentID
-			}
-		}
-	}
-	now := in.Now
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	seed := task.Task{
-		WorkspaceID:      workspaceID,
-		ProjectID:        projectID,
-		Kind:             in.Kind,
-		AgentID:          agentID,
-		ParentTaskID:     parentTaskID,
-		PriorTaskID:      in.PriorTaskID,
-		Status:           status,
-		Origin:           origin,
-		Trigger:          in.Trigger,
-		Priority:         priority,
-		ExpectedDuration: in.ExpectedDuration,
-	}
-	t, err := c.deps.Tasks.Enqueue(ctx, seed, now)
-	if err != nil {
-		return TaskPlanOutput{}, fmt.Errorf("%s: %s", verbName, err)
-	}
-	ledgerID := ""
-	if c.deps.Ledger != nil {
-		ledgerKind := "kind:task-published"
-		if t.Status == task.StatusPlanned {
-			ledgerKind = "kind:task-planned"
-		} else if t.Status == task.StatusEnqueued {
-			ledgerKind = "kind:task-enqueued"
-		}
-		row, lerr := c.deps.Ledger.Append(ctx, ledger.LedgerEntry{
-			WorkspaceID: t.WorkspaceID,
-			ProjectID:   t.ProjectID,
-			Type:        ledger.TypeDecision,
-			Tags: []string{
-				ledgerKind,
-				"task_id:" + t.ID,
-				"origin:" + t.Origin,
-				"priority:" + t.Priority,
-			},
-			Content:    fmt.Sprintf("task created: id=%s status=%s origin=%s priority=%s", t.ID, t.Status, t.Origin, t.Priority),
-			Durability: ledger.DurabilityDurable,
-			SourceType: ledger.SourceAgent,
-			Status:     ledger.StatusActive,
-			CreatedBy:  caller.UserID,
-		}, now)
-		if lerr == nil {
-			ledgerID = row.ID
-		}
-	}
-	return TaskPlanOutput{
-		TaskID:       t.ID,
-		LedgerRootID: ledgerID,
-		WorkspaceID:  t.WorkspaceID,
-		Status:       t.Status,
-		Priority:     t.Priority,
-		Origin:       t.Origin,
 	}, nil
 }
 

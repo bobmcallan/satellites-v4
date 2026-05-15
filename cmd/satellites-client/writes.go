@@ -100,6 +100,12 @@ func newTaskAddCmd() *cobra.Command {
 			if v, _ := cmd.Flags().GetString("priority"); v != "" {
 				out["priority"] = v
 			}
+			if v, _ := cmd.Flags().GetString("prior-task-id"); v != "" {
+				out["prior_task_id"] = v
+			}
+			if v, _ := cmd.Flags().GetString("parent-task-id"); v != "" {
+				out["parent_task_id"] = v
+			}
 			return out, nil
 		}),
 	}
@@ -109,6 +115,8 @@ func newTaskAddCmd() *cobra.Command {
 	c.Flags().String("action", "", "Action string, e.g. contract:develop.")
 	c.Flags().String("kind", "", "Task kind: work (default) or review.")
 	c.Flags().String("priority", "", "Priority: critical | high | medium (default) | low.")
+	c.Flags().String("prior-task-id", "", "Same-slot retry pointer. Caller wins over auto-supersession detection.")
+	c.Flags().String("parent-task-id", "", "Conversation-thread anchor.")
 	_ = c.MarkFlagRequired("agent-id")
 	return c
 }
@@ -138,84 +146,46 @@ func newTaskClaimCmd() *cobra.Command {
 func newTaskUpdateCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "update",
-		Short: "Mutate a task's lifecycle state.",
+		Short: "Mutate a task's lifecycle state or patch its linkage.",
 		RunE: writeHandler("task_update", func(cmd *cobra.Command, args []string) (any, error) {
 			id, _ := cmd.Flags().GetString("id")
-			status, _ := cmd.Flags().GetString("status")
-			if id == "" || status == "" {
-				return nil, cliexit.Newf(cliexit.Usage, "task update: --id and --status are required")
+			if id == "" {
+				return nil, cliexit.Newf(cliexit.Usage, "task update: --id is required")
 			}
-			out := map[string]any{"id": id, "status": status}
+			out := map[string]any{"id": id}
+			status, _ := cmd.Flags().GetString("status")
+			priorChanged := cmd.Flags().Changed("prior-task-id")
+			parentChanged := cmd.Flags().Changed("parent-task-id")
+			if status == "" && !priorChanged && !parentChanged {
+				return nil, cliexit.Newf(cliexit.Usage, "task update: supply --status, --prior-task-id, or --parent-task-id")
+			}
+			if status != "" {
+				out["status"] = status
+			}
 			if v, _ := cmd.Flags().GetString("outcome"); v != "" {
 				out["outcome"] = v
 			}
 			if v, _ := cmd.Flags().GetStringSlice("evidence-ledger-ids"); len(v) > 0 {
 				out["evidence_ledger_ids"] = v
 			}
+			if priorChanged {
+				v, _ := cmd.Flags().GetString("prior-task-id")
+				out["prior_task_id"] = v
+			}
+			if parentChanged {
+				v, _ := cmd.Flags().GetString("parent-task-id")
+				out["parent_task_id"] = v
+			}
 			return out, nil
 		}),
 	}
 	c.Flags().String("id", "", "Task id (required).")
-	c.Flags().String("status", "", "Target status (today: closed).")
+	c.Flags().String("status", "", "Target status (today: closed). Omit to patch linkage fields only.")
 	c.Flags().String("outcome", "", "success (default) | failure when status=closed.")
 	c.Flags().StringSlice("evidence-ledger-ids", nil, "Evidence ledger row ids referenced.")
+	c.Flags().String("prior-task-id", "", "Patch the same-slot retry pointer. Pass empty string to clear.")
+	c.Flags().String("parent-task-id", "", "Patch the conversation-thread anchor. Pass empty string to clear.")
 	_ = c.MarkFlagRequired("id")
-	_ = c.MarkFlagRequired("status")
-	return c
-}
-
-// task plan
-func newTaskPlanCmd() *cobra.Command {
-	c := &cobra.Command{
-		Use:   "plan",
-		Short: "Mint a task at status=planned.",
-		RunE: writeHandler("task_plan", func(cmd *cobra.Command, args []string) (any, error) {
-			origin, _ := cmd.Flags().GetString("origin")
-			if origin == "" {
-				return nil, cliexit.Newf(cliexit.Usage, "task plan: --origin is required")
-			}
-			out := map[string]any{"origin": origin}
-			if v, _ := cmd.Flags().GetString("agent-id"); v != "" {
-				out["agent_id"] = v
-			}
-			if v, _ := cmd.Flags().GetString("kind"); v != "" {
-				out["kind"] = v
-			}
-			if v, _ := cmd.Flags().GetString("priority"); v != "" {
-				out["priority"] = v
-			}
-			if v, _ := cmd.Flags().GetString("project-id"); v != "" {
-				out["project_id"] = v
-			}
-			if v, _ := cmd.Flags().GetString("workspace-id"); v != "" {
-				out["workspace_id"] = v
-			}
-			if v, _ := cmd.Flags().GetString("parent-task-id"); v != "" {
-				out["parent_task_id"] = v
-			}
-			if v, _ := cmd.Flags().GetString("prior-task-id"); v != "" {
-				out["prior_task_id"] = v
-			}
-			if v, _ := cmd.Flags().GetString("expected-duration"); v != "" {
-				out["expected_duration"] = v
-			}
-			if v, _ := cmd.Flags().GetString("trigger"); v != "" {
-				out["trigger"] = v
-			}
-			return out, nil
-		}),
-	}
-	c.Flags().String("origin", "", "story_stage | scheduled | story_producing | event (required).")
-	c.Flags().String("agent-id", "", "Agent doc id.")
-	c.Flags().String("kind", "", "work | review.")
-	c.Flags().String("priority", "", "critical | high | medium | low.")
-	c.Flags().String("project-id", "", "Project scope.")
-	c.Flags().String("workspace-id", "", "Workspace scope.")
-	c.Flags().String("parent-task-id", "", "Conversation anchor task id.")
-	c.Flags().String("prior-task-id", "", "Same-slot retry pointer.")
-	c.Flags().String("expected-duration", "", "Go duration string, e.g. 30s.")
-	c.Flags().String("trigger", "", "Free-form JSON trigger payload.")
-	_ = c.MarkFlagRequired("origin")
 	return c
 }
 

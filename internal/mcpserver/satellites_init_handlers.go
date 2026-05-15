@@ -37,7 +37,15 @@ func (s *Server) handleSatellitesInit(ctx context.Context, req mcpgo.CallToolReq
 		in.WorkspaceID = s.resolveProjectWorkspaceID(ctx, resolved)
 		in.Memberships = s.resolveCallerMemberships(ctx, caller)
 	}
-	out, err := s.cli().SatellitesInit(ctx, toClientCaller(caller), in)
+	// sty_245a95bf: also stamp memberships on the client.Caller. The
+	// downstream AgentAPIKeyCreate path enforces a cross-tenant write
+	// guard against caller.Memberships (not in.Memberships); without
+	// this assignment the mint returned `forbidden`, resolveInitAuth
+	// caught it as a generic error, and slice B silently degraded to
+	// `kind=auth_login` even on a properly bound session.
+	cc := toClientCaller(caller)
+	cc.Memberships = in.Memberships
+	out, err := s.cli().SatellitesInit(ctx, cc, in)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}

@@ -9,9 +9,28 @@ import (
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	mcpsrv "github.com/mark3labs/mcp-go/server"
 
+	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/client"
+	"github.com/bobmcallan/satellites/internal/project"
+	"github.com/bobmcallan/satellites/internal/session"
+	"github.com/bobmcallan/satellites/internal/workspace"
 )
+
+// fakeClientSession satisfies mark3labs/mcp-go's ClientSession interface
+// for tests. SessionID() returns the injected id; the other methods are
+// no-ops since handlers under test do not send notifications.
+type fakeClientSession struct {
+	id string
+}
+
+func (f *fakeClientSession) Initialize()                                       {}
+func (f *fakeClientSession) Initialized() bool                                 { return true }
+func (f *fakeClientSession) NotificationChannel() chan<- mcpgo.JSONRPCNotification {
+	return make(chan mcpgo.JSONRPCNotification, 1)
+}
+func (f *fakeClientSession) SessionID() string { return f.id }
 
 // satellitesInitFakeManifest stands up an httptest manifest server and
 // returns the URL. Cleanup is registered with t.
@@ -173,6 +192,194 @@ func TestHandleSatellitesInit_ManifestURLMissing(t *testing.T) {
 	}
 	if !res.IsError {
 		t.Fatalf("expected error result, got: %+v", res)
+	}
+}
+
+// TestHandleSatellitesInit_KindReadyOnBoundSession reproduces sty_245a95bf's
+// AC1: when the caller's ctx carries (a) an authed CallerIdentity and (b)
+// a ClientSession whose SessionID matches a pre-staged session row
+// stamped with ActiveProjectID, the handler must return
+// `auth_bootstrap.kind == "ready"` and `agent_api_key.key` non-empty.
+//
+// Pprod symptom under reproduction: `kind=auth_login` returns despite a
+// valid project_set having stamped the session. Reproducing this in a
+// unit test against the typed handler isolates whether the bug lives
+// in callerActiveProjectID(ctx, ...) -> Sessions.Get OR somewhere
+// further up the streamable transport.
+func TestHandleSatellitesInit_KindReadyOnBoundSession(t *testing.T) {
+	client.ResetSystemVersionCacheForTest()
+	manifestURL := satellitesInitFakeManifest(t)
+
+	const (
+		userID    = "u_test_bound"
+		userEmail = "bound@test.local"
+		sessionID = "sess_test_bound"
+		wsID      = "wksp_test_bound"
+	)
+
+	now := time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC)
+	sessions := session.NewMemoryStore()
+	projects := project.NewMemoryStore()
+	workspaces := workspace.NewMemoryStore()
+	ws, err := workspaces.Create(context.Background(), userID, "test-bound-ws", now)
+	if err != nil {
+		t.Fatalf("workspace.Create: %v", err)
+	}
+	_ = wsID // kept for documentation; the actual ws id is the store-allocated one
+	proj, err := projects.Create(context.Background(), userID, ws.ID, "test-bound", now)
+	if err != nil {
+		t.Fatalf("project.Create: %v", err)
+	}
+	_, err = sessions.Register(context.Background(), userID, sessionID, session.SourceSessionStart, now)
+	if err != nil {
+		t.Fatalf("session.Register: %v", err)
+	}
+	_, err = sessions.SetActiveProject(context.Background(), userID, sessionID, proj.ID, now)
+	if err != nil {
+		t.Fatalf("session.SetActiveProject: %v", err)
+	}
+
+	s := &Server{
+		startedAt: now,
+		mcp:       mcpsrv.NewMCPServer("test", "0.0.0"),
+		deps: client.Deps{
+			ManifestURL: manifestURL,
+			StartedAt:   now,
+			Sessions:    sessions,
+			APIKeys:     auth.NewMemoryAgentAPIKeyStore(),
+			Projects:    projects,
+			Workspaces:  workspaces,
+		},
+	}
+
+	// Build ctx: authed caller + injected ClientSession whose SessionID
+	// matches the pre-staged row. Note: caller.Memberships is set on the
+	// CallerIdentity for completeness, but the bug fix routes memberships
+	// through in.Memberships (set by the handler from
+	// resolveCallerMemberships) and assigns them onto cc.Memberships
+	// before calling SatellitesInit.
+	ctx := auth.WithCaller(context.Background(), auth.CallerIdentity{
+		UserID: userID,
+		Email:  userEmail,
+		Source: "oauth:test",
+	})
+	ctx = s.mcp.WithContext(ctx, &fakeClientSession{id: sessionID})
+
+	req := mcpgo.CallToolRequest{}
+	req.Params.Name = "satellites_init"
+	req.Params.Arguments = map[string]any{
+		"os":   "linux",
+		"arch": "amd64",
+	}
+	res, err := s.handleSatellitesInit(ctx, req)
+	if err != nil {
+		t.Fatalf("handleSatellitesInit: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("expected ok result, got error: %+v", res)
+	}
+	text := res.Content[0].(mcpgo.TextContent).Text
+	var payload struct {
+		AuthBootstrap struct {
+			Kind   string `json:"kind"`
+			Source string `json:"source"`
+		} `json:"auth_bootstrap"`
+		AgentAPIKey *struct {
+			ID     string `json:"id"`
+			Key    string `json:"key"`
+			Name   string `json:"name"`
+			Source string `json:"source"`
+		} `json:"agent_api_key"`
+	}
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, text)
+	}
+	if payload.AuthBootstrap.Kind != "ready" {
+		t.Errorf("auth_bootstrap.kind = %q, want %q (raw=%s)", payload.AuthBootstrap.Kind, "ready", text)
+	}
+	if payload.AuthBootstrap.Source != "minted_at_init" {
+		t.Errorf("auth_bootstrap.source = %q, want %q", payload.AuthBootstrap.Source, "minted_at_init")
+	}
+	if payload.AgentAPIKey == nil {
+		t.Fatalf("agent_api_key missing from payload (raw=%s)", text)
+	}
+	if payload.AgentAPIKey.Key == "" {
+		t.Errorf("agent_api_key.key empty on fresh mint")
+	}
+	if payload.AgentAPIKey.Source != "minted_at_init" {
+		t.Errorf("agent_api_key.source = %q, want minted_at_init", payload.AgentAPIKey.Source)
+	}
+	_ = wsID // workspace_id is informational on the payload; not asserted here
+}
+
+// TestHandleSatellitesInit_KindReadyIdempotent — AC2 of sty_245a95bf.
+// Second call with same (caller, project, agent_name) returns
+// source=existing_key + empty cleartext.
+func TestHandleSatellitesInit_KindReadyIdempotent(t *testing.T) {
+	client.ResetSystemVersionCacheForTest()
+	manifestURL := satellitesInitFakeManifest(t)
+
+	const (
+		userID    = "u_test_idem"
+		sessionID = "sess_test_idem"
+	)
+
+	now := time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC)
+	sessions := session.NewMemoryStore()
+	projects := project.NewMemoryStore()
+	workspaces := workspace.NewMemoryStore()
+	ws, _ := workspaces.Create(context.Background(), userID, "test-idem-ws", now)
+	proj, _ := projects.Create(context.Background(), userID, ws.ID, "test-idem", now)
+	_, _ = sessions.Register(context.Background(), userID, sessionID, session.SourceSessionStart, now)
+	_, _ = sessions.SetActiveProject(context.Background(), userID, sessionID, proj.ID, now)
+
+	s := &Server{
+		startedAt: now,
+		mcp:       mcpsrv.NewMCPServer("test", "0.0.0"),
+		deps: client.Deps{
+			ManifestURL: manifestURL,
+			StartedAt:   now,
+			Sessions:    sessions,
+			APIKeys:     auth.NewMemoryAgentAPIKeyStore(),
+			Projects:    projects,
+			Workspaces:  workspaces,
+		},
+	}
+
+	ctx := auth.WithCaller(context.Background(), auth.CallerIdentity{
+		UserID: userID, Email: "idem@test.local", Source: "oauth:test",
+	})
+	ctx = s.mcp.WithContext(ctx, &fakeClientSession{id: sessionID})
+	req := mcpgo.CallToolRequest{}
+	req.Params.Name = "satellites_init"
+	req.Params.Arguments = map[string]any{"os": "linux", "arch": "amd64"}
+
+	// First call mints.
+	res1, _ := s.handleSatellitesInit(ctx, req)
+	if res1.IsError {
+		t.Fatalf("first call error: %+v", res1)
+	}
+	// Second call returns existing.
+	res2, _ := s.handleSatellitesInit(ctx, req)
+	if res2.IsError {
+		t.Fatalf("second call error: %+v", res2)
+	}
+	text2 := res2.Content[0].(mcpgo.TextContent).Text
+	var p2 struct {
+		AgentAPIKey *struct {
+			Key    string `json:"key"`
+			Source string `json:"source"`
+		} `json:"agent_api_key"`
+	}
+	_ = json.Unmarshal([]byte(text2), &p2)
+	if p2.AgentAPIKey == nil {
+		t.Fatalf("second call missing agent_api_key (raw=%s)", text2)
+	}
+	if p2.AgentAPIKey.Source != "existing_key" {
+		t.Errorf("second-call source = %q, want existing_key", p2.AgentAPIKey.Source)
+	}
+	if p2.AgentAPIKey.Key != "" {
+		t.Errorf("second-call key cleartext leaked: %q (should be empty on existing_key)", p2.AgentAPIKey.Key)
 	}
 }
 

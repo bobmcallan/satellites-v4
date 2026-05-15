@@ -91,6 +91,47 @@ func TestLedgerList_FiltersByStoryID(t *testing.T) {
 	assert.Len(t, rows, 2)
 }
 
+// TestLedgerAppend_StoryIDFromTag — sty_63541aed AC2. When the caller
+// passes no top-level StoryID but tags include `story_id:<id>`, the
+// row's top-level StoryID is populated from the tag. This is the
+// substrate-side enforcement of the story-binding invariant that the
+// story_close gate's ledger.List(StoryID=…) filter depends on.
+func TestLedgerAppend_StoryIDFromTag(t *testing.T) {
+	c, now := newLedgerClient(t)
+	row, err := c.LedgerAppend(context.Background(), Caller{UserID: "u_alice"}, LedgerAppendInput{
+		ResolvedProjectID: "proj_test",
+		WorkspaceID:       "wksp_test",
+		EventType:         ledger.TypeVerdict,
+		Content:           "verdict body",
+		Tags:              []string{"story_id:sty_abc", "kind:verdict", "verdict:pass"},
+		Now:               now,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, row.StoryID, "row.StoryID must be populated from the story_id tag")
+	assert.Equal(t, "sty_abc", *row.StoryID)
+}
+
+// TestLedgerAppend_StoryIDFieldWinsOverTag — sty_63541aed AC2.
+// Explicit StoryID is authoritative; the tag is a fallback only when
+// the field is empty. Asserts that field-vs-tag conflict resolves to
+// the field so existing callers that pass both keep their current
+// behaviour.
+func TestLedgerAppend_StoryIDFieldWinsOverTag(t *testing.T) {
+	c, now := newLedgerClient(t)
+	row, err := c.LedgerAppend(context.Background(), Caller{UserID: "u_alice"}, LedgerAppendInput{
+		ResolvedProjectID: "proj_test",
+		WorkspaceID:       "wksp_test",
+		StoryID:           "sty_field",
+		EventType:         ledger.TypeVerdict,
+		Content:           "verdict body",
+		Tags:              []string{"story_id:sty_tag", "kind:verdict", "verdict:pass"},
+		Now:               now,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, row.StoryID)
+	assert.Equal(t, "sty_field", *row.StoryID, "explicit StoryID must win over the story_id tag")
+}
+
 func TestClassifyLedgerEvent_KnownVsUnknown(t *testing.T) {
 	knownType, knownTags := ClassifyLedgerEvent(ledger.TypeVerdict)
 	assert.Equal(t, ledger.TypeVerdict, knownType)

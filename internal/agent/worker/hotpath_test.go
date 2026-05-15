@@ -445,10 +445,20 @@ func TestParseBaseSHAFromBranch(t *testing.T) {
 	}
 }
 
+// defaultPreMergeHEAD is the synthetic pre-merge HEAD the happy-path
+// fixture returns from `git rev-parse HEAD`. Tests asserting AC3
+// rollback (`git reset --hard <preMergeHEAD>`) check that this exact
+// SHA appears in the captured gitCmds.
+const defaultPreMergeHEAD = "premerge1234"
+
 // seedMergeToMainHappyStubs primes the gitOutputs + ghOutputs + pprod
 // converge sequence + walk response for a PASS run of the extended
 // merge_to_main release runner. The pushedSHA is the SHA the final
 // `rev-parse main` returns AND the converge poll expects to observe.
+//
+// sty_63541aed AC3: also seeds the refuse-on-dirty status check
+// (clean working tree) and the pre-merge HEAD capture so the runner's
+// new top-of-function gates pass on the happy path.
 func seedMergeToMainHappyStubs(t *testing.T, s *hotpathStub, pushedSHA string) {
 	t.Helper()
 	walk := taskWalkResponse{Tasks: []taskWalkTask{
@@ -459,6 +469,12 @@ func seedMergeToMainHappyStubs(t *testing.T, s *hotpathStub, pushedSHA string) {
 	}}
 	walkBytes, _ := json.Marshal(walk)
 	s.setAPIResp("task_walk", string(walkBytes))
+	// AC3 refuse-on-dirty: clean tree.
+	s.gitOutputs["status --porcelain"] = ""
+	// AC3 rollback anchor: pre-merge HEAD capture.
+	s.gitOutputs["rev-parse HEAD"] = defaultPreMergeHEAD + "\n"
+	// AC3 rollback target stays a no-op on the happy path.
+	s.gitOutputs["reset --hard "+defaultPreMergeHEAD] = ""
 	s.gitOutputs["fetch origin --quiet"] = ""
 	s.gitOutputs["rev-parse main"] = pushedSHA + "\n"
 	s.gitOutputs["merge-base --is-ancestor main agent-task_dev-from-833a28e"] = ""
@@ -470,6 +486,80 @@ func seedMergeToMainHappyStubs(t *testing.T, s *hotpathStub, pushedSHA string) {
 	s.pprodCommits = []string{"stale-1", pushedSHA}
 	s.setAPIResp("ledger_append", `{"id":"ldg_m"}`)
 	s.setAPIResp("task_update", `{}`)
+}
+
+// findAllAPICalls returns all recorded calls to the given /api/v1
+// path. Tests assert post-push paths emit two task_update calls (one
+// at runHotPath entry from the orchestrator-side test harness is not
+// modelled here — the helper just returns whatever was recorded).
+func (s *hotpathStub) findAllAPICalls(toolName string) []recordedAPICall {
+	target := "/api/v1" + cliremote.ToolNameToPath(toolName)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []recordedAPICall
+	for i := range s.apiCalls {
+		if s.apiCalls[i].Path == target {
+			out = append(out, s.apiCalls[i])
+		}
+	}
+	return out
+}
+
+// findLedgerAppendWithTag returns the first recorded ledger_append
+// whose tags include the literal tag string, or nil.
+func (s *hotpathStub) findLedgerAppendWithTag(tag string) *recordedAPICall {
+	target := "/api/v1" + cliremote.ToolNameToPath("ledger_append")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.apiCalls {
+		call := s.apiCalls[i]
+		if call.Path != target {
+			continue
+		}
+		tagsAny, _ := call.Body["tags"].([]any)
+		for _, v := range tagsAny {
+			if s, ok := v.(string); ok && s == tag {
+				return &call
+			}
+		}
+	}
+	return nil
+}
+
+// gitCmdMatches returns true when any captured git command in
+// s.gitCmds equals the literal expected argv (after the DIR prefix).
+func (s *hotpathStub) gitCmdMatches(expected ...string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, cmd := range s.gitCmds {
+		if len(cmd) != len(expected)+1 {
+			continue
+		}
+		ok := true
+		for i, want := range expected {
+			if cmd[i+1] != want {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// gitCmdSeen returns true when any captured git command's first
+// argument equals the literal verb.
+func (s *hotpathStub) gitCmdSeen(verb string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, cmd := range s.gitCmds {
+		if len(cmd) >= 2 && cmd[1] == verb {
+			return true
+		}
+	}
+	return false
 }
 
 // runMergeToMainTask drives the merge_to_main runner with the
@@ -501,9 +591,10 @@ func TestRunMergeToMainHotPath_ReleasePass(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, OutcomeSuccess, outcome)
 
-	// gitRunner sequence covers the extended release: fetch, rev-parse,
-	// ancestor, merge, rev-parse, push-main.
-	expectedHead := []string{"fetch", "rev-parse", "merge-base", "merge", "rev-parse", "push"}
+	// gitRunner sequence covers the AC3 refuse-on-dirty + rollback-
+	// anchor preamble (status, rev-parse HEAD) and the extended
+	// release: fetch, rev-parse, ancestor, merge, rev-parse, push-main.
+	expectedHead := []string{"status", "rev-parse", "fetch", "rev-parse", "merge-base", "merge", "rev-parse", "push"}
 	require.GreaterOrEqual(t, len(s.gitCmds), len(expectedHead))
 	for i, want := range expectedHead {
 		assert.Equal(t, want, s.gitCmds[i][1], "git command #%d should be %q (got %v)", i, want, s.gitCmds[i])
@@ -538,14 +629,30 @@ func TestRunMergeToMainHotPath_ReleasePass(t *testing.T) {
 	assert.Contains(t, tags, "gh_run_id:12345")
 }
 
-// TestRunMergeToMainHotPath_GHTimeout — gh run watch hangs past the
-// configured timeout. The runner returns failure + no
-// kind:release-evidence row is appended.
-func TestRunMergeToMainHotPath_GHTimeout(t *testing.T) {
+// assertTaskClosedFailure verifies that a task_update API call was
+// made with status=closed and outcome=failure. Per sty_63541aed AC1
+// the runner must persist this BEFORE returning so the substrate's
+// view of the chain matches the CLI's exit code.
+func assertTaskClosedFailure(t *testing.T, s *hotpathStub) *recordedAPICall {
+	t.Helper()
+	for _, call := range s.findAllAPICalls("task_update") {
+		if call.Body["status"] == "closed" && call.Body["outcome"] == "failure" {
+			return &call
+		}
+	}
+	t.Fatalf("no task_update(closed,failure) recorded; saw %+v", s.findAllAPICalls("task_update"))
+	return nil
+}
+
+// TestRunMergeToMainHotPath_GHTimeout_PersistsClose — sty_63541aed
+// AC1. gh run watch hangs past the configured timeout (post-push
+// step). The runner MUST: (1) call task_update(closed,failure)
+// carrying the failure reason BEFORE returning, (2) append a
+// `kind:release-evidence` row tagged `release:pushed_unverified` so
+// the orchestrator can recover via chain-shape inspection.
+func TestRunMergeToMainHotPath_GHTimeout_PersistsClose(t *testing.T) {
 	s := newHotpathStub(t)
 	seedMergeToMainHappyStubs(t, s, "deadbeef")
-	// gh run watch hangs forever: the stub's ctx.Err() path returns the
-	// deadline once the watch ctx fires.
 	s.ghOutputs["run watch"] = ""
 	s.ghErrors["run watch"] = context.DeadlineExceeded
 
@@ -555,22 +662,32 @@ func TestRunMergeToMainHotPath_GHTimeout(t *testing.T) {
 	assert.Equal(t, OutcomeFailure, outcome)
 	assert.Contains(t, err.Error(), "gh run watch")
 
-	// No kind:release-evidence row appended on failure.
-	led := s.findAPICall("ledger_append")
-	if led != nil {
-		tagsAny, _ := led.Body["tags"].([]any)
-		for _, v := range tagsAny {
-			if v == "kind:release-evidence" {
-				t.Errorf("release-evidence row appended on GH timeout: %+v", led)
-			}
-		}
+	// AC1: substrate view matches CLI exit. task_update persisted
+	// with outcome=failure and the reason on the wire body.
+	taskUpd := assertTaskClosedFailure(t, s)
+	if reason, ok := taskUpd.Body["reason"].(string); !ok || reason == "" {
+		t.Errorf("task_update body should carry failure reason; got %+v", taskUpd.Body)
+	} else {
+		assert.Contains(t, reason, "gh run watch")
 	}
+
+	// AC1: pushed-but-unverified release-evidence row appended.
+	led := s.findLedgerAppendWithTag("release:pushed_unverified")
+	require.NotNil(t, led, "release:pushed_unverified evidence row missing; saw %+v", s.findAllAPICalls("ledger_append"))
+	tagsAny, _ := led.Body["tags"].([]any)
+	tags := make([]string, len(tagsAny))
+	for i, v := range tagsAny {
+		tags[i] = v.(string)
+	}
+	assert.Contains(t, tags, "kind:release-evidence")
+	assert.Contains(t, tags, "pushed_sha:deadbeef")
 }
 
-// TestRunMergeToMainHotPath_GHFailure — gh run watch returns
-// conclusion=failure (exec.Command exits non-zero with stderr). The
-// runner returns failure + no kind:release-evidence row.
-func TestRunMergeToMainHotPath_GHFailure(t *testing.T) {
+// TestRunMergeToMainHotPath_GHFailure_PersistsClose — sty_63541aed
+// AC1. gh run watch exits non-zero (conclusion=failure). Identical
+// shape to the timeout case: persisted close + pushed_unverified
+// release-evidence so the orchestrator can recover.
+func TestRunMergeToMainHotPath_GHFailure_PersistsClose(t *testing.T) {
 	s := newHotpathStub(t)
 	seedMergeToMainHappyStubs(t, s, "deadbeef")
 	s.ghOutputs["run watch"] = "✗ release deploy · failed\n12345 · failure\n"
@@ -582,26 +699,18 @@ func TestRunMergeToMainHotPath_GHFailure(t *testing.T) {
 	assert.Equal(t, OutcomeFailure, outcome)
 	assert.Contains(t, err.Error(), "gh run watch")
 
-	led := s.findAPICall("ledger_append")
-	if led != nil {
-		tagsAny, _ := led.Body["tags"].([]any)
-		for _, v := range tagsAny {
-			if v == "kind:release-evidence" {
-				t.Errorf("release-evidence row appended on GH failure: %+v", led)
-			}
-		}
-	}
+	assertTaskClosedFailure(t, s)
+	require.NotNil(t, s.findLedgerAppendWithTag("release:pushed_unverified"),
+		"release:pushed_unverified evidence row missing on gh failure")
 }
 
-// TestRunMergeToMainHotPath_PprodConvergeTimeout — gh succeeds but
-// pprod's satellites_info never reports the pushed SHA within the
-// configured converge timeout. The runner returns failure + no
-// kind:release-evidence row.
-func TestRunMergeToMainHotPath_PprodConvergeTimeout(t *testing.T) {
+// TestRunMergeToMainHotPath_PprodConvergeTimeout_PersistsClose —
+// sty_63541aed AC1. The pprod converge poll times out after the
+// push has shipped. The runner persists close+failure and writes
+// the pushed-but-unverified release-evidence row.
+func TestRunMergeToMainHotPath_PprodConvergeTimeout_PersistsClose(t *testing.T) {
 	s := newHotpathStub(t)
 	seedMergeToMainHappyStubs(t, s, "deadbeef")
-	// Override the scripted commits with a stale-only sequence that
-	// never matches the pushed SHA.
 	s.pprodCommits = []string{"stale-only"}
 
 	cc := s.client(config.AgentConfig{RepoPath: "/repo", BranchTemplate: "agent-{task_id}-from-{base_sha}"})
@@ -610,15 +719,81 @@ func TestRunMergeToMainHotPath_PprodConvergeTimeout(t *testing.T) {
 	assert.Equal(t, OutcomeFailure, outcome)
 	assert.Contains(t, err.Error(), "pprod converge timeout")
 
-	led := s.findAPICall("ledger_append")
-	if led != nil {
-		tagsAny, _ := led.Body["tags"].([]any)
-		for _, v := range tagsAny {
-			if v == "kind:release-evidence" {
-				t.Errorf("release-evidence row appended on converge timeout: %+v", led)
-			}
+	taskUpd := assertTaskClosedFailure(t, s)
+	if reason, ok := taskUpd.Body["reason"].(string); !ok || reason == "" {
+		t.Errorf("task_update body should carry failure reason; got %+v", taskUpd.Body)
+	} else {
+		assert.Contains(t, reason, "pprod converge timeout")
+	}
+
+	led := s.findLedgerAppendWithTag("release:pushed_unverified")
+	require.NotNil(t, led, "release:pushed_unverified evidence row missing on converge timeout")
+}
+
+// TestRunMergeToMainHotPath_DirtyWorkingTree_Refuses — sty_63541aed
+// AC3. When `git status --porcelain` returns a non-empty body the
+// runner refuses to merge: no merge, no push, no gh-watch, no pprod
+// poll. task_update is still persisted with outcome=failure so the
+// substrate's view of the chain reflects the abort.
+func TestRunMergeToMainHotPath_DirtyWorkingTree_Refuses(t *testing.T) {
+	s := newHotpathStub(t)
+	seedMergeToMainHappyStubs(t, s, "deadbeef")
+	// Override the clean-tree default with a dirty body — uncommitted
+	// modifications the runner is not licensed to discard.
+	s.gitOutputs["status --porcelain"] = " M .gitignore\n?? scratch.tmp\n"
+
+	cc := s.client(config.AgentConfig{RepoPath: "/repo", BranchTemplate: "agent-{task_id}-from-{base_sha}"})
+	outcome, err := runMergeToMainTask(t, cc)
+	require.Error(t, err)
+	assert.Equal(t, OutcomeFailure, outcome)
+	assert.Contains(t, err.Error(), "dirty working tree")
+	assert.Contains(t, err.Error(), ".gitignore",
+		"refusal reason should include the dirty paths so the operator can reconcile")
+
+	// AC3: no mutating git verb ran.
+	for _, forbidden := range []string{"merge", "push", "fetch", "merge-base"} {
+		if s.gitCmdSeen(forbidden) {
+			t.Errorf("runner ran %q after dirty-tree refuse: gitCmds=%v", forbidden, s.gitCmds)
 		}
 	}
+
+	// AC1: task closed failure.
+	assertTaskClosedFailure(t, s)
+
+	// No release-evidence row (nothing was pushed).
+	require.Nil(t, s.findLedgerAppendWithTag("release:pushed_unverified"),
+		"release-evidence must not be appended on refuse-on-dirty (nothing shipped)")
+	require.Nil(t, s.findLedgerAppendWithTag("kind:release-evidence"),
+		"release-evidence must not be appended on refuse-on-dirty (nothing shipped)")
+}
+
+// TestRunMergeToMainHotPath_PostPushFailure_RollsBack — sty_63541aed
+// AC3. After the push has shipped, a post-push failure (here:
+// pprod converge timeout) MUST trigger
+// `git reset --hard <preMergeHEAD>` so the host repo's local main
+// pointer is restored to the SHA the runner captured before
+// merging. Combined with the persisted-close + pushed-unverified
+// evidence row, this is the full AC1+AC3 recovery shape.
+func TestRunMergeToMainHotPath_PostPushFailure_RollsBack(t *testing.T) {
+	s := newHotpathStub(t)
+	seedMergeToMainHappyStubs(t, s, "deadbeef")
+	// Force a post-push failure: pprod never converges.
+	s.pprodCommits = []string{"stale-only"}
+
+	cc := s.client(config.AgentConfig{RepoPath: "/repo", BranchTemplate: "agent-{task_id}-from-{base_sha}"})
+	outcome, err := runMergeToMainTask(t, cc)
+	require.Error(t, err)
+	assert.Equal(t, OutcomeFailure, outcome)
+
+	// AC3: rollback issued against the captured pre-merge HEAD.
+	require.True(t, s.gitCmdMatches("reset", "--hard", defaultPreMergeHEAD),
+		"expected `git reset --hard %s` after post-push failure; got gitCmds=%v",
+		defaultPreMergeHEAD, s.gitCmds)
+
+	// AC1: task closed failure AND pushed_unverified evidence row.
+	assertTaskClosedFailure(t, s)
+	require.NotNil(t, s.findLedgerAppendWithTag("release:pushed_unverified"),
+		"post-push failure must append the pushed_unverified release-evidence row")
 }
 
 // TestVerifyChainPriorWorkSuccess: open work task on the chain

@@ -55,10 +55,19 @@ func (c *Client) LedgerAppend(ctx context.Context, caller Caller, in LedgerAppen
 	tags := append([]string{}, classifiedTags...)
 	tags = append(tags, in.Tags...)
 
+	// sty_63541aed AC2 — explicit StoryID wins; otherwise fall back to
+	// a `story_id:<id>` tag so verdict / evidence rows authored with
+	// the binding expressed only in tags still bind to the story at
+	// the row level (the column the story_close gate reads).
+	storyID := in.StoryID
+	if storyID == "" {
+		storyID = extractStoryIDFromTags(tags)
+	}
+
 	entry := ledger.LedgerEntry{
 		WorkspaceID:              in.WorkspaceID,
 		ProjectID:                in.ResolvedProjectID,
-		StoryID:                  ledger.StringPtr(in.StoryID),
+		StoryID:                  ledger.StringPtr(storyID),
 		Type:                     entryType,
 		Tags:                     tags,
 		Content:                  in.Content,
@@ -99,6 +108,18 @@ func (c *Client) LedgerAppend(ctx context.Context, caller Caller, in LedgerAppen
 // "" when no such tag is present.
 func extractTaskIDFromTags(tags []string) string {
 	const prefix = "task_id:"
+	for _, t := range tags {
+		if strings.HasPrefix(t, prefix) {
+			return strings.TrimPrefix(t, prefix)
+		}
+	}
+	return ""
+}
+
+// extractStoryIDFromTags returns the first `story_id:<id>` tag value
+// or "" when no such tag is present. Mirrors extractTaskIDFromTags.
+func extractStoryIDFromTags(tags []string) string {
+	const prefix = "story_id:"
 	for _, t := range tags {
 		if strings.HasPrefix(t, prefix) {
 			return strings.TrimPrefix(t, prefix)

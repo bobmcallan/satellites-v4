@@ -383,6 +383,49 @@ func TestStoryClose_ResolutionCodeOverridesDefault(t *testing.T) {
 	assert.True(t, foundResolution, "resolution:superseded tag absent: %+v", rows)
 }
 
+// TestStoryClose_PassWithTagOnlyVerdictRow — sty_63541aed AC2. Mints
+// the verdict row through the typed LedgerAppend surface with only a
+// `story_id:<id>` tag (no top-level StoryID input). After the AC2
+// substrate-side fallback populates `entry.StoryID` from the tag, the
+// story_close gate's StoryID-scoped ledger.List finds the row and the
+// close gate passes. This is the integration-shaped test the
+// review-criteria.md asks for ("dispatch a story_review task, capture
+// the verdict row via ledger_get, assert row.story_id == story.id")
+// at the closest deterministic layer (no live agent dispatch needed).
+func TestStoryClose_PassWithTagOnlyVerdictRow(t *testing.T) {
+	// Build a chain that would pass story_close — except we'll add the
+	// verdict row through the LedgerAppend surface (not the ledger
+	// store directly) so the substrate-side fallback runs.
+	opts := happyOpts()
+	opts.AppendVerdictRow = false // don't seed via the raw store
+	f := newStoryCloseFixture(t, "improvement", opts)
+
+	// Append the verdict row through the typed LedgerAppend surface,
+	// passing the story binding ONLY via the tag.
+	_, err := f.c.LedgerAppend(context.Background(), f.caller, LedgerAppendInput{
+		ResolvedProjectID: f.projectID,
+		WorkspaceID:       f.wsID,
+		// StoryID intentionally omitted — the fallback must populate it.
+		EventType: ledger.TypeVerdict,
+		Content:   `{"rationale":"stub"}`,
+		Tags: []string{
+			"kind:verdict",
+			"verdict:pass",
+			"story_id:" + f.storyID,
+			"task_id:" + f.reviewTask.ID,
+		},
+		Durability: ledger.DurabilityDurable,
+		SourceType: ledger.SourceAgent,
+		Now:        f.now.Add(4 * time.Minute),
+	})
+	require.NoError(t, err)
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	assert.Equal(t, "pass", out.Status, "tag-only verdict row must pass the story_close gate after the AC2 fallback; gaps=%+v", out.Gaps)
+	assert.Equal(t, story.StatusDone, out.StoryStatus)
+}
+
 // TestStoryClose_FailDeployBehind — AC5. The fixture authors a
 // kind:release-evidence row with one pushed_sha; the pprod override
 // reports a different commit. The verb surfaces a `deploy:behind`

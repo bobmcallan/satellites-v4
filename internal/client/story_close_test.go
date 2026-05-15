@@ -451,6 +451,63 @@ func TestStoryClose_FailDeployBehind(t *testing.T) {
 	assertStoryUnchanged(t, f)
 }
 
+// TestStoryClose_DeployBehind_AcceptsShortSHA — sty_1e2f7ae7 AC2.
+// pprod's satellites_info returns the running commit truncated to
+// the 8-char short form; the deploy:behind gate must accept it
+// when it is a non-empty prefix of the full release SHA and is
+// >= 7 chars (git's collision-safe floor). The close must walk
+// through to PASS with no deploy:behind gap.
+func TestStoryClose_DeployBehind_AcceptsShortSHA(t *testing.T) {
+	opts := happyOpts()
+	full := "ae12fe781d27c7f677dd8e7479debad6aeb37875"
+	opts.ReleaseEvidenceSHA = full
+	opts.PprodCommitOverride = full[:8] // "ae12fe78"
+	f := newStoryCloseFixture(t, "improvement", opts)
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	assert.Equal(t, "pass", out.Status,
+		"short pprod SHA prefixing the release SHA must pass deploy:behind; gaps=%+v", out.Gaps)
+	for _, g := range out.Gaps {
+		assert.NotEqual(t, "deploy:behind", g.Code,
+			"deploy:behind gap must NOT appear on a converged short-SHA pprod; gap=%+v", g)
+	}
+}
+
+// TestStoryClose_DeployBehind_FullSHAExactMatch — sty_1e2f7ae7 AC2.
+// The non-truncated case still passes (a full-SHA pprod report is
+// trivially a prefix of itself); the new predicate must not
+// regress the existing exact-match acceptance.
+func TestStoryClose_DeployBehind_FullSHAExactMatch(t *testing.T) {
+	opts := happyOpts()
+	full := "ae12fe781d27c7f677dd8e7479debad6aeb37875"
+	opts.ReleaseEvidenceSHA = full
+	opts.PprodCommitOverride = full
+	f := newStoryCloseFixture(t, "improvement", opts)
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	assert.Equal(t, "pass", out.Status, "exact full-SHA match must pass; gaps=%+v", out.Gaps)
+}
+
+// TestStoryClose_DeployBehind_RejectsTooShortPrefix — sty_1e2f7ae7
+// AC2 guard. A pprod commit shorter than 7 chars is collision-prone
+// and MUST surface the deploy:behind gap even when it is a valid
+// prefix of the release SHA.
+func TestStoryClose_DeployBehind_RejectsTooShortPrefix(t *testing.T) {
+	opts := happyOpts()
+	full := "ae12fe781d27c7f677dd8e7479debad6aeb37875"
+	opts.ReleaseEvidenceSHA = full
+	opts.PprodCommitOverride = full[:6] // 6 chars, below floor
+	f := newStoryCloseFixture(t, "improvement", opts)
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	assert.Equal(t, "fail", out.Status)
+	assertGap(t, out.Gaps, "deploy:behind", "")
+	assertStoryUnchanged(t, f)
+}
+
 // TestStoryClose_FailReleaseEvidenceAbsent — AC5 sentinel. With no
 // kind:release-evidence row on the chain, the verb surfaces
 // `release-evidence:absent` (so the operator sees *why* the deploy

@@ -996,3 +996,58 @@ func TestHotPath_RoutesThroughAPIv1(t *testing.T) {
 			"every substrate request must route through /api/v1; got %s", call.Path)
 	}
 }
+
+// TestPollPprodConverge_AcceptsShortSHA — sty_1e2f7ae7 AC1. pprod's
+// satellites_info returns the running commit truncated to the 8-char
+// short form. The converge poll must accept the short SHA when it is
+// a non-empty prefix of the pushed full SHA (>= 7 chars, git's
+// collision-safe floor) on the FIRST poll without retry or timeout.
+func TestPollPprodConverge_AcceptsShortSHA(t *testing.T) {
+	s := newHotpathStub(t)
+	pushedFull := "ae12fe781d27c7f677dd8e7479debad6aeb37875"
+	s.pprodCommits = []string{pushedFull[:8]} // "ae12fe78"
+	cc := s.client(config.AgentConfig{})
+
+	samples, err := cc.pollPprodConverge(context.Background(), pushedFull)
+	require.NoError(t, err)
+	require.Len(t, samples, 1, "converge must accept short SHA on first poll")
+	assert.Equal(t, pushedFull[:8], samples[0].Commit)
+	assert.Equal(t, 1, s.pprodCalls,
+		"converge must accept the short SHA on the first poll, no retry")
+}
+
+// TestPollPprodConverge_RejectsEmpty — sty_1e2f7ae7 AC1 guard. A
+// pprod that returns an empty commit string MUST NOT satisfy
+// convergence (HasPrefix(pushedSHA, "") is true; the empty-string
+// guard prevents that false positive). The poll must loop until
+// timeout and the error must mention the empty last sample.
+func TestPollPprodConverge_RejectsEmpty(t *testing.T) {
+	s := newHotpathStub(t)
+	pushedFull := "ae12fe781d27c7f677dd8e7479debad6aeb37875"
+	s.pprodCommits = []string{"", "", ""}
+	cc := s.client(config.AgentConfig{})
+	cc.pprodPollInterval = time.Millisecond
+	cc.pprodConvergeTimeout = 5 * time.Millisecond
+
+	_, err := cc.pollPprodConverge(context.Background(), pushedFull)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pprod converge timeout")
+	assert.Contains(t, err.Error(), `last=""`,
+		"timeout error must report the last observed (empty) sample")
+}
+
+// TestPollPprodConverge_RejectsTooShortPrefix — sty_1e2f7ae7 AC1
+// guard. A prefix shorter than 7 chars is collision-prone and MUST
+// be rejected even when it is a valid prefix of the pushed SHA.
+func TestPollPprodConverge_RejectsTooShortPrefix(t *testing.T) {
+	s := newHotpathStub(t)
+	pushedFull := "ae12fe781d27c7f677dd8e7479debad6aeb37875"
+	s.pprodCommits = []string{pushedFull[:6]} // 6 chars, below floor
+	cc := s.client(config.AgentConfig{})
+	cc.pprodPollInterval = time.Millisecond
+	cc.pprodConvergeTimeout = 5 * time.Millisecond
+
+	_, err := cc.pollPprodConverge(context.Background(), pushedFull)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pprod converge timeout")
+}

@@ -189,7 +189,7 @@ func (c *Client) StoryClose(ctx context.Context, caller Caller, in StoryCloseInp
 			gaps = append(gaps, StoryCloseGap{Code: "deploy:behind", Detail: "satellites_info error: " + err.Error()})
 			break
 		}
-		if pprodCommit != releaseSHA {
+		if pprodCommit == "" || !strings.HasPrefix(releaseSHA, pprodCommit) || len(pprodCommit) < 7 {
 			gaps = append(gaps, StoryCloseGap{Code: "deploy:behind", Detail: releaseSHA + " != " + pprodCommit})
 		}
 	}

@@ -620,7 +620,7 @@ func (c *claudeClient) pollPprodConverge(ctx context.Context, pushedSHA string) 
 			return samples, fmt.Errorf("pprod converge: satellites_info: %w", err)
 		}
 		samples = append(samples, pprodPollSample{At: time.Now().UTC(), Commit: commit})
-		if commit == pushedSHA {
+		if commit != "" && strings.HasPrefix(pushedSHA, commit) && len(commit) >= 7 {
 			return samples, nil
 		}
 		if time.Now().After(deadline) {

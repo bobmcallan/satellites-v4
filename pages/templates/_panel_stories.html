@@ -199,5 +199,23 @@
       </tbody>
     </table>
   {{end}}
+  {{if gt .Composite.StoryTotal .Composite.StoryPageSize}}
+  <nav class="panel-paginator"
+       data-testid="panel-stories-paginator"
+       aria-label="Stories pagination">
+    {{if .Composite.StoryHasPrev}}
+      <a class="panel-paginator-link"
+         data-testid="panel-stories-prev"
+         href="?stories_page={{.Composite.StoryPrevPage}}&amp;stories_page_size={{.Composite.StoryPageSize}}">prev</a>
+    {{end}}
+    <span class="panel-paginator-indicator"
+          data-testid="panel-stories-page-indicator">page {{.Composite.StoryPage}} of {{.Composite.StoryPageCount}}</span>
+    {{if .Composite.StoryHasNext}}
+      <a class="panel-paginator-link"
+         data-testid="panel-stories-next"
+         href="?stories_page={{.Composite.StoryNextPage}}&amp;stories_page_size={{.Composite.StoryPageSize}}">next</a>
+    {{end}}
+  </nav>
+  {{end}}
 </div>
 {{end}}

@@ -27,6 +27,11 @@ const (
 	projectWorkspaceDefaultLimit = 25
 	projectWorkspaceMaxLimit     = 200
 	projectWorkspaceListLimit    = 200
+	// projectWorkspacePageSize is the default page size for the stories
+	// panel (sty_ca2e686b). The non-story sections continue to honour
+	// projectWorkspaceDefaultLimit; the rename was deliberately not done
+	// per pr_no_unrequested_compat.
+	projectWorkspacePageSize = 50
 )
 
 // projectWorkspaceComposite is the view-model for the project_detail page.
@@ -46,6 +51,18 @@ type projectWorkspaceComposite struct {
 	DocTotal        int
 	ContractsTotal  int
 	LedgerTotal     int
+	// Stories-panel pagination view-model (sty_ca2e686b). StoryPage is
+	// the current 1-indexed page; StoryPageSize is the active window
+	// size; StoryPageCount is ceil(StoryTotal/StoryPageSize). The Has*
+	// booleans gate the prev/next anchors; the *Page ints supply the
+	// link href without needing template arithmetic helpers.
+	StoryPage      int
+	StoryPageSize  int
+	StoryPageCount int
+	StoryHasPrev   bool
+	StoryHasNext   bool
+	StoryPrevPage  int
+	StoryNextPage  int
 }
 
 // changelogCard is the per-row view-model for the Changelog panel.
@@ -83,22 +100,51 @@ type storyCard struct {
 	TaskChain          []taskChainCard
 }
 
-// projectWorkspaceFilters carries the per-section row cap.
+// projectWorkspaceFilters carries the per-section row cap and the
+// stories-panel page window. Limit governs the non-story sections
+// (documents, contracts, changelog, ledger); Page + PageSize drive the
+// stories paginator (sty_ca2e686b). The story window is intentionally
+// independent of Limit so the existing `?limit=` semantics for the
+// other panels stay untouched.
 type projectWorkspaceFilters struct {
-	Limit int
+	Limit    int
+	Page     int
+	PageSize int
 }
 
-// parseProjectWorkspaceFilters reads `?limit=` from the request, clamping
-// to [1, projectWorkspaceMaxLimit].
+// parseProjectWorkspaceFilters reads the query string. `?limit=` is
+// clamped to [1, projectWorkspaceMaxLimit] as before. The new
+// `?stories_page=` and `?stories_page_size=` (sty_ca2e686b) drive the
+// stories-panel pagination: Page defaults to 1 (coerced from <1);
+// PageSize defaults to projectWorkspacePageSize and is clamped to
+// [1, projectWorkspaceListLimit] so an out-of-band value never reaches
+// the store.
 func parseProjectWorkspaceFilters(r *http.Request) projectWorkspaceFilters {
 	q := r.URL.Query()
-	f := projectWorkspaceFilters{Limit: projectWorkspaceDefaultLimit}
+	f := projectWorkspaceFilters{
+		Limit:    projectWorkspaceDefaultLimit,
+		Page:     1,
+		PageSize: projectWorkspacePageSize,
+	}
 	if raw := strings.TrimSpace(q.Get("limit")); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
 			if n > projectWorkspaceMaxLimit {
 				n = projectWorkspaceMaxLimit
 			}
 			f.Limit = n
+		}
+	}
+	if raw := strings.TrimSpace(q.Get("stories_page")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			f.Page = n
+		}
+	}
+	if raw := strings.TrimSpace(q.Get("stories_page_size")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			if n > projectWorkspaceListLimit {
+				n = projectWorkspaceListLimit
+			}
+			f.PageSize = n
 		}
 	}
 	return f
@@ -114,10 +160,36 @@ func buildProjectWorkspaceComposite(ctx context.Context, stories story.Store, do
 	if f.Limit <= 0 {
 		f.Limit = projectWorkspaceDefaultLimit
 	}
+	if f.Page <= 0 {
+		f.Page = 1
+	}
+	if f.PageSize <= 0 {
+		f.PageSize = projectWorkspacePageSize
+	}
 	out := projectWorkspaceComposite{Filters: f}
 
-	out.Stories = collectStoryCards(ctx, stories, tasks, led, projectID, f, memberships)
-	out.StoryTotal = len(out.Stories)
+	out.Stories, out.StoryTotal = collectStoryCards(ctx, stories, tasks, led, projectID, f, memberships)
+	// sty_ca2e686b: paginator view-model. StoryTotal is the pre-window
+	// count from collectStoryCards (capped at projectWorkspaceListLimit
+	// = 200; a project with >200 stories will undercount until a future
+	// story swaps the cardinality source for a stores.Count call —
+	// option (b) in plan.md, deferred per pr_no_unrequested_compat).
+	out.StoryPage = f.Page
+	out.StoryPageSize = f.PageSize
+	if out.StoryPageSize > 0 {
+		out.StoryPageCount = (out.StoryTotal + out.StoryPageSize - 1) / out.StoryPageSize
+	}
+	if out.StoryPageCount < 1 {
+		out.StoryPageCount = 1
+	}
+	out.StoryHasPrev = out.StoryPage > 1
+	out.StoryHasNext = out.StoryPage < out.StoryPageCount
+	if out.StoryHasPrev {
+		out.StoryPrevPage = out.StoryPage - 1
+	}
+	if out.StoryHasNext {
+		out.StoryNextPage = out.StoryPage + 1
+	}
 	// sty_a03449d1: each storyCard's TaskChain is populated from the
 	// task store so the panel renders the live task chain. Empty
 	// when no tasks exist (the chain is the conversation log; an
@@ -237,24 +309,45 @@ func collectRecentLedger(ctx context.Context, led ledger.Store, projectID string
 	return out
 }
 
-// collectStoryCards lists project-scoped stories, sorts by UpdatedAt desc,
-// and caps at f.Limit. Returns an empty slice when the store is nil or
-// errors — the page still renders. Filtering lives on the dedicated
-// /projects/<id>/stories page (story_59b11d8c).
+// collectStoryCards lists project-scoped stories, sorts by UpdatedAt
+// desc, and returns the page window plus the pre-window total. The
+// total is measured before paging so the panel header can render the
+// true substrate count (sty_ca2e686b) — not the page-size lie that
+// shipped pre-fix.
+//
+// NOTE: total is bounded by projectWorkspaceListLimit (=200); projects
+// with >200 stories undercount. Deferred per pr_no_unrequested_compat;
+// see plan.md option (b) for the follow-up that adds a stores.Count.
 //
 // Each card's TaskChain is populated when the tasks store is non-nil
 // so the SSR template can render the per-story chain inline.
-func collectStoryCards(ctx context.Context, stories story.Store, tasks task.Store, led ledger.Store, projectID string, f projectWorkspaceFilters, memberships []string) []storyCard {
+func collectStoryCards(ctx context.Context, stories story.Store, tasks task.Store, led ledger.Store, projectID string, f projectWorkspaceFilters, memberships []string) ([]storyCard, int) {
 	if stories == nil || projectID == "" {
-		return []storyCard{}
+		return []storyCard{}, 0
 	}
 	rows, err := stories.List(ctx, projectID, story.ListOptions{Limit: projectWorkspaceListLimit}, memberships)
 	if err != nil {
-		return []storyCard{}
+		return []storyCard{}, 0
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].UpdatedAt.After(rows[j].UpdatedAt) })
-	if len(rows) > f.Limit {
-		rows = rows[:f.Limit]
+	total := len(rows)
+	pageSize := f.PageSize
+	if pageSize <= 0 {
+		pageSize = projectWorkspacePageSize
+	}
+	page := f.Page
+	if page <= 0 {
+		page = 1
+	}
+	start := (page - 1) * pageSize
+	if start >= total {
+		rows = nil
+	} else {
+		end := start + pageSize
+		if end > total {
+			end = total
+		}
+		rows = rows[start:end]
 	}
 	verdicts := verdictExcerptsByTask(ctx, led, projectID, memberships)
 	out := make([]storyCard, 0, len(rows))
@@ -265,7 +358,7 @@ func collectStoryCards(ctx context.Context, stories story.Store, tasks task.Stor
 		}
 		out = append(out, card)
 	}
-	return out
+	return out, total
 }
 
 // taskChainCardsForStory pulls the story's tasks and projects them to

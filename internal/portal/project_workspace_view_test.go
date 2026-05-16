@@ -208,13 +208,74 @@ func TestProjectWorkspace_LimitCapsEachSection(t *testing.T) {
 		seedDoc(t, docs, "proj_a", document.TypeArtifact, "d"+strconv.Itoa(i), "x", now.Add(time.Duration(i)*time.Minute))
 	}
 
-	got := buildProjectWorkspaceComposite(context.Background(), stories, docs, nil, nil, nil, nil, "proj_a", projectWorkspaceFilters{Limit: 5}, nil, false)
+	// sty_ca2e686b: stories now use Page/PageSize independently of
+	// Limit. Limit still caps the non-story sections; stories are
+	// capped by PageSize.
+	got := buildProjectWorkspaceComposite(context.Background(), stories, docs, nil, nil, nil, nil, "proj_a", projectWorkspaceFilters{Limit: 5, Page: 1, PageSize: 5}, nil, false)
 
 	if len(got.Stories) != 5 {
-		t.Errorf("Stories under limit=5 = %d, want 5", len(got.Stories))
+		t.Errorf("Stories under PageSize=5 = %d, want 5", len(got.Stories))
 	}
 	if len(got.Documents) != 5 {
 		t.Errorf("Documents under limit=5 = %d, want 5", len(got.Documents))
+	}
+}
+
+// TestProjectWorkspace_StoryTotalReflectsFullCountBeyondPageSize covers
+// sty_ca2e686b AC1 + AC2: seeding more stories than the default page
+// size must surface the substrate-side count via StoryTotal — the bug
+// was that StoryTotal collapsed to len(out.Stories) (the page window).
+func TestProjectWorkspace_StoryTotalReflectsFullCountBeyondPageSize(t *testing.T) {
+	t.Parallel()
+	led := ledger.NewMemoryStore()
+	stories := story.NewMemoryStore(led)
+
+	now := time.Now().UTC()
+	for i := 0; i < 60; i++ {
+		seedStory(t, stories, "proj_a", "s"+strconv.Itoa(i), "x", now.Add(time.Duration(i)*time.Minute))
+	}
+
+	got := buildProjectWorkspaceComposite(context.Background(), stories, nil, nil, nil, nil, nil, "proj_a", projectWorkspaceFilters{Page: 1, PageSize: projectWorkspacePageSize}, nil, false)
+
+	if got.StoryTotal != 60 {
+		t.Errorf("StoryTotal = %d, want 60 (pre-truncate substrate count)", got.StoryTotal)
+	}
+	if len(got.Stories) != projectWorkspacePageSize {
+		t.Errorf("len(Stories) = %d, want %d (page window)", len(got.Stories), projectWorkspacePageSize)
+	}
+}
+
+// TestProjectWorkspace_StoryPaginationReturnsCorrectSlice covers
+// sty_ca2e686b AC3 + AC4: page=2 must return the second window of
+// stories in UpdatedAt-desc order, not the first.
+func TestProjectWorkspace_StoryPaginationReturnsCorrectSlice(t *testing.T) {
+	t.Parallel()
+	led := ledger.NewMemoryStore()
+	stories := story.NewMemoryStore(led)
+
+	now := time.Now().UTC()
+	for i := 0; i < 60; i++ {
+		seedStory(t, stories, "proj_a", "s"+strconv.Itoa(i), "x", now.Add(time.Duration(i)*time.Minute))
+	}
+
+	got := buildProjectWorkspaceComposite(context.Background(), stories, nil, nil, nil, nil, nil, "proj_a", projectWorkspaceFilters{Page: 2, PageSize: 50}, nil, false)
+
+	if len(got.Stories) != 10 {
+		t.Fatalf("len(Stories) page=2 = %d, want 10", len(got.Stories))
+	}
+	// UpdatedAt desc: s59 newest. Page 1 covers s59..s10, so page 2
+	// starts at s9.
+	if got.Stories[0].Title != "s9" {
+		t.Errorf("Stories[0].Title page=2 = %q, want %q (UpdatedAt-desc 51st row)", got.Stories[0].Title, "s9")
+	}
+	if got.StoryTotal != 60 {
+		t.Errorf("StoryTotal page=2 = %d, want 60", got.StoryTotal)
+	}
+	if got.StoryPage != 2 || got.StoryPageSize != 50 || got.StoryPageCount != 2 {
+		t.Errorf("paginator view-model = page %d / size %d / count %d, want 2/50/2", got.StoryPage, got.StoryPageSize, got.StoryPageCount)
+	}
+	if !got.StoryHasPrev || got.StoryHasNext {
+		t.Errorf("page=2 of 2 should have prev only; got HasPrev=%v HasNext=%v", got.StoryHasPrev, got.StoryHasNext)
 	}
 }
 
@@ -243,6 +304,40 @@ func TestProjectWorkspace_ParseFiltersClampsLimit(t *testing.T) {
 		got := parseProjectWorkspaceFilters(req)
 		if got.Limit != tc.want {
 			t.Errorf("query %q: Limit = %d, want %d", tc.raw, got.Limit, tc.want)
+		}
+	}
+}
+
+// TestProjectWorkspace_ParseFiltersClampsStoriesPage covers sty_ca2e686b
+// AC4: stories_page and stories_page_size query parameters must parse
+// with defaults, lower-bound coercion, and PageSize clamping to
+// projectWorkspaceListLimit.
+func TestProjectWorkspace_ParseFiltersClampsStoriesPage(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		raw          string
+		wantPage     int
+		wantPageSize int
+	}{
+		{"", 1, projectWorkspacePageSize},
+		{"stories_page=", 1, projectWorkspacePageSize},
+		{"stories_page=0", 1, projectWorkspacePageSize},
+		{"stories_page=5", 5, projectWorkspacePageSize},
+		{"stories_page=notanumber", 1, projectWorkspacePageSize},
+		{"stories_page_size=", 1, projectWorkspacePageSize},
+		{"stories_page_size=0", 1, projectWorkspacePageSize},
+		{"stories_page_size=99999", 1, projectWorkspaceListLimit},
+		{"stories_page_size=10", 1, 10},
+		{"stories_page=3&stories_page_size=25", 3, 25},
+	}
+	for _, tc := range tests {
+		req := httptest.NewRequest(http.MethodGet, "/projects/x?"+tc.raw, nil)
+		got := parseProjectWorkspaceFilters(req)
+		if got.Page != tc.wantPage {
+			t.Errorf("query %q: Page = %d, want %d", tc.raw, got.Page, tc.wantPage)
+		}
+		if got.PageSize != tc.wantPageSize {
+			t.Errorf("query %q: PageSize = %d, want %d", tc.raw, got.PageSize, tc.wantPageSize)
 		}
 	}
 }
@@ -403,6 +498,83 @@ func TestProjectWorkspaceRender_RowsRenderForSeededRows(t *testing.T) {
 		if mustNot != `/projects//stories"` && strings.Contains(body, mustNot) {
 			t.Errorf("body should not contain %q after sty_6300fb27/sty_f4b87ea3", mustNot)
 		}
+	}
+}
+
+// TestProjectWorkspaceRender_StoriesPaginatorMarkup covers sty_ca2e686b
+// AC3 + AC6: the paginator block renders when StoryTotal > PageSize and
+// is absent when not; the panel-stories-count testid is preserved on
+// the chip.
+func TestProjectWorkspaceRender_StoriesPaginatorMarkup(t *testing.T) {
+	t.Parallel()
+
+	// >50 stories: paginator must render with next link and indicator;
+	// count chip reports the substrate total (60), not the page size.
+	recMany := renderWorkspace(t, "", func(ctx context.Context, projectID string, stories *story.MemoryStore, docs *document.MemoryStore) {
+		now := time.Now().UTC()
+		for i := 0; i < 60; i++ {
+			_, _ = stories.Create(ctx, story.Story{
+				ProjectID: projectID, Title: "s" + strconv.Itoa(i), Status: "backlog",
+			}, now.Add(time.Duration(i)*time.Minute))
+		}
+	})
+	if recMany.Code != http.StatusOK {
+		t.Fatalf("status = %d", recMany.Code)
+	}
+	bodyMany := recMany.Body.String()
+	for _, want := range []string{
+		`data-testid="panel-stories-paginator"`,
+		`data-testid="panel-stories-page-indicator"`,
+		`data-testid="panel-stories-next"`,
+		`page 1 of 2`,
+		`data-testid="panel-stories-count">(60)`,
+	} {
+		if !strings.Contains(bodyMany, want) {
+			t.Errorf("body (60 stories) missing %q", want)
+		}
+	}
+	if strings.Contains(bodyMany, `data-testid="panel-stories-prev"`) {
+		t.Errorf("page 1 should not render a prev link")
+	}
+
+	// page 2: prev link must appear; next must not.
+	recPage2 := renderWorkspace(t, "stories_page=2", func(ctx context.Context, projectID string, stories *story.MemoryStore, docs *document.MemoryStore) {
+		now := time.Now().UTC()
+		for i := 0; i < 60; i++ {
+			_, _ = stories.Create(ctx, story.Story{
+				ProjectID: projectID, Title: "s" + strconv.Itoa(i), Status: "backlog",
+			}, now.Add(time.Duration(i)*time.Minute))
+		}
+	})
+	bodyPage2 := recPage2.Body.String()
+	for _, want := range []string{
+		`data-testid="panel-stories-paginator"`,
+		`data-testid="panel-stories-prev"`,
+		`page 2 of 2`,
+	} {
+		if !strings.Contains(bodyPage2, want) {
+			t.Errorf("body page=2 missing %q", want)
+		}
+	}
+	if strings.Contains(bodyPage2, `data-testid="panel-stories-next"`) {
+		t.Errorf("page 2 of 2 should not render a next link")
+	}
+
+	// <=PageSize stories: paginator must NOT render. Use a small seed.
+	recFew := renderWorkspace(t, "", func(ctx context.Context, projectID string, stories *story.MemoryStore, docs *document.MemoryStore) {
+		now := time.Now().UTC()
+		for i := 0; i < 3; i++ {
+			_, _ = stories.Create(ctx, story.Story{
+				ProjectID: projectID, Title: "s" + strconv.Itoa(i), Status: "backlog",
+			}, now)
+		}
+	})
+	bodyFew := recFew.Body.String()
+	if strings.Contains(bodyFew, `data-testid="panel-stories-paginator"`) {
+		t.Errorf("paginator must not render when StoryTotal <= PageSize")
+	}
+	if !strings.Contains(bodyFew, `data-testid="panel-stories-count">(3)`) {
+		t.Errorf("count chip should report substrate total (3)")
 	}
 }
 

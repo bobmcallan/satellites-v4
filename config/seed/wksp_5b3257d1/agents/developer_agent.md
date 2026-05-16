@@ -102,6 +102,52 @@ Once the orchestrator dispatches this agent on a task:
    contract requires one) is the orchestrator's next plan step.
    Do not push, merge, or close the story.
 
+## Develop close-evidence requirement — `files_changed` block
+
+When closing a `contract:develop` task, the develop close evidence
+row (`kind:evidence, phase:develop`) MUST carry a structured
+`files_changed` block in addition to the markdown content. The
+reviewer rubric uses this to apply mechanical AC checks
+(e.g. files-changed count non-zero) without grepping prose.
+
+Resolve the block at close time as follows:
+
+1. **Resolve `<base>` from the branch suffix.** The work branch is
+   named `client-<task_id>-from-<base_sha>` per the worktree
+   template. Extract `<base_sha>` from the current branch name
+   (e.g. `git rev-parse --abbrev-ref HEAD` → split on `-from-`).
+2. **Run `git diff --name-status <base>..HEAD` inside the
+   worktree.** The output lists one file per line, status letter
+   first then a tab and the path.
+3. **Parse status letters into three arrays:**
+   - `A` → `added`
+   - `M` → `updated`
+   - `D` → `deleted`
+   - `R<num>` (rename) → `updated` (use the new path; the rename
+     pair is `R<score>\t<old>\t<new>` — capture only `<new>`)
+4. **Pass the JSON payload via `--structured` on the close-evidence
+   `ledger append`:**
+
+   ```bash
+   satellites-client ledger append \
+     --project-id <pid> \
+     --type evidence \
+     --content "..." \
+     --tags "task_id:<task_id>,kind:evidence,phase:develop" \
+     --structured '{"files_changed":{"added":["a.go"],"updated":["b.go"],"deleted":[]}}'
+   ```
+
+   Both keys (`files_changed`, `tokens_used`) are independent and
+   may co-exist on one row. The `tokens_used` block is populated
+   automatically by the dispatcher's stream-json aggregator on the
+   `kind:agent-execute-evidence` row — develop close evidence rows
+   only need to carry `files_changed`.
+
+This block is OPTIONAL on the schema (backwards-compat). Phases
+that don't touch files — plan, review, commit, merge_to_main —
+MUST omit `files_changed` from their close-evidence rows. The
+reviewer treats absence as backwards-compat, not a reject.
+
 ## Out of scope
 
 - `git push` — that belongs to the **releaser** role.

@@ -160,6 +160,107 @@ func TestClaudeClient_Execute_StreamJSON_RealtimeCapture(t *testing.T) {
 		"per-task log missing terminal result event: %s", logStr)
 }
 
+// TestClaudeClient_Execute_StreamJSON_TokensUsedOnEvidence pins
+// sty_af701a67 AC4: when the dispatched claude subprocess emits a
+// terminal stream-json `result` event with `usage:{input_tokens,
+// output_tokens}`, the worker's aggregateUsage helper folds the
+// values into a `tokens_used:{input,output,total}` block carried on
+// the kind:agent-execute-evidence ledger row's Structured payload.
+//
+// Uses the same stub claude script that
+// TestClaudeClient_Execute_StreamJSON_RealtimeCapture exercises
+// (input_tokens=10, output_tokens=20 → total=30). The test captures
+// the /api/v1/ledger/append request body the dispatcher posts and
+// asserts the structured field decodes to the expected shape.
+func TestClaudeClient_Execute_StreamJSON_TokensUsedOnEvidence(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("stub claude is a posix shell script")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repoRoot := initGitRepo(t)
+	stubPath, _ := writeStubClaudeStreamJSON(t)
+	getCalls, apiURL, apiClose := stubAPI(t, "task_tokens_used")
+	defer apiClose()
+
+	worktreeRoot := filepath.Join(t.TempDir(), "wt")
+	cfg := config.AgentConfig{
+		SpawnMCPURL:      apiURL + "/mcp",
+		AuthToken:        "tok-tokens",
+		ExecuteTimeout:   30 * time.Second,
+		RepoPath:         repoRoot,
+		WorktreeRoot:     worktreeRoot,
+		BranchTemplate:   "agent-{task_id}-from-{base_sha}",
+		ClaudeBinaryPath: stubPath,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	api := cliremote.New(apiURL, "tok-tokens", nil)
+	outcome, err := worker.RunDispatched(ctx, cfg, nil, api, worker.TaskEnvelope{
+		ID: "task_tokens_used", WorkspaceID: "wksp_t", ProjectID: "proj_t",
+	}, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, worker.OutcomeSuccess, outcome)
+
+	// Locate the /api/v1/ledger/append call that carried the
+	// kind:agent-execute-evidence tag.
+	var found bool
+	for _, c := range getCalls() {
+		if c.Path != "/api/v1/ledger/append" {
+			continue
+		}
+		tags, _ := c.Body["tags"].([]any)
+		isExecuteEvidence := false
+		for _, tag := range tags {
+			if s, _ := tag.(string); s == "kind:agent-execute-evidence" {
+				isExecuteEvidence = true
+				break
+			}
+		}
+		if !isExecuteEvidence {
+			continue
+		}
+		// The dispatcher sends the structured field as a raw JSON object
+		// via json.RawMessage so the server stores raw JSON bytes (the
+		// canonical kind:llm-usage shape under internal/ledger/derivations.go).
+		// In c.Body parsed via map[string]any the inline object lands as
+		// map[string]any, not a base64-encoded string.
+		structuredObj, ok := c.Body["structured"].(map[string]any)
+		require.True(t, ok, "evidence row structured must be a JSON object; body=%s", c.RawBody)
+		tu, ok := structuredObj["tokens_used"].(map[string]any)
+		require.True(t, ok, "structured payload missing tokens_used key; got=%v", structuredObj)
+		payload := struct {
+			TokensUsed struct {
+				Input  int `json:"input"`
+				Output int `json:"output"`
+				Total  int `json:"total"`
+			} `json:"tokens_used"`
+		}{}
+		toInt := func(v any) int {
+			if f, ok := v.(float64); ok {
+				return int(f)
+			}
+			return 0
+		}
+		payload.TokensUsed.Input = toInt(tu["input"])
+		payload.TokensUsed.Output = toInt(tu["output"])
+		payload.TokensUsed.Total = toInt(tu["total"])
+		assert.Equal(t, 10, payload.TokensUsed.Input,
+			"stub terminal usage.input_tokens=10 — aggregator must surface it")
+		assert.Equal(t, 20, payload.TokensUsed.Output,
+			"stub terminal usage.output_tokens=20 — aggregator must surface it")
+		assert.Equal(t, 30, payload.TokensUsed.Total,
+			"total must equal input+output (AC2)")
+		found = true
+		break
+	}
+	require.True(t, found, "no kind:agent-execute-evidence ledger_append captured")
+}
+
 // writeStubClaudeStreamJSON writes a posix shell script that captures
 // argv (same shape as writeStubClaude) AND emits a four-line JSONL
 // sequence with sleeps between lines so the test can observe the log

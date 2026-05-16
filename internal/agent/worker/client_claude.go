@@ -36,6 +36,7 @@
 package worker
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -685,8 +686,22 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 		exitCode = cmd.ProcessState.ExitCode()
 	}
 
+	// sty_af701a67 AC4 — aggregate stream-json usage events from the
+	// per-worktree log into a `tokens_used:{input,output,total}` block
+	// on the close evidence row. Aggregator returns zeros (and the
+	// block is omitted) when the log is empty or unparseable, so the
+	// evidence path stays robust on malformed input.
+	var structured []byte
+	usage, aggErr := aggregateUsage(logPath)
+	if aggErr != nil && c.logger != nil {
+		c.logger.Warn().Str("task_id", task.ID).Str("error", aggErr.Error()).Msg("aggregateUsage failed")
+	}
+	if usage.Total > 0 {
+		structured, _ = json.Marshal(map[string]any{"tokens_used": usage})
+	}
+
 	// Step 7: evidence row + outcome.
-	evidenceErr := c.appendExecuteEvidence(context.Background(), task, ti, prompt, exitCode, logPath)
+	evidenceErr := c.appendExecuteEvidence(context.Background(), task, ti, prompt, exitCode, logPath, structured)
 	if evidenceErr != nil && c.logger != nil {
 		c.logger.Warn().Str("task_id", task.ID).Str("error", evidenceErr.Error()).Msg("agent-execute-evidence row failed")
 	}
@@ -704,7 +719,12 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 // row that records the orchestrator-side metadata for the dispatch:
 // prompt sent (literal — small), exit code, log path. Routes through
 // /api/v1/ledger/append.
-func (c *claudeClient) appendExecuteEvidence(ctx context.Context, env TaskEnvelope, ti taskInfo, prompt string, exitCode int, logPath string) error {
+//
+// sty_af701a67 AC4 — `structured` carries the optional metadata block
+// (today: `tokens_used`). Nil omits the field from the wire payload so
+// rows without aggregated usage stay byte-identical to the pre-story
+// shape (backwards-compat per AC1/AC2).
+func (c *claudeClient) appendExecuteEvidence(ctx context.Context, env TaskEnvelope, ti taskInfo, prompt string, exitCode int, logPath string, structured []byte) error {
 	content := fmt.Sprintf(
 		"# agent-execute-evidence\n\ntask=%s\nstory=%s\nagent_id=%s\naction=%s\nworktree=%s\nlog=%s\nexit_code=%d\n\n## prompt\n\n%s\n",
 		env.ID, ti.StoryID, ti.AgentID, ti.Action,
@@ -722,5 +742,113 @@ func (c *claudeClient) appendExecuteEvidence(ctx context.Context, env TaskEnvelo
 	if ti.StoryID != "" {
 		args["story_id"] = ti.StoryID
 	}
+	if len(structured) > 0 {
+		// json.RawMessage marshals as inline JSON value, not a base64-
+		// encoded string. The server's handleLedgerAppend captures the
+		// field with json.RawMessage too, so the stored Structured
+		// []byte equals the raw JSON object bytes — the canonical shape
+		// kind:llm-usage rows (internal/ledger/derivations.go) use.
+		args["structured"] = json.RawMessage(structured)
+	}
 	return c.api.Call(ctx, "ledger_append", args, nil)
+}
+
+// tokensUsed is the JSON shape for the `tokens_used` block on the
+// kind:agent-execute-evidence row's Structured payload. Per AC2:
+// `total == input + output`. The struct's JSON keys carry the
+// documented snake_case shape the reviewer rubric reads.
+type tokensUsed struct {
+	Input  int `json:"input"`
+	Output int `json:"output"`
+	Total  int `json:"total"`
+}
+
+// aggregateUsage parses <worktree>/.satellites-agent.log as JSONL and
+// returns the aggregated token usage for the dispatch. The log is the
+// stream-json stdout from the dispatched claude subprocess (sty_ee04430b).
+//
+// Resolution order (per plan.md AC4):
+//   - Prefer the terminal `{"type":"result","usage":{...}}` event when
+//     present — that carries the canonical run totals.
+//   - Fall back to summing `assistant.message.usage.{input_tokens,
+//     output_tokens}` deltas when no terminal result is observed (the
+//     subprocess crashed mid-stream or the log was truncated).
+//
+// Returns zeros with err=nil on empty/missing logs so the caller omits
+// the structured block on a no-data dispatch (the heavy path covers
+// claude binaries that don't emit stream-json; see
+// pr_no_unrequested_compat — no fallback estimator). Malformed lines
+// are skipped, not fatal — the log can include framing output from the
+// spawn that isn't valid stream-json.
+func aggregateUsage(logPath string) (tokensUsed, error) {
+	f, err := os.Open(logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return tokensUsed{}, nil
+		}
+		return tokensUsed{}, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	// stream-json events can be large (especially tool_result + final
+	// result payloads). Default Scanner buffer (64KB) is too small.
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+
+	var (
+		resultInput, resultOutput int
+		sawResult                 bool
+		deltaInput, deltaOutput   int
+	)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var ev struct {
+			Type    string `json:"type"`
+			Subtype string `json:"subtype"`
+			Usage   struct {
+				InputTokens  int `json:"input_tokens"`
+				OutputTokens int `json:"output_tokens"`
+			} `json:"usage"`
+			Message struct {
+				Usage struct {
+					InputTokens  int `json:"input_tokens"`
+					OutputTokens int `json:"output_tokens"`
+				} `json:"usage"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			continue
+		}
+		switch ev.Type {
+		case "result":
+			if ev.Usage.InputTokens > 0 || ev.Usage.OutputTokens > 0 {
+				resultInput = ev.Usage.InputTokens
+				resultOutput = ev.Usage.OutputTokens
+				sawResult = true
+			}
+		case "assistant":
+			deltaInput += ev.Message.Usage.InputTokens
+			deltaOutput += ev.Message.Usage.OutputTokens
+		}
+	}
+	// scanner.Err() — surface non-EOF read errors but still return the
+	// best-effort aggregation so partial logs are usable.
+	if err := scanner.Err(); err != nil {
+		// Continue — partial aggregation is more useful than zero.
+		_ = err
+	}
+
+	var u tokensUsed
+	if sawResult {
+		u.Input = resultInput
+		u.Output = resultOutput
+	} else {
+		u.Input = deltaInput
+		u.Output = deltaOutput
+	}
+	u.Total = u.Input + u.Output
+	return u, nil
 }

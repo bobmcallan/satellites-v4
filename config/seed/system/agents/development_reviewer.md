@@ -97,6 +97,34 @@ The exception: when a cited row's content does NOT actually
 satisfy the rubric, reject for the missing CONTENT, not for the
 citation form.
 
+#### 7a. Optional structured metadata blocks
+
+The develop close evidence row MAY carry two optional structured
+blocks in its `Structured` JSON payload (sty_af701a67):
+
+- `files_changed` — `{"added":[...],"updated":[...],"deleted":[...]}`
+  — paths derived from `git diff --name-status <base>..HEAD` on
+  the work branch. Authored by the developer agent at close time.
+- `tokens_used` — `{"input":int,"output":int,"total":int}` —
+  aggregated by the dispatcher from the per-task stream-json log.
+  Lands on the `kind:agent-execute-evidence` row, not the develop
+  close row, but both surfaces reach the reviewer via the same
+  evidence packet. `total == input + output` is invariant.
+
+**When present, apply mechanical AC checks:**
+
+- `len(files_changed.added) + .updated + .deleted` matches the
+  AC's claimed scope (e.g. AC1's "files-changed count is
+  non-zero").
+- `tokens_used.total > 0` confirms the dispatch ran a real
+  subprocess (no zero-token "success" from a stubbed binary).
+
+**Absence is NOT a reject** — both blocks are backwards-compat
+optional. Pre-sty_af701a67 evidence rows omit them; new rows
+that don't touch files (plan, review, commit, merge_to_main)
+also omit `files_changed`. Fall back to prose parsing on rows
+missing the blocks.
+
 ### 8. Substrate evolution and rubric updates
 
 Cite **pr_mandate_configuration_over_code**. When the develop

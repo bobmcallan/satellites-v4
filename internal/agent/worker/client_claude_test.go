@@ -391,7 +391,7 @@ func TestFetchHelpers_RouteThroughAPIv1(t *testing.T) {
 					context.Background(),
 					TaskEnvelope{ID: "task_x", ProjectID: "proj_p"},
 					taskInfo{StoryID: "sty_a", AgentID: "doc_dev", Action: "contract:develop"},
-					"prompt-body", 0, "/worktree/.log",
+					"prompt-body", 0, "/worktree/.log", nil,
 				)
 			},
 			assert: func(t *testing.T, got any) {
@@ -535,4 +535,90 @@ func TestContractInfo_DispatchClass(t *testing.T) {
 			assert.Equal(t, tc.want, ci.dispatchClass())
 		})
 	}
+}
+
+// TestAggregateUsage covers the four resolution paths for the
+// stream-json log aggregator (sty_af701a67 AC4):
+//
+//   - terminal result event wins over delta sums.
+//   - assistant.message.usage deltas fall back when no terminal result.
+//   - malformed lines are skipped, not fatal.
+//   - empty / missing file returns zeros with err=nil.
+//
+// total == input + output is asserted on every populated case (AC2).
+func TestAggregateUsage(t *testing.T) {
+	t.Run("terminal_result_wins", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "log.jsonl")
+		body := strings.Join([]string{
+			`{"type":"system","subtype":"init","session_id":"s1"}`,
+			`{"type":"assistant","message":{"usage":{"input_tokens":3,"output_tokens":5}}}`,
+			`{"type":"assistant","message":{"usage":{"input_tokens":7,"output_tokens":11}}}`,
+			`{"type":"result","subtype":"success","usage":{"input_tokens":100,"output_tokens":200}}`,
+		}, "\n") + "\n"
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+
+		got, err := aggregateUsage(path)
+		require.NoError(t, err)
+		assert.Equal(t, 100, got.Input)
+		assert.Equal(t, 200, got.Output)
+		assert.Equal(t, 300, got.Total)
+		assert.Equal(t, got.Input+got.Output, got.Total, "total must equal input+output (AC2)")
+	})
+
+	t.Run("delta_sum_fallback", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "log.jsonl")
+		body := strings.Join([]string{
+			`{"type":"system","subtype":"init","session_id":"s1"}`,
+			`{"type":"assistant","message":{"usage":{"input_tokens":4,"output_tokens":6}}}`,
+			`{"type":"user","message":{"content":[{"type":"tool_result"}]}}`,
+			`{"type":"assistant","message":{"usage":{"input_tokens":2,"output_tokens":3}}}`,
+		}, "\n") + "\n"
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+
+		got, err := aggregateUsage(path)
+		require.NoError(t, err)
+		assert.Equal(t, 6, got.Input)
+		assert.Equal(t, 9, got.Output)
+		assert.Equal(t, 15, got.Total)
+		assert.Equal(t, got.Input+got.Output, got.Total)
+	})
+
+	t.Run("malformed_lines_skipped", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "log.jsonl")
+		body := strings.Join([]string{
+			`not json at all`,
+			`{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":2}}}`,
+			`{not valid`,
+			`{"type":"result","subtype":"success","usage":{"input_tokens":50,"output_tokens":70}}`,
+			``,
+			`partial line`,
+		}, "\n") + "\n"
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+
+		got, err := aggregateUsage(path)
+		require.NoError(t, err)
+		// Terminal result wins; deltas ignored.
+		assert.Equal(t, 50, got.Input)
+		assert.Equal(t, 70, got.Output)
+		assert.Equal(t, 120, got.Total)
+	})
+
+	t.Run("empty_file_returns_zeros", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "log.jsonl")
+		require.NoError(t, os.WriteFile(path, nil, 0o644))
+
+		got, err := aggregateUsage(path)
+		require.NoError(t, err)
+		assert.Equal(t, tokensUsed{}, got, "empty log must yield zero tokensUsed")
+	})
+
+	t.Run("missing_file_returns_zeros", func(t *testing.T) {
+		got, err := aggregateUsage(filepath.Join(t.TempDir(), "does-not-exist.jsonl"))
+		require.NoError(t, err)
+		assert.Equal(t, tokensUsed{}, got, "missing log must yield zero tokensUsed with err=nil")
+	})
 }

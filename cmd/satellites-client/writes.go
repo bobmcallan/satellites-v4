@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -231,7 +232,18 @@ func newLedgerAppendCmd() *cobra.Command {
 				out["source_type"] = v
 			}
 			if v, _ := cmd.Flags().GetString("structured"); v != "" {
-				out["structured"] = v
+				// Validate as JSON and forward as a raw JSON value so
+				// the server-side handleLedgerAppend (json.RawMessage)
+				// stores the canonical raw-object bytes — matching the
+				// kind:llm-usage shape under internal/ledger/derivations.go
+				// and the dispatcher's appendExecuteEvidence path. Without
+				// this wrap the value goes on the wire as a JSON-encoded
+				// string and the server stores escaped bytes.
+				var probe json.RawMessage
+				if err := json.Unmarshal([]byte(v), &probe); err != nil {
+					return nil, cliexit.Newf(cliexit.Usage, "structured: not valid JSON: %v", err)
+				}
+				out["structured"] = probe
 			}
 			if v, _ := cmd.Flags().GetString("expires-at"); v != "" {
 				out["expires_at"] = v

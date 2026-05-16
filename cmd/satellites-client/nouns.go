@@ -304,6 +304,7 @@ func registerPortalNoun(root *cobra.Command) {
 	noun := nounStub("portal", "Portal — replication + UI helpers.")
 	noun.AddCommand(
 		newPortalReplicateCmd(), // sty_e68ce6fb
+		newPortalGetPageCmd(),   // sty_02ad5eb9
 	)
 	root.AddCommand(noun)
 }

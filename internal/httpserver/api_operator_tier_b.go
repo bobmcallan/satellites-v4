@@ -38,6 +38,8 @@ func (a *APIRegistrar) registerOperatorTierBRoutes(mux *http.ServeMux) {
 	a.handle(mux, "POST /api/v1/document/ingest-file", a.handleDocumentIngestFile)
 	// sty_e68ce6fb: portal replicate (last verbStub).
 	a.handle(mux, "POST /api/v1/portal/replicate", a.handlePortalReplicate)
+	// sty_02ad5eb9: portal_get_page (restored V3 surface, read-only).
+	a.handle(mux, "POST /api/v1/portal/get-page", a.handlePortalGetPage)
 }
 
 // ----- agent_apikey -----

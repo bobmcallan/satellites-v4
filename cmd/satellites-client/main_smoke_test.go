@@ -130,7 +130,7 @@ func TestNounGroupsRegistered(t *testing.T) {
 		"changelog": 5,
 		"session":   2,
 		"system":    2,
-		"portal":    1,
+		"portal":    2, // sty_02ad5eb9 restored portal_get_page alongside portal_replicate
 		"auth":      1,
 	}
 	root := newRootCmd()

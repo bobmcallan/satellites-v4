@@ -893,6 +893,15 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		s.registerPortalReplicate()
 	}
 
+	// portal_get_page: loopback SSR HTML introspection (sty_02ad5eb9).
+	// Read-only; restores the V3 satellites_portal_get_page surface.
+	// Registration gates on PortalLoopbackURL + PortalSessionMint
+	// being wired so test fixtures that don't boot the HTTP server can
+	// still construct a Server without the verb materialising.
+	if s.deps.PortalLoopbackURL != nil && s.deps.PortalSessionMint != nil {
+		s.registerPortalGetPage()
+	}
+
 	// Use a tolerant session id manager (sty_31975268): generate a UUID
 	// on initialize so the response carries Mcp-Session-Id, but accept
 	// empty session ids on non-initialize calls so legacy callers that

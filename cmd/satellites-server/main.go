@@ -548,24 +548,41 @@ func main() {
 	}
 	srv.SetLLMPinger(newGeminiPinger(cfg.GeminiAPIKey))
 
+	// portal_get_page (sty_02ad5eb9) loopback deps: same accessors are
+	// threaded into both the MCP server's Client.Deps and the /api/v1
+	// apiClient.Deps below so MCP + HTTP + CLI share one substrate
+	// path (pr_mcp_cli_shared_path).
+	portalLoopbackURL := func() string {
+		return fmt.Sprintf("http://%s:%d", client.ResolvePortalLoopbackHost(""), cfg.Port)
+	}
+	portalSessionMint := func(userID string, ttl time.Duration) (string, error) {
+		sess, err := sessions.Create(userID, ttl)
+		if err != nil {
+			return "", err
+		}
+		return sess.ID, nil
+	}
+
 	mcp := mcpserver.New(cfg, logger, startedAt, mcpserver.Deps{
 		Client: client.Deps{
-			Documents:        docStore,
-			DocsDir:          cfg.DocsDir,
-			Projects:         projStore,
-			DefaultProjectID: defaultProjectID,
-			Ledger:           ledgerStore,
-			Stories:          storyStore,
-			Workspaces:       wsStore,
-			Sessions:         sessionStore,
-			Tasks:            taskStore,
-			TaskLogs:         taskLogStore,
-			Repos:            repoStore,
-			Changelog:        changelogStore,
-			APIKeys:          apiKeyStore,
-			Indexer:          repoIndexer,
-			ManifestURL:      cfg.ManifestURL,
-			SelfProjectID:    cfg.SelfProjectID,
+			Documents:         docStore,
+			DocsDir:           cfg.DocsDir,
+			Projects:          projStore,
+			DefaultProjectID:  defaultProjectID,
+			Ledger:            ledgerStore,
+			Stories:           storyStore,
+			Workspaces:        wsStore,
+			Sessions:          sessionStore,
+			Tasks:             taskStore,
+			TaskLogs:          taskLogStore,
+			Repos:             repoStore,
+			Changelog:         changelogStore,
+			APIKeys:           apiKeyStore,
+			Indexer:           repoIndexer,
+			ManifestURL:       cfg.ManifestURL,
+			SelfProjectID:     cfg.SelfProjectID,
+			PortalLoopbackURL: portalLoopbackURL,
+			PortalSessionMint: portalSessionMint,
 		},
 		AuditReadTTL: auditReadTTL(),
 	})
@@ -658,26 +675,28 @@ func main() {
 	// /mcp; wires the 20 typed-client verbs into POST routes. The
 	// MCP path stays live in parallel until order:07d retires it.
 	apiClient := client.New(client.Deps{
-		Documents:        docStore,
-		Projects:         projStore,
-		Ledger:           ledgerStore,
-		Stories:          storyStore,
-		Workspaces:       wsStore,
-		Sessions:         sessionStore,
-		Tasks:            taskStore,
-		TaskLogs:         taskLogStore,
-		Repos:            repoStore,
-		Changelog:        changelogStore,
-		APIKeys:          apiKeyStore,
-		Indexer:          repoIndexer,
-		DocsDir:          cfg.DocsDir,
-		ReplicateVocab:   replicateVocabForAPI,
-		ReplicateRunner:  replicateRunnerForAPI,
-		StartedAt:        startedAt,
-		DefaultProjectID: defaultProjectID,
-		Logger:           logger,
-		ManifestURL:      cfg.ManifestURL,
-		SelfProjectID:    cfg.SelfProjectID,
+		Documents:         docStore,
+		Projects:          projStore,
+		Ledger:            ledgerStore,
+		Stories:           storyStore,
+		Workspaces:        wsStore,
+		Sessions:          sessionStore,
+		Tasks:             taskStore,
+		TaskLogs:          taskLogStore,
+		Repos:             repoStore,
+		Changelog:         changelogStore,
+		APIKeys:           apiKeyStore,
+		Indexer:           repoIndexer,
+		DocsDir:           cfg.DocsDir,
+		ReplicateVocab:    replicateVocabForAPI,
+		ReplicateRunner:   replicateRunnerForAPI,
+		StartedAt:         startedAt,
+		DefaultProjectID:  defaultProjectID,
+		Logger:            logger,
+		ManifestURL:       cfg.ManifestURL,
+		SelfProjectID:     cfg.SelfProjectID,
+		PortalLoopbackURL: portalLoopbackURL,
+		PortalSessionMint: portalSessionMint,
 	})
 	apiRegistrar := httpserver.NewAPIRegistrar(apiClient)
 	apiMux := http.NewServeMux()

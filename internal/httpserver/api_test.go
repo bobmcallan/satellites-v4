@@ -141,6 +141,8 @@ var expectedRoutes = []string{
 	"POST /api/v1/document/ingest-file",
 	// sty_e68ce6fb portal_replicate (last verbStub closed).
 	"POST /api/v1/portal/replicate",
+	// sty_02ad5eb9 portal_get_page (restored V3 surface, read-only).
+	"POST /api/v1/portal/get-page",
 }
 
 // TestAPI_RoutesRegistered asserts the registrar attaches all 103
@@ -152,8 +154,8 @@ var expectedRoutes = []string{
 // /api/v1/story/field-set (folded into /api/v1/story/update), so the
 // expected count is 105 → 103.
 func TestAPI_RoutesRegistered(t *testing.T) {
-	if got := len(expectedRoutes); got != 108 {
-		t.Fatalf("expected 108 routes, got %d (update the slice as the verb set grows)", got)
+	if got := len(expectedRoutes); got != 109 {
+		t.Fatalf("expected 109 routes, got %d (update the slice as the verb set grows)", got)
 	}
 
 	reg := NewAPIRegistrar(client.New(client.Deps{StartedAt: time.Now().UTC()}))

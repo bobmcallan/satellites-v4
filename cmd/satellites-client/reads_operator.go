@@ -863,3 +863,32 @@ func newSubstrateAuditCmd() *cobra.Command {
 	c.Flags().String("workspace-id", "", "Optional workspace scope (wksp_<8hex>). Empty falls back to the caller's resolution chain.")
 	return c
 }
+
+// ----- portal -----
+
+// newPortalGetPageCmd is the CLI thin adapter for the portal_get_page
+// verb (sty_02ad5eb9). Restores the V3 satellites_portal_get_page
+// surface as a read-only verb that returns the SSR HTML body + HTTP
+// status of a portal page so an LLM/operator can introspect what the
+// portal actually renders without spinning up a browser.
+//
+// Per pr_mcp_cli_shared_path the CLI verb is a thin forwarder onto
+// the typed *client.Client.PortalGetPage method; path validation,
+// auth, loopback resolution, and redirect-not-followed semantics live
+// in internal/client/portal_get_page.go.
+func newPortalGetPageCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "get-page",
+		Short: "Fetch a rendered portal page and return its HTML body + HTTP status (loopback GET, redirects not followed).",
+		RunE: readHandler("portal_get_page", func(cmd *cobra.Command, args []string) (any, error) {
+			path, _ := cmd.Flags().GetString("path")
+			if path == "" {
+				return nil, cliexit.Newf(cliexit.Usage, "portal get-page: --path is required")
+			}
+			return map[string]any{"path": path}, nil
+		}),
+	}
+	c.Flags().String("path", "", "Portal path to fetch, must start with '/' (required). Blocked prefixes: /api/, /oauth/, /mcp, /static/, /.well-known/.")
+	_ = c.MarkFlagRequired("path")
+	return c
+}

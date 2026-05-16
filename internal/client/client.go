@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/ternarybob/arbor"
@@ -76,6 +77,24 @@ type Deps struct {
 	// release-evidence:no-deploy-endpoint sentinel. Set by the wire
 	// layer from cfg.SelfProjectID. sty_224774f0.
 	SelfProjectID string
+	// PortalLoopbackURL returns the base URL (scheme + host + port,
+	// no trailing slash) for the loopback HTTP request issued by
+	// PortalGetPage. Hosts of "" or "0.0.0.0" must resolve to
+	// 127.0.0.1; any other host passes through. Nil disables the verb
+	// (PortalGetPage returns "portal_get_page unavailable: loopback
+	// not configured"). sty_02ad5eb9.
+	PortalLoopbackURL func() string
+	// PortalSessionMint mints a short-lived authenticated cookie for
+	// the loopback portal request scoped to userID. Returns the
+	// session id sent as the satellites_session cookie. Nil disables
+	// the verb. sty_02ad5eb9.
+	PortalSessionMint func(userID string, ttl time.Duration) (sessionID string, err error)
+	// PortalHTTPClient overrides the per-call *http.Client used for
+	// the loopback request. Nil falls back to a per-call client with
+	// Timeout=10s and CheckRedirect set to http.ErrUseLastResponse so
+	// 3xx responses surface as the response status (AC4). Tests inject
+	// an httptest-backed client to skip the loopback round-trip.
+	PortalHTTPClient *http.Client
 }
 
 // Client carries the typed business surface that callers (MCP, CLI,

@@ -1051,3 +1051,107 @@ func TestPollPprodConverge_RejectsTooShortPrefix(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "pprod converge timeout")
 }
+
+// TestFetchPprodCommit_DecodesLiveShape — sty_7a61ae53 AC2. Locks in
+// the JSON-decoder contract introduced by sty_0be97c3e: the
+// /api/v1/satellites/info response is the full SatellitesInfoOutput
+// envelope ({server, caller, recent_activity}), and the worker's
+// satellitesInfoResp struct decodes server.commit out of it. The
+// existing TestPollPprodConverge_* family injects pprodInfoFetcher
+// and bypasses the decoder entirely, so it could not have caught the
+// stale-binary shape-drift that motivated this story. This test
+// exercises fetchPprodCommit end-to-end through the real
+// internal/cliremote.Client against an httptest.Server returning the
+// canonical wire shape.
+func TestFetchPprodCommit_DecodesLiveShape(t *testing.T) {
+	const wantShort = "983a544a"
+	body := `{
+		"server": {
+			"version": "0.0.273",
+			"build": "2026-05-15-02-50-00",
+			"commit": "` + wantShort + `",
+			"started_at": "2026-05-16T07:00:00Z"
+		},
+		"caller": {
+			"user_id": "u_test",
+			"email": "test@example.com",
+			"auth_kind": "oauth:google"
+		},
+		"recent_activity": {
+			"ledger_rows_last_n": []
+		}
+	}`
+
+	s := newHotpathStub(t)
+	cc := s.client(config.AgentConfig{})
+	// Force the real decoder path; the default test wiring routes
+	// fetchPprodCommit through pprodInfoFetcher and would mask any
+	// drift between satellitesInfoResp and the live wire shape.
+	cc.pprodInfoFetcher = nil
+	s.setAPIResp("satellites_info", body)
+
+	got, err := cc.fetchPprodCommit(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, wantShort, got,
+		"fetchPprodCommit must decode server.commit out of the live envelope")
+
+	// Sanity: the call was actually issued via /api/v1/satellites/info.
+	require.NotNil(t, s.findAPICall("satellites_info"),
+		"fetchPprodCommit must route through /api/v1/satellites/info")
+}
+
+// TestFetchPprodCommit_EmptyCommitDecodesEmpty — sty_7a61ae53 AC2
+// companion. An envelope whose server.commit is the empty string
+// MUST decode as ("", nil) — the fetcher does not synthesise an
+// error; the converge loop owns the "treat empty as not-yet-converged"
+// semantics (covered by TestPollPprodConverge_RejectsEmpty).
+func TestFetchPprodCommit_EmptyCommitDecodesEmpty(t *testing.T) {
+	body := `{"server":{"commit":""},"caller":{},"recent_activity":{"ledger_rows_last_n":[]}}`
+
+	s := newHotpathStub(t)
+	cc := s.client(config.AgentConfig{})
+	cc.pprodInfoFetcher = nil
+	s.setAPIResp("satellites_info", body)
+
+	got, err := cc.fetchPprodCommit(context.Background())
+	require.NoError(t, err,
+		"empty server.commit is a poll-not-converged signal, not a transport error")
+	assert.Equal(t, "", got)
+}
+
+// TestRunMergeToMainHotPath_EmptyCommitConvergeTimeout_PersistsClose
+// — sty_7a61ae53 AC4. Reproduces the sty_224774f0 iter-2/iter-3
+// failure mode: the merge_to_main runner pushes successfully but
+// every converge sample returns an empty commit, so the poll exhausts
+// its window and reports `last=""`. The sty_63541aed persistence
+// helpers must still fire — task_update(closed,failure) is recorded
+// AND the reason body carries the literal `last=""` substring so the
+// failure-evidence ledger row is grep-able for this class of failure.
+func TestRunMergeToMainHotPath_EmptyCommitConvergeTimeout_PersistsClose(t *testing.T) {
+	s := newHotpathStub(t)
+	seedMergeToMainHappyStubs(t, s, "deadbeef")
+	// Every converge sample returns "" — the exact shape observed on
+	// sty_224774f0's three failed merge_to_main iterations.
+	s.pprodCommits = []string{"", "", ""}
+
+	cc := s.client(config.AgentConfig{RepoPath: "/repo", BranchTemplate: "agent-{task_id}-from-{base_sha}"})
+	outcome, err := runMergeToMainTask(t, cc)
+	require.Error(t, err)
+	assert.Equal(t, OutcomeFailure, outcome)
+	assert.Contains(t, err.Error(), "pprod converge timeout")
+	assert.Contains(t, err.Error(), `last=""`,
+		"timeout error must report the empty last sample so operators can grep for this failure class")
+
+	taskUpd := assertTaskClosedFailure(t, s)
+	reason, ok := taskUpd.Body["reason"].(string)
+	require.True(t, ok && reason != "",
+		"task_update body must carry a non-empty failure reason; got %+v", taskUpd.Body)
+	assert.Contains(t, reason, "pprod converge timeout")
+	assert.Contains(t, reason, `last=""`,
+		"persisted failure reason must embed the empty-sample literal")
+
+	// Push shipped before the converge loop, so the pushed_unverified
+	// release-evidence row must still land.
+	require.NotNil(t, s.findLedgerAppendWithTag("release:pushed_unverified"),
+		"release:pushed_unverified evidence row missing on empty-commit converge timeout")
+}

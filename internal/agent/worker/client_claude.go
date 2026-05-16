@@ -636,6 +636,8 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 	args := []string{
 		"--permission-mode", "bypassPermissions",
 		"--strict-mcp-config",
+		"--output-format", "stream-json",
+		"--verbose",
 		"-p", prompt,
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)

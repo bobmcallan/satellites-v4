@@ -52,6 +52,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	slots := make(chan struct{}, d.opts.Parallelism)
 	schedCtx, schedCancel := context.WithCancel(ctx)
 	go d.runScheduler(schedCtx, slots)
+	go d.runWatchdog(schedCtx)
 
 	defer func() {
 		schedCancel()

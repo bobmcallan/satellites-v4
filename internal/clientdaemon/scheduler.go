@@ -34,11 +34,15 @@ func (d *Daemon) promoteOne(ctx context.Context, slots chan struct{}) {
 		d.mu.Unlock()
 		return
 	}
+	headID := d.queue[0].TaskID
+	queueDepth := len(d.queue)
+	runningCount := len(d.running)
 	d.mu.Unlock()
 
 	select {
 	case slots <- struct{}{}:
 	default:
+		d.debug("no slot free", "queue_head", headID, "queue_depth", queueDepth, "running_count", runningCount)
 		return // no slot free
 	}
 
@@ -58,7 +62,11 @@ func (d *Daemon) promoteOne(ctx context.Context, slots chan struct{}) {
 		cancel:    cancel,
 	}
 	d.running[entry.TaskID] = handle
+	promotedQueueDepth := len(d.queue)
+	promotedRunningCount := len(d.running)
 	d.mu.Unlock()
+
+	d.info("task promoted", "task_id", entry.TaskID, "queue_depth", promotedQueueDepth, "running_count", promotedRunningCount)
 
 	if err := d.persistState(); err != nil {
 		d.warn("persistState (promote)", err)
@@ -70,11 +78,14 @@ func (d *Daemon) promoteOne(ctx context.Context, slots chan struct{}) {
 		defer func() {
 			d.mu.Lock()
 			delete(d.running, entry.TaskID)
+			completedQueueDepth := len(d.queue)
+			completedRunningCount := len(d.running)
 			d.mu.Unlock()
 			if err := d.persistState(); err != nil {
 				d.warn("persistState (complete)", err)
 			}
 			<-slots
+			d.info("task completed", "task_id", entry.TaskID, "queue_depth_after", completedQueueDepth, "running_count_after", completedRunningCount)
 			d.signalScheduler()
 		}()
 		d.runOne(taskCtx, entry, handle)

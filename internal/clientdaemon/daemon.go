@@ -27,6 +27,15 @@ const DefaultMaxQueue = 100
 // DefaultDrainTimeout is the SIGTERM-to-kill window during shutdown.
 const DefaultDrainTimeout = 5 * time.Minute
 
+// DefaultWatchdogInterval is the tick cadence at which the daemon
+// walks the head of the FIFO looking for stalled queued tasks.
+const DefaultWatchdogInterval = 30 * time.Second
+
+// DefaultWatchdogThreshold is the maximum age the head-of-queue
+// task is allowed to wait before the watchdog emits a
+// `kind:queue-stalled` ledger evidence row.
+const DefaultWatchdogThreshold = 5 * time.Minute
+
 // DefaultHeartbeat overrides dispatchteam.DefaultHeartbeatInterval
 // for daemon-spawned tasks; kept on the same 10s cadence as the sync
 // CLI path for telemetry-shape parity.
@@ -44,6 +53,15 @@ type Options struct {
 	MaxQueue     int
 	Heartbeat    time.Duration
 	DrainTimeout time.Duration
+
+	// WatchdogInterval is how often the head-of-queue watchdog runs.
+	// Zero falls back to DefaultWatchdogInterval.
+	WatchdogInterval time.Duration
+
+	// WatchdogThreshold is the head-of-queue age past which the
+	// watchdog emits a `kind:queue-stalled` ledger evidence row.
+	// Zero falls back to DefaultWatchdogThreshold.
+	WatchdogThreshold time.Duration
 
 	SocketPath  string
 	PidfilePath string
@@ -113,6 +131,12 @@ func New(opts Options) (*Daemon, error) {
 	}
 	if opts.DrainTimeout <= 0 {
 		opts.DrainTimeout = DefaultDrainTimeout
+	}
+	if opts.WatchdogInterval <= 0 {
+		opts.WatchdogInterval = DefaultWatchdogInterval
+	}
+	if opts.WatchdogThreshold <= 0 {
+		opts.WatchdogThreshold = DefaultWatchdogThreshold
 	}
 	if opts.Now == nil {
 		opts.Now = func() time.Time { return time.Now().UTC() }
@@ -253,12 +277,14 @@ func (d *Daemon) Enqueue(_ context.Context, taskID string) (EnqueueResponse, err
 		_ = h
 		resp := EnqueueResponse{TaskID: taskID, DaemonPID: os.Getpid(), QueuePosition: 0}
 		d.mu.Unlock()
+		d.info("task already running", "task_id", taskID)
 		return resp, nil
 	}
 	for i, q := range d.queue {
 		if q.TaskID == taskID {
 			resp := EnqueueResponse{TaskID: taskID, DaemonPID: os.Getpid(), QueuePosition: i + 1}
 			d.mu.Unlock()
+			d.info("task already queued", "task_id", taskID, "queue_position", i+1)
 			return resp, nil
 		}
 	}
@@ -269,11 +295,14 @@ func (d *Daemon) Enqueue(_ context.Context, taskID string) (EnqueueResponse, err
 	entry := QueuedEntry{TaskID: taskID, EnqueuedAt: d.opts.Now()}
 	d.queue = append(d.queue, entry)
 	pos := len(d.queue)
+	queueDepth := len(d.queue)
+	runningCount := len(d.running)
 	d.mu.Unlock()
 	d.signalScheduler()
 	if err := d.persistState(); err != nil {
 		d.warn("persistState (enqueue)", err)
 	}
+	d.info("task enqueued", "task_id", taskID, "queue_position", pos, "queue_depth", queueDepth, "running_count", runningCount)
 	return EnqueueResponse{TaskID: taskID, DaemonPID: os.Getpid(), QueuePosition: pos}, nil
 }
 
@@ -332,6 +361,19 @@ func (d *Daemon) info(label string, kv ...any) {
 		return
 	}
 	ev := d.opts.Logger.Info().Str("scope", "clientdaemon").Str("label", label)
+	for i := 0; i+1 < len(kv); i += 2 {
+		k, _ := kv[i].(string)
+		v := kv[i+1]
+		ev = ev.Str(k, fmt.Sprint(v))
+	}
+	ev.Msg("daemon")
+}
+
+func (d *Daemon) debug(label string, kv ...any) {
+	if d.opts.Logger == nil {
+		return
+	}
+	ev := d.opts.Logger.Debug().Str("scope", "clientdaemon").Str("label", label)
 	for i := 0; i+1 < len(kv); i += 2 {
 		k, _ := kv[i].(string)
 		v := kv[i+1]

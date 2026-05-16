@@ -298,11 +298,11 @@ func (d *Daemon) Enqueue(_ context.Context, taskID string) (EnqueueResponse, err
 	queueDepth := len(d.queue)
 	runningCount := len(d.running)
 	d.mu.Unlock()
+	d.info("task enqueued", "task_id", taskID, "queue_position", pos, "queue_depth", queueDepth, "running_count", runningCount)
 	d.signalScheduler()
 	if err := d.persistState(); err != nil {
 		d.warn("persistState (enqueue)", err)
 	}
-	d.info("task enqueued", "task_id", taskID, "queue_position", pos, "queue_depth", queueDepth, "running_count", runningCount)
 	return EnqueueResponse{TaskID: taskID, DaemonPID: os.Getpid(), QueuePosition: pos}, nil
 }
 

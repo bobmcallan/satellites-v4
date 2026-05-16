@@ -32,6 +32,8 @@ permission_patterns:
   - "Bash:echo"
   - "Bash:mkdir"
   - "mcp__satellites__satellites_*"
+skill_refs:
+  - local_build
 tags: [v4, agents-roles, lifecycle, role-shaped]
 ---
 # Developer Agent

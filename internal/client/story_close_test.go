@@ -148,22 +148,57 @@ func newStoryCloseFixture(t *testing.T, category string, opts storyCloseFixtureO
 	// release time. Sub-tests opt out via SkipReleaseEvidence to
 	// exercise the release-evidence:absent sentinel.
 	if !opts.SkipReleaseEvidence && opts.ReleaseEvidenceSHA != "" {
+		storyRowTags := []string{
+			"kind:release-evidence",
+			"phase:merge_to_main",
+			"pushed_sha:" + opts.ReleaseEvidenceSHA,
+		}
+		if opts.ReleaseEvidenceUnverified {
+			storyRowTags = append(storyRowTags, "release:pushed_unverified")
+		}
 		_, err = ledStore.Append(ctx, ledger.LedgerEntry{
 			WorkspaceID: ws.ID,
 			ProjectID:   "proj_test",
 			StoryID:     ledger.StringPtr(st.ID),
 			Type:        ledger.TypeEvidence,
-			Tags: []string{
-				"kind:release-evidence",
-				"phase:merge_to_main",
-				"pushed_sha:" + opts.ReleaseEvidenceSHA,
-			},
-			Content:    `## release-evidence stub`,
+			Tags:        storyRowTags,
+			Content:     `## release-evidence stub`,
+			Durability:  ledger.DurabilityDurable,
+			SourceType:  ledger.SourceAgent,
+			Status:      ledger.StatusActive,
+			CreatedBy:   "u_dev",
+		}, now.Add(5*time.Minute))
+		require.NoError(t, err)
+	}
+
+	// sty_1478a1df fixture: extra project-scoped kind:release-evidence
+	// rows seeded BEFORE / AFTER the story's own row to exercise the
+	// ancestry-via-ledger-walk. Each entry creates a row at
+	// now.Add(OffsetMin*time.Minute) carrying pushed_sha:<PushedSHA>;
+	// Unverified=true adds the release:pushed_unverified tag the walk
+	// excludes from tip candidacy.
+	for _, extra := range opts.ExtraReleaseEvidence {
+		tags := []string{
+			"kind:release-evidence",
+			"phase:merge_to_main",
+			"pushed_sha:" + extra.PushedSHA,
+		}
+		if extra.Unverified {
+			tags = append(tags, "release:pushed_unverified")
+		}
+		_, err = ledStore.Append(ctx, ledger.LedgerEntry{
+			WorkspaceID: ws.ID,
+			ProjectID:   "proj_test",
+			// No StoryID — these rows represent OTHER stories' releases
+			// on the same project, the realistic shape the walk sees.
+			Type:       ledger.TypeEvidence,
+			Tags:       tags,
+			Content:    `## extra release-evidence stub`,
 			Durability: ledger.DurabilityDurable,
 			SourceType: ledger.SourceAgent,
 			Status:     ledger.StatusActive,
 			CreatedBy:  "u_dev",
-		}, now.Add(5*time.Minute))
+		}, now.Add(time.Duration(extra.OffsetMin)*time.Minute))
 		require.NoError(t, err)
 	}
 
@@ -196,20 +231,33 @@ func newStoryCloseFixture(t *testing.T, category string, opts storyCloseFixtureO
 // preserve the pre-existing cases; set to task.KindWork to exercise
 // the canonical workflow shape the post-sty_b97dda00 substrate emits.
 type storyCloseFixtureOpts struct {
-	LeaveWorkOpen       bool
-	SkipReviewTask      bool
-	LeaveReviewOpen     bool
-	AppendVerdictRow    bool
-	VerdictPass         bool
-	SeedTemplate        bool
-	TemplateJSON        string
-	Fields              map[string]any
-	StoryReviewKind     string
-	SkipReleaseEvidence bool
-	ReleaseEvidenceSHA  string
-	PprodCommitOverride string
-	SkipDeployCheck     bool
-	SelfProjectID       string
+	LeaveWorkOpen             bool
+	SkipReviewTask            bool
+	LeaveReviewOpen           bool
+	AppendVerdictRow          bool
+	VerdictPass               bool
+	SeedTemplate              bool
+	TemplateJSON              string
+	Fields                    map[string]any
+	StoryReviewKind           string
+	SkipReleaseEvidence       bool
+	ReleaseEvidenceSHA        string
+	ReleaseEvidenceUnverified bool
+	ExtraReleaseEvidence      []extraReleaseEvidence
+	PprodCommitOverride       string
+	SkipDeployCheck           bool
+	SelfProjectID             string
+}
+
+// extraReleaseEvidence seeds an additional project-scoped
+// kind:release-evidence row for the ancestry-walk tests (sty_1478a1df).
+// OffsetMin is the minute offset from the fixture's `now` anchor; the
+// fixture's own story-scoped row lands at +5min, so OffsetMin < 5 places
+// a row before the story's release, OffsetMin > 5 places one after.
+type extraReleaseEvidence struct {
+	PushedSHA  string
+	OffsetMin  int
+	Unverified bool
 }
 
 // defaultReleaseSHA is the synthetic pushed-SHA both the
@@ -661,6 +709,135 @@ func TestStoryClose_DeployBehind_SkipDeployCheck(t *testing.T) {
 		assert.NotEqual(t, "deploy:behind", g.Code, "deploy:behind must not appear when skip_deploy_check=true: %+v", g)
 		assert.NotEqual(t, "release-evidence:no-deploy-endpoint", g.Code, "no-deploy-endpoint must not appear when skip_deploy_check=true: %+v", g)
 	}
+}
+
+// TestStoryClose_DeployBehind_AncestorAccepted — sty_1478a1df AC1+AC2
+// anchor. The story's release-evidence row is older than the project's
+// pprod tip row (another story has since shipped past this one). Under
+// the trunk-based ff-only flow the story's pushed_sha IS in pprod's
+// history, so the gate must accept. Fails the pre-sty_1478a1df
+// prefix-match comparator (releaseSHA != pprodCommit fast-path), passes
+// the new ledger-walk ancestry comparator.
+func TestStoryClose_DeployBehind_AncestorAccepted(t *testing.T) {
+	opts := happyOpts()
+	storySHA := "aaaaaaaa1111111111111111111111111111aaaa"
+	tipSHA := "bbbbbbbb2222222222222222222222222222bbbb"
+	opts.ReleaseEvidenceSHA = storySHA
+	opts.PprodCommitOverride = tipSHA[:8] // short-form pprod report, prefix of tipSHA
+	opts.ExtraReleaseEvidence = []extraReleaseEvidence{
+		{PushedSHA: tipSHA, OffsetMin: 7}, // newer than story's row at +5min
+	}
+	f := newStoryCloseFixture(t, "improvement", opts)
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	assert.Equal(t, "pass", out.Status,
+		"story release row older than pprod tip row must pass deploy:behind via ancestry walk; gaps=%+v", out.Gaps)
+	for _, g := range out.Gaps {
+		assert.NotEqual(t, "deploy:behind", g.Code,
+			"deploy:behind gap must not appear on the ancestry-accepted path: %+v", g)
+	}
+}
+
+// TestStoryClose_DeployBehind_NonAncestorRejected — sty_1478a1df guard.
+// pprod's reported commit doesn't appear on ANY converged
+// release-evidence row in the project (divergent branch, or a commit
+// the substrate never recorded). The ancestry walk cannot prove
+// reachability, so the gate must reject with deploy:behind. Detail
+// cites both the story release SHA and the unknown pprod commit so the
+// operator sees the root cause.
+func TestStoryClose_DeployBehind_NonAncestorRejected(t *testing.T) {
+	opts := happyOpts()
+	opts.ReleaseEvidenceSHA = "aaaaaaaa1111111111111111111111111111aaaa"
+	opts.PprodCommitOverride = "deadbeefcafe9999" // no row carries this SHA
+	f := newStoryCloseFixture(t, "improvement", opts)
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	assert.Equal(t, "fail", out.Status)
+	var dbGap *StoryCloseGap
+	for i := range out.Gaps {
+		if out.Gaps[i].Code == "deploy:behind" {
+			dbGap = &out.Gaps[i]
+		}
+	}
+	require.NotNil(t, dbGap, "deploy:behind gap missing: %+v", out.Gaps)
+	assert.Contains(t, dbGap.Detail, "aaaaaaaa1111111111111111111111111111aaaa")
+	assert.Contains(t, dbGap.Detail, "deadbeefcafe9999")
+	assertStoryUnchanged(t, f)
+}
+
+// TestStoryClose_DeployBehind_UnverifiedSuppressed — sty_1478a1df rule.
+// A release-evidence row tagged release:pushed_unverified is NOT a
+// valid pprodTipRow — the row records that a push landed on origin but
+// pprod's converge poll timed out. The walk skips such rows when
+// looking for the project's pprod tip. With only an unverified row at
+// the matching SHA, the walk produces no pprodTipRow and the gate
+// rejects with deploy:behind. Locks the unverified-exclusion rule.
+func TestStoryClose_DeployBehind_UnverifiedSuppressed(t *testing.T) {
+	opts := happyOpts()
+	unverifiedSHA := "cccccccc3333333333333333333333333333cccc"
+	convergedOlderSHA := "dddddddd4444444444444444444444444444dddd"
+	opts.ReleaseEvidenceSHA = convergedOlderSHA // story's own row (older, converged)
+	opts.PprodCommitOverride = unverifiedSHA[:8]
+	opts.ExtraReleaseEvidence = []extraReleaseEvidence{
+		{PushedSHA: unverifiedSHA, OffsetMin: 7, Unverified: true},
+	}
+	f := newStoryCloseFixture(t, "improvement", opts)
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	assert.Equal(t, "fail", out.Status,
+		"unverified row must not serve as pprodTipRow; gate must reject; gaps=%+v", out.Gaps)
+	var dbGap *StoryCloseGap
+	for i := range out.Gaps {
+		if out.Gaps[i].Code == "deploy:behind" {
+			dbGap = &out.Gaps[i]
+		}
+	}
+	require.NotNil(t, dbGap, "deploy:behind gap missing: %+v", out.Gaps)
+	assert.Contains(t, dbGap.Detail, unverifiedSHA[:8],
+		"detail must cite the unmatched pprod commit so the operator sees the root cause: %+v", dbGap)
+	assertStoryUnchanged(t, f)
+}
+
+// TestStoryClose_DeployBehind_PprodOlderThanRelease — sty_1478a1df
+// "deploy genuinely behind" case. The story's release row is NEWER
+// than the project's current pprod tip row (the story shipped but
+// pprod hasn't rolled forward yet). The ancestry walk finds a tip but
+// it precedes the story's row, so the gate must reject — pprod has not
+// advanced past this release. Detail cites both the release SHA and
+// the older pprod tip so the operator sees pprod is genuinely behind,
+// not on a divergent branch.
+func TestStoryClose_DeployBehind_PprodOlderThanRelease(t *testing.T) {
+	opts := happyOpts()
+	olderConvergedSHA := "eeeeeeee5555555555555555555555555555eeee"
+	storyReleaseSHA := "ffffffff6666666666666666666666666666ffff"
+	opts.ReleaseEvidenceSHA = storyReleaseSHA // story's row at +5min (newer)
+	opts.PprodCommitOverride = olderConvergedSHA[:8]
+	opts.ExtraReleaseEvidence = []extraReleaseEvidence{
+		{PushedSHA: olderConvergedSHA, OffsetMin: 3}, // older converged row
+	}
+	f := newStoryCloseFixture(t, "improvement", opts)
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	assert.Equal(t, "fail", out.Status,
+		"story release row newer than pprod tip row must fail deploy:behind; gaps=%+v", out.Gaps)
+	var dbGap *StoryCloseGap
+	for i := range out.Gaps {
+		if out.Gaps[i].Code == "deploy:behind" {
+			dbGap = &out.Gaps[i]
+		}
+	}
+	require.NotNil(t, dbGap, "deploy:behind gap missing: %+v", out.Gaps)
+	assert.Contains(t, dbGap.Detail, storyReleaseSHA,
+		"detail must cite the story's release SHA: %+v", dbGap)
+	assert.Contains(t, dbGap.Detail, olderConvergedSHA,
+		"detail must cite the older pprod tip SHA: %+v", dbGap)
+	assert.Contains(t, dbGap.Detail, "newer than pprod tip",
+		"detail must distinguish the genuine-behind case from the divergent-branch case: %+v", dbGap)
+	assertStoryUnchanged(t, f)
 }
 
 func assertGap(t *testing.T, gaps []StoryCloseGap, code, detail string) {

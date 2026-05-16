@@ -226,8 +226,59 @@ func (c *Client) StoryClose(ctx context.Context, caller Caller, in StoryCloseInp
 			})
 		case err != nil:
 			gaps = append(gaps, StoryCloseGap{Code: "deploy:behind", Detail: "satellites_info error: " + err.Error()})
-		case pprodCommit == "" || !strings.HasPrefix(releaseSHA, pprodCommit) || len(pprodCommit) < 7:
+		case pprodCommit == "" || len(pprodCommit) < 7:
 			gaps = append(gaps, StoryCloseGap{Code: "deploy:behind", Detail: releaseSHA + " != " + pprodCommit})
+		case strings.HasPrefix(releaseSHA, pprodCommit):
+			// fast path — pprod has converged at the story's release commit
+			// (sty_1e2f7ae7 prefix-match). No ancestry walk needed.
+		default:
+			// sty_1478a1df slow path — pprod's reported commit is not the
+			// story's release commit, but it MAY be a descendant of it
+			// (a later release in the same project superseded the story's
+			// release, which is the common case under the trunk-based
+			// ff-only flow). Walk project-scoped kind:release-evidence
+			// rows newest-first to find pprodTipRow — the most recent
+			// CONVERGED row whose pushed_sha prefix-matches pprodCommit.
+			// release:pushed_unverified rows are excluded from tip
+			// candidacy (they represent pushes that landed on origin but
+			// never converged). Accept iff storyReleaseRow.CreatedAt <=
+			// pprodTipRow.CreatedAt — main is ff-only, so an older row's
+			// pushed_sha is necessarily in pprod's history.
+			projectReleases, listErr := c.deps.Ledger.List(ctx, st.ProjectID, ledger.ListOptions{
+				Tags:  []string{"kind:release-evidence"},
+				Limit: ledger.MaxListLimit,
+			}, memberships)
+			if listErr != nil {
+				return StoryCloseOutput{}, listErr
+			}
+			var pprodTipRow *ledger.LedgerEntry
+			for i := range projectReleases {
+				r := &projectReleases[i]
+				if hasTag(r.Tags, "release:pushed_unverified") {
+					continue
+				}
+				rowSHA := pushedSHAFromTags(r.Tags)
+				if rowSHA == "" {
+					continue
+				}
+				if !strings.HasPrefix(rowSHA, pprodCommit) {
+					continue
+				}
+				pprodTipRow = r
+				break // MemoryStore.List + SurrealStore.List both sort newest-first
+			}
+			switch {
+			case pprodTipRow == nil:
+				gaps = append(gaps, StoryCloseGap{
+					Code:   "deploy:behind",
+					Detail: releaseSHA + " not reachable from pprod " + pprodCommit + " (no converged kind:release-evidence row in project " + st.ProjectID + ")",
+				})
+			case releaseRow.CreatedAt.After(pprodTipRow.CreatedAt):
+				gaps = append(gaps, StoryCloseGap{
+					Code:   "deploy:behind",
+					Detail: releaseSHA + " is newer than pprod tip " + pushedSHAFromTags(pprodTipRow.Tags) + " (pprod=" + pprodCommit + ")",
+				})
+			}
 		}
 	}
 

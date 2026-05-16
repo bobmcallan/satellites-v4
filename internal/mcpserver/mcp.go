@@ -710,6 +710,33 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		)
 		s.mcp.AddTool(taskWalkTool, s.handleTaskWalk)
 
+		// sty_4fb2d985: chain_* router verbs. Substrate-side
+		// auto-router replacing the operator-side `route_epic.sh`
+		// bash helper. The MCP variant returns next_task_id only —
+		// substrate never owns the local daemon socket; the CLI
+		// `chain advance`/`run` wraps `postEnqueue` as the dispatch
+		// hook. Logic lives on *client.Client per
+		// pr_mcp_cli_shared_path; these are thin forwarders.
+		chainStatusTool := mcpgo.NewTool("chain_status",
+			mcpgo.WithDescription("Read-only chain snapshot: story header, per-phase live task with auto-supersession-aware selection, next dispatchable id, terminal flag, anomalies. Sty_4fb2d985."),
+			mcpgo.WithString("story_id", mcpgo.Required(), mcpgo.Description("Story to inspect.")),
+		)
+		s.mcp.AddTool(chainStatusTool, s.handleChainStatus)
+
+		chainAdvanceTool := mcpgo.NewTool("chain_advance",
+			mcpgo.WithDescription("Compute the next dispatchable task on the chain per canonical phase order with auto-supersession-aware live selection. MCP variant: no daemon coupling — returns next_task_id; caller dispatches via task_run. Sty_4fb2d985."),
+			mcpgo.WithString("story_id", mcpgo.Required(), mcpgo.Description("Story whose chain to advance.")),
+		)
+		s.mcp.AddTool(chainAdvanceTool, s.handleChainAdvance)
+
+		chainRunTool := mcpgo.NewTool("chain_run",
+			mcpgo.WithDescription("Loop chain_advance + poll until terminal. MCP variant is an observability surface — every iteration is a substrate roundtrip; operator-side dispatch belongs to the CLI. Sty_4fb2d985."),
+			mcpgo.WithString("story_id", mcpgo.Required(), mcpgo.Description("Story whose chain to run.")),
+			mcpgo.WithNumber("poll_interval_seconds", mcpgo.Description("Loop poll cadence in seconds. Default 30.")),
+			mcpgo.WithNumber("timeout_seconds", mcpgo.Description("Hard deadline in seconds. 0 = no timeout.")),
+		)
+		s.mcp.AddTool(chainRunTool, s.handleChainRun)
+
 		// story_export_walk MCP registration removed in sty_4db0e025 slice
 		// C1+B2 — operator authoring per sty_3dc39a5c "Removed from MCP"
 		// list. Reachable through /api/v1 + the satellites-client CLI only.

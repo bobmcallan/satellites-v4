@@ -32,6 +32,7 @@ var satellitesClientNouns = []func(*cobra.Command){
 	registerPortalNoun,
 	registerAuthNoun,
 	registerServeNoun, // sty_5aa20f1b
+	registerChainNoun, // sty_4fb2d985
 }
 
 // nounStub builds a noun group cobra.Command with the given short

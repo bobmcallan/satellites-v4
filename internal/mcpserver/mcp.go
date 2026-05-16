@@ -434,9 +434,11 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		s.mcp.AddTool(listStoryTool, s.handleStoryList)
 
 		closeStoryTool := mcpgo.NewTool("story_close",
-			mcpgo.WithDescription("Mechanical close: gate-checks the story's task chain + story_review verdict + template fields; on PASS appends a kind:close-evidence ledger row and walks the story to status=done via UpdateStatusDerived; on FAIL returns {status:\"fail\", gaps:[…]} without mutation. The reasoning surface lives in the upstream contract:story_review task; this verb is structural only (no LLM, same tier as pr_story_terminal_gate)."),
+			mcpgo.WithDescription("Mechanical close: gate-checks the story's task chain + story_review verdict + template fields; on PASS appends a kind:close-evidence ledger row and walks the story to status=done via UpdateStatusDerived; on FAIL returns {status:\"fail\", gaps:[…]} without mutation. The reasoning surface lives in the upstream contract:story_review task; this verb is structural only (no LLM, same tier as pr_story_terminal_gate). Multi-tenant deploy:behind: consumer-project callers supply pprod_commit (the deployed commit they expect to match the merge_to_main release-evidence pushed_sha); the satellites-self project falls back to satellites_info when SATELLITES_SELF_PROJECT_ID matches; otherwise the gate emits release-evidence:no-deploy-endpoint instead of a misleading deploy:behind. sty_224774f0."),
 			mcpgo.WithString("story_id", mcpgo.Required(), mcpgo.Description("Story id (sty_<8hex>).")),
 			mcpgo.WithString("resolution_code", mcpgo.Description("Resolution slot for the close-evidence row. Default 'delivered'. Allowed: delivered | plan_only | not_required | duplicate | superseded | failed:complexity | failed:scope_invalid | failed:blocked.")),
+			mcpgo.WithString("pprod_commit", mcpgo.Description("Deployed commit (full or short SHA, ≥7 chars) the substrate verifies against the release-evidence pushed_sha for the deploy:behind gate. Consumer-project callers (vire, magentus-forge, resumere, …) supply this; the satellites-self project leaves it empty and the resolver falls back to satellites_info.")),
+			mcpgo.WithBoolean("skip_deploy_check", mcpgo.Description("Suppresses the deploy:behind / release-evidence:no-deploy-endpoint comparison entirely. release-evidence:absent still fires when no kind:release-evidence row exists. Operator-driven escape valve for callers that have validated convergence out-of-band.")),
 		)
 		s.mcp.AddTool(closeStoryTool, s.handleStoryClose)
 
@@ -1809,10 +1811,12 @@ func (s *Server) handleStoryClose(ctx context.Context, req mcpgo.CallToolRequest
 	}
 	memberships := s.resolveCallerMemberships(ctx, caller)
 	out, err := s.cli().StoryClose(ctx, toClientCaller(caller), client.StoryCloseInput{
-		StoryID:        id,
-		ResolutionCode: req.GetString("resolution_code", ""),
-		Memberships:    memberships,
-		Now:            s.nowUTC(),
+		StoryID:             id,
+		ResolutionCode:      req.GetString("resolution_code", ""),
+		Memberships:         memberships,
+		Now:                 s.nowUTC(),
+		PprodCommitOverride: req.GetString("pprod_commit", ""),
+		SkipDeployCheck:     req.GetBool("skip_deploy_check", false),
 	})
 	if err != nil {
 		return mcpgo.NewToolResultError(storyCloseErrMessage(err)), nil

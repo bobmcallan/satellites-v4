@@ -409,11 +409,17 @@ func appendVerdictRow(t *testing.T, ctx context.Context, ff *storyCloseFixtures,
 }
 
 // callStoryClose invokes the new MCP verb and returns the decoded
-// response body.
+// response body. Passes pprod_commit:"unknown" because the
+// integration container reports config.GitCommit="unknown" and the
+// release-evidence rows seeded above carry pushed_sha:unknown — this
+// satisfies the multi-tenant deploy:behind resolver (sty_224774f0)
+// without depending on SATELLITES_SELF_PROJECT_ID being set on the
+// per-test container, since each subtest mints its own project_id.
 func callStoryClose(t *testing.T, ctx context.Context, ff *storyCloseFixtures, storyID string) map[string]any {
 	t.Helper()
 	return callTool(t, ctx, ff.mcpURL, ff.bearer, "story_close", map[string]any{
-		"story_id": storyID,
+		"story_id":     storyID,
+		"pprod_commit": "unknown",
 	})
 }
 

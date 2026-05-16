@@ -565,6 +565,7 @@ func main() {
 			APIKeys:          apiKeyStore,
 			Indexer:          repoIndexer,
 			ManifestURL:      cfg.ManifestURL,
+			SelfProjectID:    cfg.SelfProjectID,
 		},
 		AuditReadTTL: auditReadTTL(),
 	})
@@ -676,6 +677,7 @@ func main() {
 		DefaultProjectID: defaultProjectID,
 		Logger:           logger,
 		ManifestURL:      cfg.ManifestURL,
+		SelfProjectID:    cfg.SelfProjectID,
 	})
 	apiRegistrar := httpserver.NewAPIRegistrar(apiClient)
 	apiMux := http.NewServeMux()

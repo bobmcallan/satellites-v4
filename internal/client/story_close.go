@@ -28,16 +28,28 @@ import (
 // stored on the kind:close-evidence ledger row; empty falls back to
 // "delivered" per the story_review contract's evidence_required prose.
 //
-// PprodCommitOverride lets tests inject the pprod-reported commit
-// without spinning up a real SatellitesInfo call. Production callers
-// leave it empty and the verb routes the converge check through
-// c.SatellitesInfo.
+// PprodCommitOverride is the caller-supplied pprod commit (the
+// `pprod_commit` MCP arg). When non-empty it is the authoritative
+// answer for the deploy:behind comparison and the resolver short-
+// circuits to it. Consumer-project callers (vire, magentus-forge,
+// resumere, …) supply this; for the satellites-self project the
+// resolver falls back to c.SatellitesInfo when SelfProjectID is
+// configured (sty_224774f0).
+//
+// SkipDeployCheck is the operator-supplied opt-out for the
+// deploy:behind / release-evidence:no-deploy-endpoint comparison
+// (the `skip_deploy_check` MCP arg). When true the gate emits no
+// deploy-related gap regardless of resolver state. The
+// release-evidence:absent gap still fires when no
+// kind:release-evidence row exists — SkipDeployCheck only suppresses
+// the per-commit comparison, not the row-presence gate.
 type StoryCloseInput struct {
 	StoryID             string
 	ResolutionCode      string
 	Memberships         []string
 	Now                 time.Time
 	PprodCommitOverride string
+	SkipDeployCheck     bool
 }
 
 // StoryCloseGap is one cited gap the gate refused on. Code is the
@@ -46,8 +58,11 @@ type StoryCloseInput struct {
 //   - story_review:absent | story_review:open | story_review:fail
 //   - chain:open_work
 //   - template:<field>:missing
-//   - deploy:behind                     (pprod commit lags release SHA)
-//   - release-evidence:absent           (no kind:release-evidence row)
+//   - deploy:behind                            (pprod commit lags release SHA)
+//   - release-evidence:absent                  (no kind:release-evidence row)
+//   - release-evidence:no-deploy-endpoint      (consumer project, no
+//     pprod_commit, no skip_deploy_check, no SelfProjectID match —
+//     sty_224774f0)
 //
 // Detail carries the row id(s), task id(s), or field name the gap
 // resolves to.
@@ -72,6 +87,14 @@ type StoryCloseOutput struct {
 var (
 	ErrStoryCloseStoryIDRequired = errors.New("story_id is required")
 	ErrStoryCloseStoryNotFound   = errors.New("story not found")
+	// ErrNoDeployEndpoint is the resolver's signal that the bound
+	// project has no path to a pprod commit: no caller-supplied
+	// pprod_commit, and the project_id does not match the
+	// SelfProjectID configured for the satellites-self deployment.
+	// The gate maps this to release-evidence:no-deploy-endpoint
+	// rather than deploy:behind so consumer projects see the
+	// missing-configuration root cause. sty_224774f0.
+	ErrNoDeployEndpoint = errors.New("no deploy endpoint configured for project")
 )
 
 // resolutionCodeDefault is the slot recorded on the close-evidence row
@@ -173,7 +196,14 @@ func (c *Client) StoryClose(ctx context.Context, caller Caller, in StoryCloseInp
 	// release and close. Sentinel `release-evidence:absent` surfaces
 	// when no release-evidence row exists so the orchestrator sees
 	// *why* the converge check could not run, rather than silently
-	// passing.
+	// passing. sty_224774f0: per-project resolver — caller-supplied
+	// pprod_commit takes precedence; otherwise the satellites-self
+	// project (matched by SelfProjectID) falls through to
+	// SatellitesInfo; otherwise the substrate emits
+	// release-evidence:no-deploy-endpoint so the operator sees the
+	// missing-configuration root cause instead of a misleading
+	// deploy:behind. SkipDeployCheck suppresses the comparison
+	// entirely (release-evidence:absent still fires below).
 	releaseRow := latestReleaseEvidenceRow(rows)
 	switch {
 	case releaseRow == nil:
@@ -184,12 +214,19 @@ func (c *Client) StoryClose(ctx context.Context, caller Caller, in StoryCloseInp
 			gaps = append(gaps, StoryCloseGap{Code: "release-evidence:absent", Detail: "row " + releaseRow.ID + " missing pushed_sha tag"})
 			break
 		}
-		pprodCommit, err := c.resolvePprodCommit(ctx, caller, in)
-		if err != nil {
-			gaps = append(gaps, StoryCloseGap{Code: "deploy:behind", Detail: "satellites_info error: " + err.Error()})
+		if in.SkipDeployCheck {
 			break
 		}
-		if pprodCommit == "" || !strings.HasPrefix(releaseSHA, pprodCommit) || len(pprodCommit) < 7 {
+		pprodCommit, err := c.resolvePprodCommit(ctx, caller, st.ProjectID, in)
+		switch {
+		case errors.Is(err, ErrNoDeployEndpoint):
+			gaps = append(gaps, StoryCloseGap{
+				Code:   "release-evidence:no-deploy-endpoint",
+				Detail: "project_id=" + st.ProjectID + " has no deploy endpoint; supply pprod_commit or skip_deploy_check",
+			})
+		case err != nil:
+			gaps = append(gaps, StoryCloseGap{Code: "deploy:behind", Detail: "satellites_info error: " + err.Error()})
+		case pprodCommit == "" || !strings.HasPrefix(releaseSHA, pprodCommit) || len(pprodCommit) < 7:
 			gaps = append(gaps, StoryCloseGap{Code: "deploy:behind", Detail: releaseSHA + " != " + pprodCommit})
 		}
 	}
@@ -324,18 +361,34 @@ func pushedSHAFromTags(tags []string) string {
 	return ""
 }
 
-// resolvePprodCommit returns the commit currently reported by pprod's
-// satellites_info verb. Tests inject PprodCommitOverride to avoid an
-// HTTP roundtrip; production routes through c.SatellitesInfo.
-func (c *Client) resolvePprodCommit(ctx context.Context, caller Caller, in StoryCloseInput) (string, error) {
+// resolvePprodCommit returns the pprod commit the deploy:behind
+// gate compares against the release-evidence pushed_sha. The
+// resolver branches in priority order (sty_224774f0):
+//
+//  1. Caller-supplied PprodCommitOverride wins for any project. The
+//     consumer-project flow (vire, magentus-forge, resumere, …)
+//     proves convergence by passing the deployed commit explicitly.
+//  2. The satellites-self project (projectID == c.deps.SelfProjectID,
+//     when SelfProjectID is non-empty) falls back to c.SatellitesInfo,
+//     which reports this server's own running commit. This is the
+//     pre-sty_224774f0 behaviour, scoped to the project the
+//     deployment dogfoods against.
+//  3. Otherwise the resolver returns ErrNoDeployEndpoint and the
+//     gate emits release-evidence:no-deploy-endpoint so the operator
+//     sees the missing-configuration root cause instead of a
+//     misleading deploy:behind.
+func (c *Client) resolvePprodCommit(ctx context.Context, caller Caller, projectID string, in StoryCloseInput) (string, error) {
 	if in.PprodCommitOverride != "" {
 		return in.PprodCommitOverride, nil
 	}
-	out, err := c.SatellitesInfo(ctx, caller, SatellitesInfoInput{})
-	if err != nil {
-		return "", err
+	if c.deps.SelfProjectID != "" && c.deps.SelfProjectID == projectID {
+		out, err := c.SatellitesInfo(ctx, caller, SatellitesInfoInput{})
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(out.Server.Commit), nil
 	}
-	return strings.TrimSpace(out.Server.Commit), nil
+	return "", ErrNoDeployEndpoint
 }
 
 // fieldFromTemplateFailure extracts the field name from a template's

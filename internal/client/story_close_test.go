@@ -28,6 +28,7 @@ type storyCloseFixture struct {
 	reviewTask          task.Task
 	caller              Caller
 	pprodCommitOverride string
+	skipDeployCheck     bool
 }
 
 // closeInput materialises a StoryCloseInput using the fixture's
@@ -39,6 +40,7 @@ func (f *storyCloseFixture) closeInput() StoryCloseInput {
 		Memberships:         f.caller.Memberships,
 		Now:                 f.now.Add(10 * time.Minute),
 		PprodCommitOverride: f.pprodCommitOverride,
+		SkipDeployCheck:     f.skipDeployCheck,
 	}
 }
 
@@ -166,11 +168,12 @@ func newStoryCloseFixture(t *testing.T, category string, opts storyCloseFixtureO
 	}
 
 	c := New(Deps{
-		Documents:  docStore,
-		Stories:    storyStore,
-		Ledger:     ledStore,
-		Workspaces: wsStore,
-		Tasks:      taskStore,
+		Documents:     docStore,
+		Stories:       storyStore,
+		Ledger:        ledStore,
+		Workspaces:    wsStore,
+		Tasks:         taskStore,
+		SelfProjectID: opts.SelfProjectID,
 	})
 
 	return &storyCloseFixture{
@@ -183,6 +186,7 @@ func newStoryCloseFixture(t *testing.T, category string, opts storyCloseFixtureO
 		reviewTask:          reviewTask,
 		caller:              Caller{UserID: "u_dev", Memberships: []string{ws.ID}},
 		pprodCommitOverride: opts.PprodCommitOverride,
+		skipDeployCheck:     opts.SkipDeployCheck,
 	}
 }
 
@@ -204,6 +208,8 @@ type storyCloseFixtureOpts struct {
 	SkipReleaseEvidence bool
 	ReleaseEvidenceSHA  string
 	PprodCommitOverride string
+	SkipDeployCheck     bool
+	SelfProjectID       string
 }
 
 // defaultReleaseSHA is the synthetic pushed-SHA both the
@@ -521,6 +527,140 @@ func TestStoryClose_FailReleaseEvidenceAbsent(t *testing.T) {
 	assert.Equal(t, "fail", out.Status)
 	assertGap(t, out.Gaps, "release-evidence:absent", "")
 	assertStoryUnchanged(t, f)
+}
+
+// TestStoryClose_DeployBehind_PprodCommitMatch — sty_224774f0 AC1.
+// Consumer-project flow: caller supplies pprod_commit equal to the
+// release-evidence pushed_sha; the resolver short-circuits to the
+// override and the deploy:behind gate passes regardless of any
+// SelfProjectID configuration. Anchors the path-(b) "caller proves
+// convergence" contract.
+func TestStoryClose_DeployBehind_PprodCommitMatch(t *testing.T) {
+	opts := happyOpts()
+	full := "ae12fe781d27c7f677dd8e7479debad6aeb37875"
+	opts.ReleaseEvidenceSHA = full
+	opts.PprodCommitOverride = full
+	// Explicitly leave SelfProjectID empty — the consumer flow must not
+	// depend on satellites-self configuration when the caller proves
+	// the commit.
+	f := newStoryCloseFixture(t, "improvement", opts)
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	assert.Equal(t, "pass", out.Status,
+		"caller-supplied pprod_commit matching release SHA must pass deploy:behind on a consumer project; gaps=%+v", out.Gaps)
+	for _, g := range out.Gaps {
+		assert.NotEqual(t, "deploy:behind", g.Code, "deploy:behind must not appear: %+v", g)
+		assert.NotEqual(t, "release-evidence:no-deploy-endpoint", g.Code, "no-deploy-endpoint must not appear when pprod_commit supplied: %+v", g)
+	}
+}
+
+// TestStoryClose_DeployBehind_PprodCommitMismatch — sty_224774f0 AC1.
+// Caller-supplied pprod_commit that does NOT match the release SHA
+// surfaces a deploy:behind gap citing both shas (regression coverage
+// for the sty_1e2f7ae7 prefix-match comparator on the consumer-project
+// path).
+func TestStoryClose_DeployBehind_PprodCommitMismatch(t *testing.T) {
+	opts := happyOpts()
+	opts.ReleaseEvidenceSHA = "release-sha-aaa"
+	opts.PprodCommitOverride = "pprod-sha-bbb"
+	f := newStoryCloseFixture(t, "improvement", opts)
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	assert.Equal(t, "fail", out.Status)
+	var dbGap *StoryCloseGap
+	for i := range out.Gaps {
+		if out.Gaps[i].Code == "deploy:behind" {
+			dbGap = &out.Gaps[i]
+		}
+	}
+	require.NotNil(t, dbGap, "deploy:behind gap missing: %+v", out.Gaps)
+	assert.Contains(t, dbGap.Detail, "release-sha-aaa")
+	assert.Contains(t, dbGap.Detail, "pprod-sha-bbb")
+	assertStoryUnchanged(t, f)
+}
+
+// TestStoryClose_DeployBehind_SatellitesSelfPath — sty_224774f0 AC4
+// regression guard. With SelfProjectID matching the test story's
+// project_id and no caller-supplied override, the resolver falls
+// back to c.SatellitesInfo. SatellitesInfo at test time returns
+// config.GitCommit ("unknown" in the test binary); the seeded
+// release-evidence row carries the same value, so the gate passes.
+// Locks the satellites-self path against future regressions.
+func TestStoryClose_DeployBehind_SatellitesSelfPath(t *testing.T) {
+	opts := happyOpts()
+	opts.SelfProjectID = "proj_test"
+	opts.PprodCommitOverride = "" // satellites-self must work without an override
+	opts.ReleaseEvidenceSHA = "unknown"
+	f := newStoryCloseFixture(t, "improvement", opts)
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	assert.Equal(t, "pass", out.Status,
+		"satellites-self project must fall back to SatellitesInfo when SelfProjectID matches; gaps=%+v", out.Gaps)
+	for _, g := range out.Gaps {
+		assert.NotEqual(t, "release-evidence:no-deploy-endpoint", g.Code,
+			"no-deploy-endpoint must not appear when SelfProjectID matches: %+v", g)
+	}
+}
+
+// TestStoryClose_DeployBehind_NoDeployEndpoint — sty_224774f0 AC2 anchor.
+// Consumer project (proj_test ≠ unconfigured SelfProjectID), no
+// pprod_commit override, no skip_deploy_check → resolver returns
+// ErrNoDeployEndpoint and the gate emits release-evidence:no-deploy-endpoint
+// (NOT deploy:behind) so the operator sees the missing-configuration
+// root cause. The Detail names the project_id and the two operator-
+// fixable knobs.
+func TestStoryClose_DeployBehind_NoDeployEndpoint(t *testing.T) {
+	opts := happyOpts()
+	opts.PprodCommitOverride = ""    // no caller proof
+	opts.SelfProjectID = ""          // no satellites-self match
+	opts.ReleaseEvidenceSHA = "release-sha-aaa"
+	f := newStoryCloseFixture(t, "improvement", opts)
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	assert.Equal(t, "fail", out.Status)
+	var sentinel *StoryCloseGap
+	for i := range out.Gaps {
+		if out.Gaps[i].Code == "release-evidence:no-deploy-endpoint" {
+			sentinel = &out.Gaps[i]
+		}
+		assert.NotEqual(t, "deploy:behind", out.Gaps[i].Code,
+			"deploy:behind must NOT fire on the consumer-no-config path; got %+v", out.Gaps[i])
+	}
+	require.NotNil(t, sentinel,
+		"release-evidence:no-deploy-endpoint missing: %+v", out.Gaps)
+	assert.Contains(t, sentinel.Detail, "proj_test")
+	assert.Contains(t, sentinel.Detail, "pprod_commit")
+	assert.Contains(t, sentinel.Detail, "skip_deploy_check")
+	assertStoryUnchanged(t, f)
+}
+
+// TestStoryClose_DeployBehind_SkipDeployCheck — sty_224774f0 AC2
+// opt-in opt-out. skip_deploy_check=true suppresses the deploy:behind
+// and release-evidence:no-deploy-endpoint comparisons entirely; the
+// gate proceeds even on a consumer project with no override and no
+// SelfProjectID. release-evidence:absent still fires when no row
+// exists (verified separately) — this test asserts the per-commit
+// check is what's gated, not the row-presence one.
+func TestStoryClose_DeployBehind_SkipDeployCheck(t *testing.T) {
+	opts := happyOpts()
+	opts.PprodCommitOverride = ""
+	opts.SelfProjectID = ""
+	opts.SkipDeployCheck = true
+	opts.ReleaseEvidenceSHA = "release-sha-aaa"
+	f := newStoryCloseFixture(t, "improvement", opts)
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	assert.Equal(t, "pass", out.Status,
+		"skip_deploy_check=true must suppress the deploy comparison entirely; gaps=%+v", out.Gaps)
+	for _, g := range out.Gaps {
+		assert.NotEqual(t, "deploy:behind", g.Code, "deploy:behind must not appear when skip_deploy_check=true: %+v", g)
+		assert.NotEqual(t, "release-evidence:no-deploy-endpoint", g.Code, "no-deploy-endpoint must not appear when skip_deploy_check=true: %+v", g)
+	}
 }
 
 func assertGap(t *testing.T, gaps []StoryCloseGap, code, detail string) {

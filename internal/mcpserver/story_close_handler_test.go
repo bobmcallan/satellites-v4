@@ -137,8 +137,15 @@ func TestHandleStoryClose_PassRoundTrip(t *testing.T) {
 	storyID := seedStoryCloseAlice(t, s)
 	ctx := withCaller(context.Background(), auth.CallerIdentity{UserID: "u_alice"})
 
+	// Pass pprod_commit matching the seeded release-evidence pushed_sha
+	// so the multi-tenant deploy:behind resolver (sty_224774f0)
+	// short-circuits to the override on a project that is not the
+	// satellites-self project. The test cfg has SelfProjectID empty,
+	// so without the override the gate would emit
+	// release-evidence:no-deploy-endpoint.
 	res, err := s.handleStoryClose(ctx, newCallToolReq("story_close", map[string]any{
-		"story_id": storyID,
+		"story_id":     storyID,
+		"pprod_commit": "unknown",
 	}))
 	if err != nil {
 		t.Fatalf("handler error: %v", err)

@@ -67,6 +67,15 @@ type Deps struct {
 	// disables the verb (returns an error). Set by the wire layer
 	// from cfg.ManifestURL. sty_64e69db8.
 	ManifestURL string
+	// SelfProjectID is the project_id this satellites deployment
+	// dogfoods against (the satellites-self project). Story_close's
+	// deploy:behind resolver uses it to decide when to fall back to
+	// SatellitesInfo for the running pprod commit; for any other
+	// project the resolver demands a caller-supplied pprod_commit
+	// or skip_deploy_check, otherwise emits the
+	// release-evidence:no-deploy-endpoint sentinel. Set by the wire
+	// layer from cfg.SelfProjectID. sty_224774f0.
+	SelfProjectID string
 }
 
 // Client carries the typed business surface that callers (MCP, CLI,

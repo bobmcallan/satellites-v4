@@ -218,6 +218,17 @@ type Config struct {
 	// httptest server. sty_64e69db8.
 	ManifestURL string `toml:"manifest_url"`
 
+	// SelfProjectID names the project this satellites server's own
+	// deployment dogfoods against. Set in the production satellites
+	// deployment so close-time chains for satellites' own stories
+	// resolve `pprod commit` via SatellitesInfo (the existing
+	// satellites-self path); empty (the consumer-deployment default)
+	// requires every caller to either supply pprod_commit or
+	// skip_deploy_check on story_close. Empty default keeps the
+	// resolver multi-tenant by construction. sty_224774f0.
+	// Env override: SATELLITES_SELF_PROJECT_ID.
+	SelfProjectID string `toml:"self_project_id"`
+
 	// loadedTOMLPath is set by Load() to the absolute path of the TOML
 	// file that was actually read (empty when defaults+env supplied the
 	// whole config). Read via the LoadedTOMLPath() accessor — the field
@@ -292,6 +303,7 @@ var describeTable = []FieldDoc{
 	{Field: "EmbeddingsBaseURL", Env: "SATELLITES_EMBEDDINGS_BASE_URL", Default: "(empty — provider canonical endpoint)", Description: "Embeddings provider HTTP base URL override."},
 	{Field: "EmbeddingsDimension", Env: "SATELLITES_EMBEDDINGS_DIMENSION", Default: "0 (provider default)", Description: "Optional embeddings vector dimensionality override."},
 	{Field: "ManifestURL", Env: "SATELLITES_MANIFEST_URL", Default: "https://github.com/bobmcallan/satellites/releases/latest/download/manifest.json", Description: "GitHub Release manifest URL fetched by the system_version verb."},
+	{Field: "SelfProjectID", Env: "SATELLITES_SELF_PROJECT_ID", Default: "(empty — multi-tenant; consumer projects must supply pprod_commit on story_close)", Description: "The project id this satellites deployment dogfoods against. Set on the satellites-self deployment (proj_7a62aedb) so SatellitesInfo backs deploy:behind for own stories."},
 }
 
 // Describe returns the canonical (Field, Env, Default, ProdRecommended,
@@ -449,6 +461,7 @@ type tomlOverlay struct {
 	EmbeddingsBaseURL    *string   `toml:"embeddings_base_url"`
 	EmbeddingsDimension  *int      `toml:"embeddings_dimension"`
 	ManifestURL          *string   `toml:"manifest_url"`
+	SelfProjectID        *string   `toml:"self_project_id"`
 }
 
 // applyTo copies overlay values into cfg for every non-nil field. Returns
@@ -582,6 +595,9 @@ func (o tomlOverlay) applyTo(cfg *Config, warnings *[]string) bool {
 	}
 	if o.ManifestURL != nil {
 		cfg.ManifestURL = *o.ManifestURL
+	}
+	if o.SelfProjectID != nil {
+		cfg.SelfProjectID = strings.TrimSpace(*o.SelfProjectID)
 	}
 	return devModeSet
 }
@@ -801,6 +817,9 @@ func applyEnvOverrides(cfg *Config, warnings *[]string) {
 	}
 	if v := os.Getenv("SATELLITES_MANIFEST_URL"); v != "" {
 		cfg.ManifestURL = v
+	}
+	if v := os.Getenv("SATELLITES_SELF_PROJECT_ID"); v != "" {
+		cfg.SelfProjectID = strings.TrimSpace(v)
 	}
 }
 

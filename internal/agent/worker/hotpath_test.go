@@ -477,6 +477,11 @@ func seedMergeToMainHappyStubs(t *testing.T, s *hotpathStub, pushedSHA string) {
 	s.gitOutputs["reset --hard "+defaultPreMergeHEAD] = ""
 	s.gitOutputs["fetch origin --quiet"] = ""
 	s.gitOutputs["rev-parse main"] = pushedSHA + "\n"
+	// sty_ca6299c9: the idempotent preflight `merge-base --is-ancestor
+	// <branch> main` MUST be primed to exit non-zero on the happy path
+	// (default stub returns empty-output/nil-error → looks like exit 0
+	// → idempotent path would erroneously fire and skip the merge).
+	s.gitErrors["merge-base --is-ancestor agent-task_dev-from-833a28e main"] = errors.New("exit status 1")
 	s.gitOutputs["merge-base --is-ancestor main agent-task_dev-from-833a28e"] = ""
 	s.gitOutputs["merge --ff-only agent-task_dev-from-833a28e"] =
 		"Updating abc123.." + pushedSHA + "\nFast-forward\n internal/auth/middleware.go | 10 ++++++++++\n"
@@ -593,8 +598,10 @@ func TestRunMergeToMainHotPath_ReleasePass(t *testing.T) {
 
 	// gitRunner sequence covers the AC3 refuse-on-dirty + rollback-
 	// anchor preamble (status, rev-parse HEAD) and the extended
-	// release: fetch, rev-parse, ancestor, merge, rev-parse, push-main.
-	expectedHead := []string{"status", "rev-parse", "fetch", "rev-parse", "merge-base", "merge", "rev-parse", "push"}
+	// release: fetch, rev-parse, idempotent-preflight, ancestor,
+	// merge, rev-parse, push-main. sty_ca6299c9 inserts the
+	// idempotent merge-base preflight before the ff-only ancestor.
+	expectedHead := []string{"status", "rev-parse", "fetch", "rev-parse", "merge-base", "merge-base", "merge", "rev-parse", "push"}
 	require.GreaterOrEqual(t, len(s.gitCmds), len(expectedHead))
 	for i, want := range expectedHead {
 		assert.Equal(t, want, s.gitCmds[i][1], "git command #%d should be %q (got %v)", i, want, s.gitCmds[i])
@@ -794,6 +801,74 @@ func TestRunMergeToMainHotPath_PostPushFailure_RollsBack(t *testing.T) {
 	assertTaskClosedFailure(t, s)
 	require.NotNil(t, s.findLedgerAppendWithTag("release:pushed_unverified"),
 		"post-push failure must append the pushed_unverified release-evidence row")
+}
+
+// TestRunMergeToMainHotPath_IdempotentAncestor — sty_ca6299c9. When
+// the work branch's tip is already reachable from main (a prior iter
+// completed the merge and main has since advanced past the branch),
+// the runner MUST detect the idempotent case via the new preflight
+// `git merge-base --is-ancestor <branch> main` check, skip the
+// merge/push/gh-watch/converge sequence, append a release-evidence
+// row tagged `release:idempotent` carrying `pushed_sha:<sourceTip>`,
+// and close success — instead of failing the existing ff-only
+// ancestor check (the dogfood failure on task_61bcfde7).
+func TestRunMergeToMainHotPath_IdempotentAncestor(t *testing.T) {
+	s := newHotpathStub(t)
+	seedMergeToMainHappyStubs(t, s, "deadbeef")
+	// Force the idempotent preflight to succeed (exit 0): the branch
+	// tip is reachable from main. Overrides the gitErrors entry the
+	// happy-path seed registered.
+	delete(s.gitErrors, "merge-base --is-ancestor agent-task_dev-from-833a28e main")
+	// rev-parse <branch> returns the source tip the runner records as
+	// the idempotent row's pushed_sha tag.
+	const sourceTip = "983a544abeefcafe"
+	s.gitOutputs["rev-parse agent-task_dev-from-833a28e"] = sourceTip + "\n"
+
+	cc := s.client(config.AgentConfig{RepoPath: "/repo", BranchTemplate: "agent-{task_id}-from-{base_sha}"})
+	outcome, err := runMergeToMainTask(t, cc)
+	require.NoError(t, err)
+	assert.Equal(t, OutcomeSuccess, outcome)
+
+	// No mutating git verb ran (per plan: skip merge/push/gh/converge).
+	for _, forbidden := range []string{"merge", "push", "reset"} {
+		if s.gitCmdSeen(forbidden) {
+			t.Errorf("runner ran %q on idempotent path: gitCmds=%v", forbidden, s.gitCmds)
+		}
+	}
+	// No gh-CLI shell-out (deploy already shipped in the prior iter).
+	if len(s.ghCmds) != 0 {
+		t.Errorf("idempotent path must not shell out to gh; got %v", s.ghCmds)
+	}
+	// No pprod converge poll.
+	assert.Equal(t, 0, s.pprodCalls, "idempotent path must not poll pprod converge")
+
+	// release:idempotent release-evidence row carries the source tip.
+	led := s.findLedgerAppendWithTag("release:idempotent")
+	require.NotNil(t, led, "release:idempotent evidence row missing; saw %+v", s.findAllAPICalls("ledger_append"))
+	tagsAny, _ := led.Body["tags"].([]any)
+	tags := make([]string, len(tagsAny))
+	for i, v := range tagsAny {
+		tags[i] = v.(string)
+	}
+	assert.Contains(t, tags, "kind:release-evidence")
+	assert.Contains(t, tags, "phase:merge_to_main")
+	assert.Contains(t, tags, "dispatch_class:hot")
+	assert.Contains(t, tags, "release:idempotent")
+	assert.Contains(t, tags, "pushed_sha:"+sourceTip)
+
+	// task_update(closed,success) persisted.
+	var sawClosedSuccess bool
+	for _, call := range s.findAllAPICalls("task_update") {
+		if call.Body["status"] == "closed" && call.Body["outcome"] == "success" {
+			sawClosedSuccess = true
+			break
+		}
+	}
+	assert.True(t, sawClosedSuccess, "task_update(closed,success) missing; saw %+v", s.findAllAPICalls("task_update"))
+
+	// No release:pushed_unverified row — nothing was pushed.
+	require.Nil(t, s.findLedgerAppendWithTag("release:pushed_unverified"),
+		"release:pushed_unverified must not be appended on idempotent path (nothing shipped)")
 }
 
 // TestVerifyChainPriorWorkSuccess: open work task on the chain

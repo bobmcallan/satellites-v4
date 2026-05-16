@@ -427,6 +427,31 @@ func (c *claudeClient) runMergeToMainHotPath(ctx context.Context, env TaskEnvelo
 		return c.failMergePrePush(ctx, env.ID, fmt.Errorf("merge_to_main: git rev-parse main: %w", err))
 	}
 
+	// sty_ca6299c9: idempotent preflight. Inverted ancestor check —
+	// "is the work branch's tip reachable from main?". Exit 0 means a
+	// prior iter completed the merge and main has since advanced past
+	// the branch tip. The merge command is a no-op (and the existing
+	// ff-only ancestor check below would refuse). Skip merge/push/
+	// gh-watch/converge and emit a release:idempotent release-evidence
+	// row so the chain reflects success and downstream story_close can
+	// locate the historical converge proof via the standard
+	// release-evidence walk (sty_1478a1df).
+	if _, err := c.gitRunner(ctx, c.cfg.RepoPath, "merge-base", "--is-ancestor", branch, "main"); err == nil {
+		sourceTipOut, err := c.gitRunner(ctx, c.cfg.RepoPath, "rev-parse", branch)
+		if err != nil {
+			return c.failMergePrePush(ctx, env.ID, fmt.Errorf("merge_to_main: idempotent rev-parse %s: %w", branch, err))
+		}
+		sourceTip := strings.TrimSpace(string(sourceTipOut))
+		if err := c.appendHotMergeIdempotentEvidence(ctx, env, ti, branch, sourceTip); err != nil {
+			_ = c.closeTaskFailure(ctx, env.ID, fmt.Sprintf("merge_to_main: idempotent evidence: %v", err))
+			return OutcomeFailure, fmt.Errorf("merge_to_main: idempotent evidence: %w", err)
+		}
+		if err := c.closeTaskSuccess(ctx, env.ID); err != nil {
+			return OutcomeFailure, fmt.Errorf("merge_to_main: idempotent close task: %w", err)
+		}
+		return OutcomeSuccess, nil
+	}
+
 	if _, err := c.gitRunner(ctx, c.cfg.RepoPath, "merge-base", "--is-ancestor", "main", branch); err != nil {
 		return c.failMergePrePush(ctx, env.ID, fmt.Errorf("merge_to_main: ff-only ancestor check: %w", err))
 	}
@@ -673,6 +698,50 @@ func parseGHRunID(out []byte) (string, error) {
 		return "", errors.New("gh run list: first row has empty databaseId")
 	}
 	return fmt.Sprintf("%d", rows[0].DatabaseID), nil
+}
+
+// appendHotMergeIdempotentEvidence writes the kind:release-evidence
+// row variant emitted when the runner detects the branch tip is
+// already reachable from main (sty_ca6299c9). No merge, no push, no
+// gh-watch, no converge poll ran — the work shipped in a prior iter.
+// The row carries release:idempotent so reviewers / downstream
+// consumers can distinguish it from a converged release, and
+// pushed_sha:<sourceTip> so the existing story_close ancestry-aware
+// walk has the same shape to match on.
+func (c *claudeClient) appendHotMergeIdempotentEvidence(ctx context.Context, env TaskEnvelope, ti taskInfo, branch, sourceTip string) error {
+	content := fmt.Sprintf(
+		"## merge_to_main idempotent release evidence — %s\n\n"+
+			"**Branch:** `%s`\n"+
+			"**Source tip:** `%s`\n"+
+			"**Dispatch class:** hot (in-process runner).\n\n"+
+			"## Preflight ancestor check\n\n"+
+			"```\n$ git -C <repo> merge-base --is-ancestor %s main && echo OK\nOK\n```\n\n"+
+			"The branch tip is already reachable from `main`: a prior iter shipped this work and main has since advanced past the branch.\n"+
+			"The ff-only merge would refuse (`main` is ahead of the branch tip), so the runner records the historical release and closes success.\n\n"+
+			"## Skipped steps\n\n"+
+			"- `git merge --ff-only %s` (the branch tip is behind main; no advance possible).\n"+
+			"- `git push origin main` (nothing to push).\n"+
+			"- `gh run list` / `gh run watch` (the deploy workflow shipped in the prior iter).\n"+
+			"- pprod converge poll (the historical release row for `%s` carries the converge proof).\n\n"+
+			"## Principles cited\n\n"+
+			"- `pr_substrate_model` — the substrate's release-evidence ledger is the source of truth for \"is this work shipped?\".\n"+
+			"- `pr_no_unrequested_compat` — direct fix; no shim. The runner detects the idempotent case and writes a tagged evidence row instead of failing the ff-only ancestor check.\n",
+		ti.StoryID, branch, sourceTip,
+		branch,
+		branch,
+		sourceTip,
+	)
+	tags := []string{
+		"task_id:" + env.ID,
+		"story_id:" + ti.StoryID,
+		"phase:merge_to_main",
+		"branch:" + branch,
+		"dispatch_class:hot",
+		"kind:release-evidence",
+		"release:idempotent",
+		"pushed_sha:" + sourceTip,
+	}
+	return c.appendEvidence(ctx, env.ProjectID, ti.StoryID, tags, content)
 }
 
 // appendHotMergeReleaseEvidence writes the kind:release-evidence

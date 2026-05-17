@@ -1083,6 +1083,105 @@ func TestStoryClose_TolerantNoContract(t *testing.T) {
 	assert.Equal(t, "", payload["contract_id"], "missing contract must record empty contract_id")
 }
 
+// TestStoryClose_LifecycleDriftRowAppended — sty_e0c3d615 AC2. The
+// happy fixture seeds a chain without a contract:plan work task, so
+// the drift helper returns drifted:plan_absent. story_close MUST
+// append exactly one kind:lifecycle-drift ledger row tagged
+// reason:drifted:plan_absent regardless of the gate's pass/fail
+// outcome (the row is advisory).
+func TestStoryClose_LifecycleDriftRowAppended(t *testing.T) {
+	f := newStoryCloseFixture(t, "improvement", happyOpts())
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	require.Equal(t, "pass", out.Status, "happy fixture must still close even though it drifts; gaps=%+v", out.Gaps)
+
+	rows, err := f.c.deps.Ledger.List(context.Background(), f.projectID,
+		ledger.ListOptions{StoryID: f.storyID, Limit: 50}, f.caller.Memberships)
+	require.NoError(t, err)
+	driftRows := 0
+	for _, r := range rows {
+		if hasTag(r.Tags, "kind:lifecycle-drift") {
+			driftRows++
+			assert.True(t, hasTag(r.Tags, "reason:"+LifecyclePlanAbsent), "drift row missing reason tag: %+v", r.Tags)
+		}
+	}
+	assert.Equal(t, 1, driftRows, "expected exactly one kind:lifecycle-drift row on the plan-absent chain")
+}
+
+// TestStoryClose_LifecycleDriftRowIdempotent — sty_e0c3d615 AC2. A
+// second story_close on the same drifted chain MUST NOT duplicate the
+// drift row. The fixture's first close lands on PASS and walks the
+// story to done; the second close fails on `story:already_done`. We
+// re-list rows after the second call to assert the drift row count is
+// still one.
+func TestStoryClose_LifecycleDriftRowIdempotent(t *testing.T) {
+	f := newStoryCloseFixture(t, "improvement", happyOpts())
+	_, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+
+	in := f.closeInput()
+	in.Now = f.now.Add(20 * time.Minute)
+	_, err = f.c.StoryClose(context.Background(), f.caller, in)
+	require.NoError(t, err)
+
+	rows, err := f.c.deps.Ledger.List(context.Background(), f.projectID,
+		ledger.ListOptions{StoryID: f.storyID, Limit: 50}, f.caller.Memberships)
+	require.NoError(t, err)
+	driftRows := 0
+	for _, r := range rows {
+		if hasTag(r.Tags, "kind:lifecycle-drift") && hasTag(r.Tags, "reason:"+LifecyclePlanAbsent) {
+			driftRows++
+		}
+	}
+	assert.Equal(t, 1, driftRows, "drift row must be idempotent across repeated story_close calls")
+}
+
+// TestStoryClose_LifecycleOnShapeNoDriftRow — sty_e0c3d615 AC2 negative
+// case. A chain that satisfies the workflow shape (plan + develop work +
+// develop review + merge_to_main work, all closed) MUST NOT emit a
+// kind:lifecycle-drift row.
+func TestStoryClose_LifecycleOnShapeNoDriftRow(t *testing.T) {
+	f := newStoryCloseFixture(t, "improvement", happyOpts())
+	ctx := context.Background()
+	// Seed the on-shape phases the happy fixture omits: plan + develop
+	// review + merge_to_main.
+	for _, phase := range []struct {
+		action string
+		kind   string
+		offset time.Duration
+	}{
+		{"contract:plan", task.KindWork, -2 * time.Minute},
+		{"contract:develop", task.KindReview, 1 * time.Minute},
+		{"contract:merge_to_main", task.KindWork, 4 * time.Minute},
+	} {
+		seed, err := f.c.deps.Tasks.Enqueue(ctx, task.Task{
+			WorkspaceID: f.wsID,
+			ProjectID:   f.projectID,
+			StoryID:     f.storyID,
+			Kind:        phase.kind,
+			Action:      phase.action,
+			Origin:      task.OriginStoryStage,
+			Status:      task.StatusPublished,
+			Priority:    task.PriorityMedium,
+		}, f.now.Add(phase.offset))
+		require.NoError(t, err)
+		_, err = f.c.deps.Tasks.Close(ctx, seed.ID, task.OutcomeSuccess, f.now.Add(phase.offset+time.Second), f.caller.Memberships)
+		require.NoError(t, err)
+	}
+
+	out, err := f.c.StoryClose(ctx, f.caller, f.closeInput())
+	require.NoError(t, err)
+	require.Equal(t, "pass", out.Status, "on-shape chain must close cleanly; gaps=%+v", out.Gaps)
+
+	rows, err := f.c.deps.Ledger.List(ctx, f.projectID,
+		ledger.ListOptions{StoryID: f.storyID, Limit: 50}, f.caller.Memberships)
+	require.NoError(t, err)
+	for _, r := range rows {
+		assert.False(t, hasTag(r.Tags, "kind:lifecycle-drift"),
+			"on-shape chain must not emit a drift row: %+v", r)
+	}
+}
+
 func assertGap(t *testing.T, gaps []StoryCloseGap, code, detail string) {
 	t.Helper()
 	for _, g := range gaps {

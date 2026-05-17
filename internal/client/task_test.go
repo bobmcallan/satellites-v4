@@ -278,6 +278,47 @@ func TestTaskWalk_BuildsChainForStory(t *testing.T) {
 	assert.Equal(t, 0, out.ActionSummary[0].WorkClosed)
 }
 
+// TestTaskWalk_LifecycleStatusOnEmptyChain — sty_e0c3d615 AC2.
+// task_walk MUST populate lifecycle_status. An empty chain (no
+// contract:plan task) reports drifted:plan_absent.
+func TestTaskWalk_LifecycleStatusOnEmptyChain(t *testing.T) {
+	f := newTaskFixture(t)
+	out, err := f.c.TaskWalk(context.Background(), f.caller, TaskWalkInput{
+		StoryID:     f.storyID,
+		Memberships: f.caller.Memberships,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, LifecyclePlanAbsent, out.LifecycleStatus,
+		"empty chain must report plan_absent; got %q", out.LifecycleStatus)
+}
+
+// TestTaskWalk_LifecycleStatusOnShape — sty_e0c3d615 AC2. A chain
+// with a closed contract:plan work task reports on_shape mid-flight.
+func TestTaskWalk_LifecycleStatusOnShape(t *testing.T) {
+	f := newTaskFixture(t)
+	ctx := context.Background()
+	planned, err := f.taskStore.Enqueue(ctx, task.Task{
+		WorkspaceID: f.wsID,
+		ProjectID:   f.projID,
+		StoryID:     f.storyID,
+		Kind:        task.KindWork,
+		Action:      "contract:plan",
+		Origin:      task.OriginStoryStage,
+		Status:      task.StatusPublished,
+		Priority:    task.PriorityMedium,
+	}, f.now)
+	require.NoError(t, err)
+	_, err = f.taskStore.Close(ctx, planned.ID, task.OutcomeSuccess, f.now.Add(time.Second), f.caller.Memberships)
+	require.NoError(t, err)
+
+	out, err := f.c.TaskWalk(ctx, f.caller, TaskWalkInput{
+		StoryID:     f.storyID,
+		Memberships: f.caller.Memberships,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, LifecycleOnShape, out.LifecycleStatus)
+}
+
 // TestTaskWalk_StoryNotFound returns the typed sentinel for unknown
 // story ids so the wire layer can map to its own envelope.
 func TestTaskWalk_StoryNotFound(t *testing.T) {

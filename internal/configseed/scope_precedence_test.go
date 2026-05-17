@@ -175,6 +175,56 @@ func TestScopePrecedence_RealSatellitesWorkspace_AdoptsSystemDefault(t *testing.
 	}
 }
 
+// TestScopePrecedence_WorkspaceLifecycleWorkflowLoads — sty_e0c3d615
+// AC1 anchor. The workspace-scope `default_lifecycle` workflow file
+// must load via RunWorkspace and resolve via Documents.ResolveByName
+// to the workspace scope. The doc body must name every phase the
+// `task_walk.lifecycle_status` computation enumerates so the prose
+// and the Go helper stay in lock-step.
+func TestScopePrecedence_WorkspaceLifecycleWorkflowLoads(t *testing.T) {
+	t.Parallel()
+	seedDir, err := filepath.Abs(filepath.Join("..", "..", "config", "seed"))
+	if err != nil {
+		t.Fatalf("abs seed dir: %v", err)
+	}
+	const wsID = "wksp_5b3257d1"
+
+	docs := document.NewMemoryStore()
+	ctx := context.Background()
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+
+	if _, err := Run(ctx, docs, seedDir, "system", "system", now); err != nil {
+		t.Fatalf("Run system: %v", err)
+	}
+	if _, err := RunWorkspace(ctx, docs, seedDir, wsID, "system", now); err != nil {
+		t.Fatalf("RunWorkspace: %v", err)
+	}
+
+	resolved, err := docs.ResolveByName(ctx, document.TypeWorkflow, "default_lifecycle", wsID, "", []string{wsID})
+	if err != nil {
+		t.Fatalf("ResolveByName default_lifecycle: %v", err)
+	}
+	if resolved.Scope != document.ScopeWorkspace {
+		t.Errorf("default_lifecycle scope = %q, want %q", resolved.Scope, document.ScopeWorkspace)
+	}
+	body := resolved.Body
+	wantPhrases := []string{
+		"plan → (develop → review → iterate)",
+		"contract:plan",
+		"contract:develop",
+		"contract:merge_to_main",
+		"drifted:plan_absent",
+		"drifted:review_skipped",
+		"drifted:close_before_push",
+		"pr_lifecycle_shape",
+	}
+	for _, phrase := range wantPhrases {
+		if !contains(body, phrase) {
+			t.Errorf("default_lifecycle body missing %q", phrase)
+		}
+	}
+}
+
 // TestScopePrecedence_SystemTier_NoProjectStoryIDs is the
 // non-drift assertion (AC20). System-tier `claude_orchestrator`,
 // `workflows/default`, and `artifacts/default_agent_process` must not

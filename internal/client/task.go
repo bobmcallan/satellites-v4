@@ -59,12 +59,19 @@ type TaskWalkInput struct {
 
 // TaskWalkOutput is the wire shape for task_walk. Mirrors the
 // per-story chain projection: header + ordered tasks + current-task
-// pointer + per-action summary.
+// pointer + per-action summary + lifecycle drift status.
+//
+// LifecycleStatus is computed by computeLifecycleStatus against the
+// workflow doc's enumerated phases (sty_e0c3d615). Values: `on_shape`
+// or `drifted:<reason>`. Advisory only — chain dispatch is unaffected;
+// the `story_close` gate appends a `kind:lifecycle-drift` warning row
+// on drift but does not refuse to close.
 type TaskWalkOutput struct {
-	Story         TaskWalkStory           `json:"story"`
-	Tasks         []TaskWalkTask          `json:"tasks"`
-	CurrentTaskID string                  `json:"current_task_id,omitempty"`
-	ActionSummary []TaskWalkActionSummary `json:"action_summary,omitempty"`
+	Story           TaskWalkStory           `json:"story"`
+	Tasks           []TaskWalkTask          `json:"tasks"`
+	CurrentTaskID   string                  `json:"current_task_id,omitempty"`
+	ActionSummary   []TaskWalkActionSummary `json:"action_summary,omitempty"`
+	LifecycleStatus string                  `json:"lifecycle_status,omitempty"`
 }
 
 // TaskWalkStory is the story header.
@@ -183,6 +190,7 @@ func (c *Client) TaskWalk(ctx context.Context, caller Caller, in TaskWalkInput) 
 	}
 	out.CurrentTaskID = currentTaskID
 	out.ActionSummary = summariseActions(tasks, ledgerByAction)
+	out.LifecycleStatus = computeLifecycleStatus(st.Status, tasks)
 	return out, nil
 }
 

@@ -53,6 +53,16 @@ review-criteria.md) is the review yardstick for every downstream
 contract; meta-review of the plan happens implicitly when the
 develop reviewer cites plan-induced gaps in its verdict.
 
+## Lifecycle reference
+
+Plan is the first phase of the canonical lifecycle `plan →
+(develop → review → iterate)+ → commit → push → close`. The
+workspace-scope `default_lifecycle` workflow document is the
+prose-authoritative source for the phase ordering; this contract
+authors the task list against that ordering. `task_walk` returns
+a `lifecycle_status` field computed against the same workflow —
+plan-absent chains drift as `drifted:plan_absent`.
+
 ## Limitations
 
 - Plan binds develop. Mid-flight scope changes go through the

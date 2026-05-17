@@ -85,6 +85,18 @@ row, then walks the story to `done` via `UpdateStatusDerived`.
    directly anywhere on the close path (would bypass this gate;
    cite `pr_story_terminal_gate`).
 
+6. **Lifecycle-drift warning** — `task_walk` returns a
+   `lifecycle_status` field computed against the workspace-scope
+   `default_lifecycle` workflow document; values are `on_shape` or
+   `drifted:<reason>` (`plan_absent`, `review_skipped`,
+   `close_before_push`, `phase_unknown:<action>`). On a drifted
+   chain the gate appends ONE `kind:lifecycle-drift` ledger row
+   tagged `reason:<drift_reason>` and proceeds. Idempotent —
+   repeat closes on the same drifted chain author no duplicate
+   row. The signal is initially advisory: the gate does NOT
+   refuse to close on drift. Reviewers MAY cite
+   `pr_lifecycle_shape` when the gap is reviewer-relevant.
+
 ## How
 
 Structural only. No LLM call, no shell-out, no agent dispatch. The

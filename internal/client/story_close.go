@@ -164,6 +164,19 @@ func (c *Client) StoryClose(ctx context.Context, caller Caller, in StoryCloseInp
 		return StoryCloseOutput{}, err
 	}
 
+	// sty_e0c3d615 — lifecycle drift warning row. Compute drift against
+	// the close-time hypothetical (terminal status) so the close-before-
+	// push / review-skipped checks fire at the moment story_close runs.
+	// Advisory only: append exactly one kind:lifecycle-drift row per
+	// drift reason on this story, regardless of whether the gate
+	// proceeds to PASS. Idempotent — repeat closes on the same drifted
+	// chain do not duplicate the row.
+	if reason := computeLifecycleStatus(story.StatusDone, tasks); reason != LifecycleOnShape && reason != "" {
+		if err := c.appendLifecycleDriftRow(ctx, caller, st, rows, reason, now); err != nil {
+			return StoryCloseOutput{}, err
+		}
+	}
+
 	var gaps []StoryCloseGap
 
 	// AC3(c) — no open kind=work task on chain.
@@ -546,6 +559,38 @@ func (c *Client) resolveStoryCloseContract(ctx context.Context, workspaceID, pro
 		return ""
 	}
 	return doc.ID
+}
+
+// appendLifecycleDriftRow records a kind:lifecycle-drift ledger row
+// for the given drift reason, scoped to the story. Idempotent — if a
+// row with the same reason tag already exists on the story's rows,
+// the function returns without writing. sty_e0c3d615.
+func (c *Client) appendLifecycleDriftRow(ctx context.Context, caller Caller, st story.Story, rows []ledger.LedgerEntry, reason string, now time.Time) error {
+	reasonTag := "reason:" + reason
+	for _, r := range rows {
+		if hasTag(r.Tags, "kind:lifecycle-drift") && hasTag(r.Tags, reasonTag) {
+			return nil
+		}
+	}
+	payload := map[string]any{
+		"reason":     reason,
+		"story_id":   st.ID,
+		"chain_size": len(rows),
+	}
+	body, _ := json.Marshal(payload)
+	_, err := c.deps.Ledger.Append(ctx, ledger.LedgerEntry{
+		WorkspaceID: st.WorkspaceID,
+		ProjectID:   st.ProjectID,
+		StoryID:     ledger.StringPtr(st.ID),
+		Type:        ledger.TypeEvidence,
+		Tags:        []string{"kind:lifecycle-drift", "story_id:" + st.ID, reasonTag},
+		Content:     string(body),
+		Durability:  ledger.DurabilityDurable,
+		SourceType:  ledger.SourceSystem,
+		Status:      ledger.StatusActive,
+		CreatedBy:   caller.UserID,
+	}, now)
+	return err
 }
 
 // fieldFromTemplateFailure extracts the field name from a template's

@@ -94,7 +94,7 @@ CLI for `task run` dispatch. Both produce the same audit chain.
 |---|---|
 | Story description + acceptance criteria | `satellites_story_get(id)` |
 | User prompt / runtime intent | The current Claude session message stream (the `implement story_xxx` request and any clarifications) |
-| Default workflow document (prose context) | `type=workflow`, scope=system, name=`default` — read for context only; the substrate no longer enforces a slot list. |
+| Default workflow document (prose context) | `type=workflow`, name=`default_lifecycle` (workspace) → fallback `default` (system) — read for context. The `default_lifecycle` workflow enumerates the canonical lifecycle `plan → (develop → review → iterate)+ → commit → push → close` and registers the `pr_lifecycle_shape` citation slot; `task_walk` returns a `lifecycle_status` field computed against this workflow (advisory only). |
 | Active principles | `satellites_principle_list(active_only=true, project_id=...)`. |
 | Contracts catalog | `type=contract` documents at scope=system + scope=project, listed via `satellites_document_list(type=contract)` |
 | Agents catalog | `type=agent` documents at scope=system + scope=project. Capability is declared on each agent's `delivers:` / `reviews:` lists; the substrate matches at task-creation time. Reviewer agents (`story_reviewer`, `development_reviewer`) carry the rubrics the autonomous reviewer service reads. |

@@ -126,6 +126,19 @@ in-process — the orchestrator-driven async model keeps dispatch in
 one place and develop's permission envelope free of subagent
 spawning.
 
+## Lifecycle position
+
+Develop occupies the `(develop → review → iterate)+` loop slot of
+the canonical lifecycle. The workspace-scope `default_lifecycle`
+workflow document is the prose-authoritative source for the phase
+ordering; an accepted develop review allows either the next
+develop slice OR an exit to `commit`, while a rejected review
+mints an iter-N+1 develop task per
+`pr_reviewer_voice_authoritative`. `task_walk`'s
+`lifecycle_status` field surfaces drift — a terminal story with a
+closed develop work but no paired review reports
+`drifted:review_skipped`.
+
 ## Limitations
 
 - No `git push` — push is a separate contract.

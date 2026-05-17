@@ -123,6 +123,31 @@ Verdict vocabulary on the row tags is `verdict:pass | verdict:fail`
 all reviewers is filed as a separate follow-up per the
 `sty_b97dda00` story body.
 
+## Verdict-handling
+
+The orchestrator's contract-prescribed next action when this review
+task closes:
+
+- **`verdict:pass`** — invoke the mechanical `story_close` verb via
+  `mcp__satellites__story_close(story_id=<…>)`. The verb runs the
+  structural gate documented in the `story_close` contract,
+  appends a `kind:close-evidence` ledger row, and walks the story
+  to `done` via `UpdateStatusDerived` in the same call. The
+  orchestrator does NOT call `story_update_status(done)` directly
+  on the close path — that would bypass the gate and violate
+  `pr_story_terminal_gate`.
+- **`verdict:fail`** — author a fresh iter-N+1 work task via
+  `task_add(action=contract:develop, prior_task_id=<rejected>,
+  prompt=<addresses cited gaps>)` per `pr_pipeline_authority`. The
+  verdict text — including principle ids it cites and gaps it names
+  — IS the close-criteria checklist for the iter-N+1 retry. Do NOT
+  invoke `story_close` after a `verdict:fail` row.
+
+This step is named in this contract so the orchestrator executes it
+from prose rather than from implicit workflow ordering. Cite
+`pr_mandate_configuration_over_code` (the framing alias for
+`pr_substrate_model`'s configuration-over-code mandate).
+
 ## Review policy
 
 `story_review` is a base case. There is no reviewer of the
@@ -138,5 +163,6 @@ verb is the structural enforcement.
   row's tags.
 - The mechanical `story_close` verb refuses to walk a story to
   `done` while the review task is absent, open, or carries
-  `verdict:fail` — see the new structural gate in
+  `verdict:fail` — see the `story_close` contract for the gate's
+  named steps; the structural enforcement lives at
   `internal/client/story_close.go`.

@@ -9,6 +9,20 @@
 // The verb performs no LLM call, no shell-out, no agent dispatch — same
 // tier as pr_story_terminal_gate's in-Go enforcement in
 // internal/story/store.go.
+//
+// Contract resolution (sty_44fdf9f4). The gate's named steps live in
+// the `story_close` contract prose at
+// `config/seed/system/contracts/story_close.md`. The gate resolves
+// the contract via `Documents.ResolveByName` (project-scope-first,
+// workspace-scope, system-scope fallback) and records the resolved
+// document id on the `kind:close-evidence` ledger row payload's
+// `contract_id` field, so a project-scope override authored via
+// `contract_add(scope=project, name=story_close, project_id=<…>)`
+// becomes observable on the close-evidence row without any Go change.
+// The structural invariants the gate enforces remain in Go — the
+// contract body is the authoritative prose surface, kept in lock-step
+// with this implementation per `pr_substrate_model` (configuration-
+// over-code mandate, framing alias `pr_mandate_configuration_over_code`).
 
 package client
 
@@ -19,10 +33,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/story"
 	"github.com/bobmcallan/satellites/internal/task"
 )
+
+// storyCloseContractName is the document name the close gate resolves
+// at close time. The same name is honoured at every scope tier — a
+// project-scope row at this name overrides the system-scope seed
+// without any Go change.
+const storyCloseContractName = "story_close"
 
 // StoryCloseInput names the story to close. ResolutionCode is the slot
 // stored on the kind:close-evidence ledger row; empty falls back to
@@ -327,11 +348,13 @@ func (c *Client) StoryClose(ctx context.Context, caller Caller, in StoryCloseInp
 	if resolution == "" {
 		resolution = resolutionCodeDefault
 	}
+	contractID := c.resolveStoryCloseContract(ctx, st.WorkspaceID, st.ProjectID, memberships)
 	payload := map[string]any{
-		"resolution":      resolution,
-		"review_task_id":  reviewTask.ID,
-		"verdict_row_id":  verdictRow.ID,
-		"chain_size":      len(tasks),
+		"resolution":     resolution,
+		"review_task_id": reviewTask.ID,
+		"verdict_row_id": verdictRow.ID,
+		"chain_size":     len(tasks),
+		"contract_id":    contractID,
 	}
 	body, _ := json.Marshal(payload)
 	evidence, err := c.deps.Ledger.Append(ctx, ledger.LedgerEntry{
@@ -487,6 +510,42 @@ func (c *Client) resolvePprodCommit(ctx context.Context, caller Caller, projectI
 		return strings.TrimSpace(out.Server.Commit), nil
 	}
 	return "", ErrNoDeployEndpoint
+}
+
+// resolveStoryCloseContract returns the document id of the
+// `story_close` contract the gate cites on the kind:close-evidence
+// row. Walks project → workspace → system via the shared
+// Documents.ResolveByName tier resolver — the same precedence the
+// rest of the substrate uses for contract / agent / workflow
+// lookups. Returns "" when no contract row exists (the gate
+// tolerates a missing contract; the structural invariants live in
+// Go and the close still proceeds). Type-checked: only documents
+// whose Type is `contract` are accepted, so a name collision with a
+// non-contract row cannot poison the gate's evidence trail.
+//
+// sty_44fdf9f4 — the contract_id field on the close-evidence
+// payload makes the project-scope override path observable from the
+// ledger row alone (the operator sees which contract prose the gate
+// cited, and a project-scope row's id differs from the system-scope
+// row's id). The named gate steps remain Go invariants; the
+// contract body is the authoritative prose surface, kept in
+// lock-step per pr_substrate_model.
+func (c *Client) resolveStoryCloseContract(ctx context.Context, workspaceID, projectID string, memberships []string) string {
+	if c.deps.Documents == nil {
+		return ""
+	}
+	doc, err := c.deps.Documents.ResolveByName(
+		ctx,
+		document.TypeContract,
+		storyCloseContractName,
+		workspaceID,
+		projectID,
+		memberships,
+	)
+	if err != nil {
+		return ""
+	}
+	return doc.ID
 }
 
 // fieldFromTemplateFailure extracts the field name from a template's

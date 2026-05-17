@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -968,6 +969,118 @@ func TestStoryClose_CarrierUnknownFieldIgnored(t *testing.T) {
 	require.NoError(t, err)
 	_, present := st.Fields["not_declared"]
 	assert.False(t, present, "unknown field must not be written")
+}
+
+// seedStoryCloseContract is the test helper that lands a story_close
+// contract document in the fixture's document store. scope="system"
+// creates a system-tier row (no workspace/project stamp);
+// scope="project" creates a project-tier row stamped with the
+// fixture's workspace + project so ResolveByName's membership filter
+// sees it. The document id is returned for the contract_id payload
+// assertions.
+func seedStoryCloseContract(t *testing.T, f *storyCloseFixture, scope, body string) string {
+	t.Helper()
+	docStore, ok := f.c.deps.Documents.(*document.MemoryStore)
+	require.True(t, ok, "fixture document store must be MemoryStore for direct Create access")
+	doc := document.Document{
+		Type:   document.TypeContract,
+		Name:   "story_close",
+		Body:   body,
+		Status: document.StatusActive,
+		Scope:  scope,
+	}
+	switch scope {
+	case document.ScopeProject:
+		pid := f.projectID
+		doc.ProjectID = &pid
+		doc.WorkspaceID = f.wsID
+	case document.ScopeSystem:
+		// system-scope rows carry no workspace / project stamp
+		// (sty_e2512dbd ClearSystemTenantStamps invariant).
+	}
+	created, err := docStore.Create(context.Background(), doc, f.now)
+	require.NoError(t, err)
+	require.NotEmpty(t, created.ID)
+	return created.ID
+}
+
+// closeEvidencePayload reads back the kind:close-evidence row's JSON
+// payload for the fixture's story. Returns the decoded map and the
+// row id; fails the test if no close-evidence row is present.
+func closeEvidencePayload(t *testing.T, f *storyCloseFixture) (map[string]any, string) {
+	t.Helper()
+	rows, err := f.c.deps.Ledger.List(context.Background(), f.projectID,
+		ledger.ListOptions{StoryID: f.storyID, Limit: 50}, f.caller.Memberships)
+	require.NoError(t, err)
+	for _, r := range rows {
+		if !hasTag(r.Tags, "kind:close-evidence") {
+			continue
+		}
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal([]byte(r.Content), &payload))
+		return payload, r.ID
+	}
+	t.Fatalf("kind:close-evidence row absent on story %s: %+v", f.storyID, rows)
+	return nil, ""
+}
+
+// TestStoryClose_RecordsSystemContractID — sty_44fdf9f4 AC1+AC4 anchor.
+// With only a system-scope `story_close` contract row in the document
+// store, the close-evidence payload's `contract_id` field carries that
+// system contract's document id. Proves the resolver consults the
+// document store and the gate records the resolved id from the prose
+// surface — no hardcoded id, no per-category switch.
+func TestStoryClose_RecordsSystemContractID(t *testing.T) {
+	f := newStoryCloseFixture(t, "improvement", happyOpts())
+	sysID := seedStoryCloseContract(t, f, document.ScopeSystem, "# system story_close stub")
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	require.Equal(t, "pass", out.Status, "happy path must pass; gaps=%+v", out.Gaps)
+
+	payload, evidenceID := closeEvidencePayload(t, f)
+	assert.Equal(t, out.EvidenceID, evidenceID, "EvidenceID in response must match close-evidence row id")
+	assert.Equal(t, sysID, payload["contract_id"], "close-evidence payload must carry the system story_close contract id")
+}
+
+// TestStoryClose_RecordsProjectContractID — sty_44fdf9f4 AC3 anchor.
+// With BOTH a system-scope AND a project-scope `story_close` contract
+// row present (the realistic shape after a project authors an
+// override via contract_add(scope=project, name=story_close, …)),
+// the close-evidence payload's `contract_id` is the project-scope
+// row's id, not the system one. Proves the project-scope override is
+// visible in the ledger row without any Go change beyond the generic
+// resolver.
+func TestStoryClose_RecordsProjectContractID(t *testing.T) {
+	f := newStoryCloseFixture(t, "improvement", happyOpts())
+	sysID := seedStoryCloseContract(t, f, document.ScopeSystem, "# system story_close stub")
+	projID := seedStoryCloseContract(t, f, document.ScopeProject, "# project story_close override")
+	require.NotEqual(t, sysID, projID, "fixture sanity: project and system contracts must have distinct ids")
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	require.Equal(t, "pass", out.Status, "happy path must pass; gaps=%+v", out.Gaps)
+
+	payload, _ := closeEvidencePayload(t, f)
+	assert.Equal(t, projID, payload["contract_id"], "project-scope override must win in close-evidence payload")
+	assert.NotEqual(t, sysID, payload["contract_id"], "system-scope id must not appear when project-scope row exists")
+}
+
+// TestStoryClose_TolerantNoContract — sty_44fdf9f4 AC1 robustness.
+// With NO `story_close` contract row in the document store at any
+// scope, the gate still proceeds to PASS and the close-evidence
+// payload carries `contract_id: ""`. Proves the gate does not gate
+// on contract presence — the structural invariants are Go and the
+// contract body is a documentation surface, not a precondition.
+func TestStoryClose_TolerantNoContract(t *testing.T) {
+	f := newStoryCloseFixture(t, "improvement", happyOpts())
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	require.Equal(t, "pass", out.Status, "missing contract must not gate the close; gaps=%+v", out.Gaps)
+
+	payload, _ := closeEvidencePayload(t, f)
+	assert.Equal(t, "", payload["contract_id"], "missing contract must record empty contract_id")
 }
 
 func assertGap(t *testing.T, gaps []StoryCloseGap, code, detail string) {

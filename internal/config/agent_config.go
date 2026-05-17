@@ -87,6 +87,21 @@ type AgentConfig struct {
 	// caller; never read from TOML. sty_ef4eedaa.
 	ClientConfigPath string `toml:"-"`
 
+	// ConvergeRequestTimeout is the per-request HTTP timeout the
+	// merge_to_main hot-path runner applies to each satellites_info
+	// poll against pprod. Sized for Fly cold-start headroom (default
+	// 60s). Distinct from the loop budget (defaultPprodConvergeTimeout
+	// =5m) — that bounds total wait; this bounds each in-flight
+	// request. sty_1cb6e9fa.
+	ConvergeRequestTimeout time.Duration `toml:"converge_request_timeout"`
+
+	// ConvergeConsecutiveSuccesses is the number of consecutive
+	// matching satellites_info polls required before the runner
+	// declares pprod convergence. Default 1 preserves prior behaviour;
+	// operators raise this to require flake-tolerant matches.
+	// sty_1cb6e9fa.
+	ConvergeConsecutiveSuccesses int `toml:"converge_consecutive_successes"`
+
 	// loadedTOMLPath records the path that was actually read; "" when
 	// the loader fell back to defaults.
 	loadedTOMLPath string
@@ -141,25 +156,27 @@ func defaultsAgent() *AgentConfig {
 		logDir = filepath.Join(filepath.Dir(os.Args[0]), "logs")
 	}
 	return &AgentConfig{
-		WorkerID:              "",
-		WorkspaceIDs:          nil,
-		SpawnMCPURL:           "http://localhost:8080/mcp",
-		AuthToken:             "",
-		IdleBackoff:           5 * time.Second,
-		HeartbeatInterval:     60 * time.Second,
-		ExecuteTimeout:        10 * time.Minute,
-		RepoPath:              ".",
-		BranchTemplate:        "agent-{task_id}-from-{base_sha}",
-		WorktreeRoot:          ".satellites-agents/",
-		ClaudeBinaryPath:      "claude",
-		CLIBinaryPath:         "",
-		LogLevel:              "info",
-		LogPath:               logDir,
-		HubURL:                "ws://localhost:8080/ws",
-		SubscribeWorkspaceIDs: nil,
-		SubscribeSinceID:      "",
-		WSReconnectMinBackoff: 500 * time.Millisecond,
-		WSReconnectMaxBackoff: 30 * time.Second,
+		WorkerID:                     "",
+		WorkspaceIDs:                 nil,
+		SpawnMCPURL:                  "http://localhost:8080/mcp",
+		AuthToken:                    "",
+		IdleBackoff:                  5 * time.Second,
+		HeartbeatInterval:            60 * time.Second,
+		ExecuteTimeout:               10 * time.Minute,
+		RepoPath:                     ".",
+		BranchTemplate:               "agent-{task_id}-from-{base_sha}",
+		WorktreeRoot:                 ".satellites-agents/",
+		ClaudeBinaryPath:             "claude",
+		CLIBinaryPath:                "",
+		LogLevel:                     "info",
+		LogPath:                      logDir,
+		HubURL:                       "ws://localhost:8080/ws",
+		SubscribeWorkspaceIDs:        nil,
+		SubscribeSinceID:             "",
+		WSReconnectMinBackoff:        500 * time.Millisecond,
+		WSReconnectMaxBackoff:        30 * time.Second,
+		ConvergeRequestTimeout:       60 * time.Second,
+		ConvergeConsecutiveSuccesses: 1,
 	}
 }
 
@@ -190,6 +207,9 @@ type agentTOMLOverlay struct {
 	WSReconnectMaxBackoff *duration `toml:"ws_reconnect_max_backoff"`
 
 	LogPath *string `toml:"log_path"`
+
+	ConvergeRequestTimeout       *duration `toml:"converge_request_timeout"`
+	ConvergeConsecutiveSuccesses *int      `toml:"converge_consecutive_successes"`
 }
 
 // LoadAgent resolves AgentConfig from the precedence chain and
@@ -361,5 +381,20 @@ func (o agentTOMLOverlay) applyTo(cfg *AgentConfig, warnings *[]string) {
 	}
 	if o.LogPath != nil {
 		cfg.LogPath = *o.LogPath
+	}
+	if o.ConvergeRequestTimeout != nil {
+		d := time.Duration(*o.ConvergeRequestTimeout)
+		if d <= 0 {
+			*warnings = append(*warnings, fmt.Sprintf("agent config: converge_request_timeout=%s must be > 0 — keeping %s", d, cfg.ConvergeRequestTimeout))
+		} else {
+			cfg.ConvergeRequestTimeout = d
+		}
+	}
+	if o.ConvergeConsecutiveSuccesses != nil {
+		if *o.ConvergeConsecutiveSuccesses < 1 {
+			*warnings = append(*warnings, fmt.Sprintf("agent config: converge_consecutive_successes=%d must be >= 1 — keeping %d", *o.ConvergeConsecutiveSuccesses, cfg.ConvergeConsecutiveSuccesses))
+		} else {
+			cfg.ConvergeConsecutiveSuccesses = *o.ConvergeConsecutiveSuccesses
+		}
 	}
 }

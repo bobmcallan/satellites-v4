@@ -93,6 +93,27 @@ type claudeClient struct {
 	// (defaultPprodConvergeTimeout).
 	pprodConvergeTimeout time.Duration
 
+	// convergeRequestTimeout is the per-request HTTP timeout the
+	// converge poll applies to each satellites_info call. Zero uses
+	// the default (defaultConvergeRequestTimeout = 60s). Sized for Fly
+	// cold-start headroom — separate from the loop-budget timeout the
+	// converge gate as a whole runs under. sty_1cb6e9fa.
+	convergeRequestTimeout time.Duration
+
+	// convergeConsecutiveSuccesses is the N-of-M consecutive matching
+	// poll results required before the runner declares pprod
+	// convergence. Zero uses the default
+	// (defaultConvergeConsecutiveSuccesses = 1) which preserves
+	// pre-sty_1cb6e9fa behaviour.
+	convergeConsecutiveSuccesses int
+
+	// convergePollObserver is invoked once per converge-poll attempt
+	// alongside the arbor logger row. Tests inject a recorder to
+	// assert on attempt shape (attempt#, elapsed_ms, pushed_sha,
+	// commit, matches_target_sha, error). Production leaves it nil —
+	// the arbor log is the operator-facing sink. sty_1cb6e9fa.
+	convergePollObserver func(ConvergePollAttempt)
+
 	// ghWatchTimeout caps how long `gh run watch` is allowed to run.
 	// Zero uses the default (defaultGHWatchTimeout).
 	ghWatchTimeout time.Duration
@@ -141,6 +162,12 @@ func RunDispatched(ctx context.Context, cfg config.AgentConfig, logger arbor.ILo
 	c.api = api
 	c.stdoutTee = stdout
 	c.stderrTee = stderr
+	// sty_1cb6e9fa: per-request HTTP timeout + N-of-M consecutive
+	// success knobs flow from cliconfig → AgentConfig → claudeClient.
+	// Zero values fall through to the effective-getter defaults so the
+	// daemon and async paths don't have to plumb non-zero overrides.
+	c.convergeRequestTimeout = cfg.ConvergeRequestTimeout
+	c.convergeConsecutiveSuccesses = cfg.ConvergeConsecutiveSuccesses
 	return c.Execute(ctx, env)
 }
 

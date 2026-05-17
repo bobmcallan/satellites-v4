@@ -37,6 +37,18 @@ const (
 	defaultGHWatchTimeout       = 10 * time.Minute
 	defaultPprodConvergeTimeout = 5 * time.Minute
 	defaultPprodPollInterval    = 5 * time.Second
+	// defaultConvergeRequestTimeout caps each in-flight
+	// satellites_info request the converge loop issues. Sized for Fly
+	// cold-start headroom (~30-60s window after deploy where a fresh
+	// pprod instance hasn't yet completed boot). pre-sty_1cb6e9fa the
+	// loop used the default http.Client 10s timeout, which fired
+	// mid-boot and was conflated with the loop budget — turning a
+	// transient request-level timeout into a release failure.
+	defaultConvergeRequestTimeout = 60 * time.Second
+	// defaultConvergeConsecutiveSuccesses preserves pre-sty_1cb6e9fa
+	// behaviour: one matching poll declares convergence. Operators
+	// raise this to demand flake-tolerant N-of-M matches.
+	defaultConvergeConsecutiveSuccesses = 1
 )
 
 // All substrate calls in this file route through c.api (the shared
@@ -613,6 +625,28 @@ func (c *claudeClient) effectivePprodPollInterval() time.Duration {
 	return defaultPprodPollInterval
 }
 
+// effectiveConvergeRequestTimeout returns the per-request HTTP
+// timeout the converge loop applies to each satellites_info call.
+// Zero falls back to defaultConvergeRequestTimeout (60s — sized for
+// Fly cold-start headroom). sty_1cb6e9fa.
+func (c *claudeClient) effectiveConvergeRequestTimeout() time.Duration {
+	if c.convergeRequestTimeout > 0 {
+		return c.convergeRequestTimeout
+	}
+	return defaultConvergeRequestTimeout
+}
+
+// effectiveConvergeConsecutiveSuccesses returns the N-of-M consecutive
+// matching polls required before convergence is declared. Zero or
+// negative falls back to defaultConvergeConsecutiveSuccesses (1 —
+// preserves pre-sty_1cb6e9fa behaviour).
+func (c *claudeClient) effectiveConvergeConsecutiveSuccesses() int {
+	if c.convergeConsecutiveSuccesses > 0 {
+		return c.convergeConsecutiveSuccesses
+	}
+	return defaultConvergeConsecutiveSuccesses
+}
+
 // satellitesInfoResp decodes the subset of satellites_info the
 // converge poll reads. Mirrors the {server, caller, recent_activity}
 // shape (sty_0be97c3e); only the server-side commit hash is needed
@@ -631,25 +665,71 @@ type pprodPollSample struct {
 }
 
 // pollPprodConverge polls pprod's satellites_info until its reported
-// commit matches pushedSHA or the converge timeout expires. Returns
-// the ordered samples (including the converged final sample) on
-// success; an error wrapping the last observed commit on timeout.
+// commit matches pushedSHA, the converge LOOP BUDGET expires, or the
+// parent ctx is cancelled.
+//
+// pr_root_cause (sty_1cb6e9fa): the root cause of the 2026-05-16/17
+// merge_to_main failures was the conflation of two distinct timeouts.
+// A per-request HTTP timeout (the http.Client default, ~10s) fired
+// while Fly was still booting the freshly-deployed pprod instance,
+// and the pre-fix loop treated that single request-level deadline
+// exceeded as a hard failure of the entire converge gate. The
+// transient HTTP timeout was the SYMPTOM; the lack of retry-within-
+// budget was the ROOT cause.
+//
+// The corrected loop:
+//   - applies a generous per-request deadline (effectiveConvergeRequestTimeout,
+//     default 60s) to each in-flight satellites_info call, separate from
+//     the loop budget (effectivePprodConvergeTimeout, default 5m);
+//   - on a per-request error, resets the consecutive-success counter,
+//     logs a structured daemon-log row, and continues polling until the
+//     LOOP BUDGET expires (NOT the first per-request error);
+//   - on a matching response, increments the consecutive-success
+//     counter and declares convergence only once
+//     effectiveConvergeConsecutiveSuccesses() consecutive matches have
+//     accumulated (default 1 preserves prior behaviour);
+//   - on budget exhaustion, returns an error wrapping the last-observed
+//     commit and the last-observed error so the failure-evidence path
+//     can record both diagnostics.
 func (c *claudeClient) pollPprodConverge(ctx context.Context, pushedSHA string) ([]pprodPollSample, error) {
-	timeout := c.effectivePprodConvergeTimeout()
+	budget := c.effectivePprodConvergeTimeout()
+	reqTimeout := c.effectiveConvergeRequestTimeout()
 	interval := c.effectivePprodPollInterval()
-	deadline := time.Now().Add(timeout)
-	var samples []pprodPollSample
+	needConsec := c.effectiveConvergeConsecutiveSuccesses()
+	loopStart := time.Now()
+	deadline := loopStart.Add(budget)
+	var (
+		samples    []pprodPollSample
+		lastErr    error
+		lastCommit string
+		consec     int
+		attempt    int
+	)
 	for {
-		commit, err := c.fetchPprodCommit(ctx)
+		attempt++
+		reqCtx, cancel := context.WithTimeout(ctx, reqTimeout)
+		commit, err := c.fetchPprodCommit(reqCtx)
+		cancel()
+		elapsed := time.Since(loopStart)
+		matches := err == nil && commit != "" && strings.HasPrefix(pushedSHA, commit) && len(commit) >= 7
+		c.logConvergePollAttempt(attempt, elapsed, pushedSHA, commit, matches, err)
 		if err != nil {
-			return samples, fmt.Errorf("pprod converge: satellites_info: %w", err)
+			consec = 0
+			lastErr = err
+		} else {
+			samples = append(samples, pprodPollSample{At: time.Now().UTC(), Commit: commit})
+			lastCommit = commit
+			if matches {
+				consec++
+				if consec >= needConsec {
+					return samples, nil
+				}
+			} else {
+				consec = 0
+			}
 		}
-		samples = append(samples, pprodPollSample{At: time.Now().UTC(), Commit: commit})
-		if commit != "" && strings.HasPrefix(pushedSHA, commit) && len(commit) >= 7 {
-			return samples, nil
-		}
-		if time.Now().After(deadline) {
-			return samples, fmt.Errorf("pprod converge timeout: last=%q want=%q", commit, pushedSHA)
+		if !time.Now().Before(deadline) {
+			return samples, fmt.Errorf("pprod converge timeout: last=%q lastErr=%v want=%q", lastCommit, lastErr, pushedSHA)
 		}
 		select {
 		case <-ctx.Done():
@@ -659,9 +739,60 @@ func (c *claudeClient) pollPprodConverge(ctx context.Context, pushedSHA string) 
 	}
 }
 
+// ConvergePollAttempt is the structured record for one
+// satellites_info poll the converge gate issued. The arbor daemon-log
+// row carries the same fields under "kind":"converge-poll-attempt";
+// tests inject a convergePollObserver to capture the in-memory shape
+// without scraping the log writer. sty_1cb6e9fa AC3.
+type ConvergePollAttempt struct {
+	Attempt          int
+	Elapsed          time.Duration
+	PushedSHA        string
+	Commit           string
+	MatchesTargetSHA bool
+	Err              error
+}
+
+// logConvergePollAttempt emits one structured daemon-log row per poll
+// attempt and dispatches the same record to the optional observer
+// hook. AC3 explicitly forbids substrate-ledger spam — the row lives
+// only in the daemon log (arbor c.logger) so operators can see how
+// many attempts ran and what each returned without blowing up the
+// substrate ledger with per-poll rows.
+func (c *claudeClient) logConvergePollAttempt(attempt int, elapsed time.Duration, pushedSHA, commit string, matches bool, err error) {
+	if c.logger != nil {
+		ev := c.logger.Info().
+			Str("kind", "converge-poll-attempt").
+			Int("attempt", attempt).
+			Int64("elapsed_ms", elapsed.Milliseconds()).
+			Str("pushed_sha", pushedSHA).
+			Str("commit", commit).
+			Bool("matches_target_sha", matches).
+			Bool("error", err != nil)
+		if err != nil {
+			ev = ev.Str("err", err.Error())
+		}
+		ev.Msg("converge poll")
+	}
+	if c.convergePollObserver != nil {
+		c.convergePollObserver(ConvergePollAttempt{
+			Attempt:          attempt,
+			Elapsed:          elapsed,
+			PushedSHA:        pushedSHA,
+			Commit:           commit,
+			MatchesTargetSHA: matches,
+			Err:              err,
+		})
+	}
+}
+
 // fetchPprodCommit returns pprod's currently reported running commit.
 // Tests override via pprodInfoFetcher; production routes through the
-// shared /api/v1 client (c.api.Call satellites_info).
+// shared /api/v1 client (c.api.Call satellites_info). The caller is
+// responsible for installing a per-request deadline on ctx — the
+// converge loop wraps each call with context.WithTimeout(reqTimeout)
+// so request-level deadlines stay separate from the loop budget
+// (sty_1cb6e9fa).
 func (c *claudeClient) fetchPprodCommit(ctx context.Context) (string, error) {
 	if c.pprodInfoFetcher != nil {
 		return c.pprodInfoFetcher(ctx)

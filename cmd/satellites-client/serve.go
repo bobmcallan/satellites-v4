@@ -136,6 +136,8 @@ func runServeRun(cmd *cobra.Command, _ []string) error {
 		if resolvedClientConfig.ExecuteTimeout > 0 {
 			cfg.ExecuteTimeout = resolvedClientConfig.ExecuteTimeout
 		}
+		cfg.ConvergeRequestTimeout = resolvedClientConfig.ConvergeRequestTimeout
+		cfg.ConvergeConsecutiveSuccesses = resolvedClientConfig.ConvergeConsecutiveSuccesses
 	}
 
 	opts := clientdaemon.Options{

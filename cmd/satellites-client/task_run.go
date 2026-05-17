@@ -83,15 +83,17 @@ func runTaskCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	cfg := config.AgentConfig{
-		RepoPath:         resolvedClientConfig.RepoPath,
-		BranchTemplate:   resolvedClientConfig.BranchTemplate,
-		WorktreeRoot:     resolvedClientConfig.WorktreeRoot,
-		ClaudeBinaryPath: "claude",
-		SpawnMCPURL:      effectiveServer() + "/mcp",
-		AuthToken:        resolvedToken,
-		ExecuteTimeout:   resolvedClientConfig.ExecuteTimeout,
-		LogLevel:         resolvedClientConfig.LogLevel,
-		ClientConfigPath: resolvedClientConfig.LoadedTOMLPath(),
+		RepoPath:                     resolvedClientConfig.RepoPath,
+		BranchTemplate:               resolvedClientConfig.BranchTemplate,
+		WorktreeRoot:                 resolvedClientConfig.WorktreeRoot,
+		ClaudeBinaryPath:             "claude",
+		SpawnMCPURL:                  effectiveServer() + "/mcp",
+		AuthToken:                    resolvedToken,
+		ExecuteTimeout:               resolvedClientConfig.ExecuteTimeout,
+		LogLevel:                     resolvedClientConfig.LogLevel,
+		ClientConfigPath:             resolvedClientConfig.LoadedTOMLPath(),
+		ConvergeRequestTimeout:       resolvedClientConfig.ConvergeRequestTimeout,
+		ConvergeConsecutiveSuccesses: resolvedClientConfig.ConvergeConsecutiveSuccesses,
 	}
 	if cfg.ExecuteTimeout == 0 {
 		cfg.ExecuteTimeout = 30 * time.Minute

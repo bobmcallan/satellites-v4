@@ -47,11 +47,19 @@ type hotpathStub struct {
 	ghOutputs    map[string]string // joined args → stdout
 	ghErrors     map[string]error  // joined args → error
 	pprodCommits []string          // scripted converge-poll responses
-	pprodCalls   int
-	apiCalls     []recordedAPICall
-	apiResp      map[string]string // path → response body (JSON)
-	mu           sync.Mutex
-	srv          *httptest.Server
+	// pprodErrors is the parallel error sequence for pprodFetcher.
+	// On call N, pprodErrors[N] (when non-nil) is returned as the
+	// fetcher's error and pprodCommits[N] is ignored. Lets tests
+	// script flake/error/success combinations against the converge
+	// loop without standing up a real httptest server for it.
+	// sty_1cb6e9fa.
+	pprodErrors      []error
+	pprodCalls       int
+	convergeAttempts []ConvergePollAttempt
+	apiCalls         []recordedAPICall
+	apiResp          map[string]string // path → response body (JSON)
+	mu               sync.Mutex
+	srv              *httptest.Server
 }
 
 // recordedAPICall captures one POST /api/v1/<noun>/<verb> request.
@@ -112,22 +120,39 @@ func (s *hotpathStub) ghRunner(ctx context.Context, args ...string) ([]byte, err
 	return nil, fmt.Errorf("hotpathStub: no gh scripted response for %q", joined)
 }
 
-// pprodFetcher returns the next scripted commit. When pprodCommits
-// is exhausted, the last entry is repeated indefinitely. Tests
-// scripting the converge timeout case set pprodCommits to a stale
-// value the runner never matches.
+// pprodFetcher returns the next scripted commit (or error). When
+// pprodCommits / pprodErrors is exhausted, the last entry is repeated
+// indefinitely. Tests scripting the converge timeout case set
+// pprodCommits to a stale value the runner never matches; tests
+// scripting the AC1 flake+recover scenario set pprodErrors so the
+// fetcher returns context.DeadlineExceeded on the first N calls and
+// a matching commit on the (N+1)-th. sty_1cb6e9fa.
 func (s *hotpathStub) pprodFetcher(_ context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	idx := s.pprodCalls
+	s.pprodCalls++
+	// pprodErrors: when set, the index-th (or last, repeated) entry
+	// drives the fetcher's error. Tests scripting "every call errors"
+	// register a one-element slice and let the repeat behaviour cover
+	// the rest of the loop.
+	if len(s.pprodErrors) > 0 {
+		eIdx := idx
+		if eIdx >= len(s.pprodErrors) {
+			eIdx = len(s.pprodErrors) - 1
+		}
+		if s.pprodErrors[eIdx] != nil {
+			return "", s.pprodErrors[eIdx]
+		}
+	}
 	if len(s.pprodCommits) == 0 {
 		return "", fmt.Errorf("hotpathStub: no pprod commits scripted")
 	}
-	idx := s.pprodCalls
-	if idx >= len(s.pprodCommits) {
-		idx = len(s.pprodCommits) - 1
+	cIdx := idx
+	if cIdx >= len(s.pprodCommits) {
+		cIdx = len(s.pprodCommits) - 1
 	}
-	s.pprodCalls++
-	return s.pprodCommits[idx], nil
+	return s.pprodCommits[cIdx], nil
 }
 
 // setAPIResp registers the response body for a tool's /api/v1/<noun>/<verb>
@@ -172,6 +197,13 @@ func (s *hotpathStub) client(cfg config.AgentConfig) *claudeClient {
 	cc.pprodPollInterval = time.Millisecond
 	cc.pprodConvergeTimeout = 500 * time.Millisecond
 	cc.ghWatchTimeout = 500 * time.Millisecond
+	// sty_1cb6e9fa: capture per-attempt records so tests can assert
+	// the AC3 daemon-log row shape without scraping the arbor writer.
+	cc.convergePollObserver = func(a ConvergePollAttempt) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.convergeAttempts = append(s.convergeAttempts, a)
+	}
 	return cc
 }
 
@@ -1229,4 +1261,156 @@ func TestRunMergeToMainHotPath_EmptyCommitConvergeTimeout_PersistsClose(t *testi
 	// release-evidence row must still land.
 	require.NotNil(t, s.findLedgerAppendWithTag("release:pushed_unverified"),
 		"release:pushed_unverified evidence row missing on empty-commit converge timeout")
+}
+
+// TestPollPprodConverge_FirstAttemptSuccess — sty_1cb6e9fa AC5(a). The
+// first satellites_info poll returns a matching SHA; the loop returns
+// after one attempt with one sample and one daemon-log row.
+func TestPollPprodConverge_FirstAttemptSuccess(t *testing.T) {
+	s := newHotpathStub(t)
+	pushed := "deadbeefcafe"
+	s.pprodCommits = []string{pushed}
+	cc := s.client(config.AgentConfig{})
+
+	samples, err := cc.pollPprodConverge(context.Background(), pushed)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+	assert.Equal(t, pushed, samples[0].Commit)
+	assert.Equal(t, 1, s.pprodCalls, "first-attempt success must not retry")
+
+	require.Len(t, s.convergeAttempts, 1,
+		"AC3: one daemon-log row per attempt; expected exactly 1, got %+v", s.convergeAttempts)
+	a := s.convergeAttempts[0]
+	assert.Equal(t, 1, a.Attempt)
+	assert.Equal(t, pushed, a.Commit)
+	assert.Equal(t, pushed, a.PushedSHA)
+	assert.True(t, a.MatchesTargetSHA)
+	assert.NoError(t, a.Err)
+}
+
+// TestPollPprodConverge_FlakeRecoversWithinBudget — sty_1cb6e9fa AC1
+// + AC5(b). pr_root_cause: the first two satellites_info calls
+// return `context deadline exceeded` (the symptom that motivated
+// this story); the third returns a matching SHA inside the loop
+// budget. The fixed loop must RETRY past per-request errors until
+// the LOOP BUDGET expires and treat each per-request timeout as
+// transient, not terminal. Asserts: NoError, three poll attempts
+// observed, one successful sample, three structured daemon-log
+// rows (two errors + one match).
+func TestPollPprodConverge_FlakeRecoversWithinBudget(t *testing.T) {
+	s := newHotpathStub(t)
+	pushed := "deadbeefcafe"
+	// Errors on call 1 + 2, success on call 3.
+	s.pprodErrors = []error{
+		context.DeadlineExceeded,
+		context.DeadlineExceeded,
+		nil,
+	}
+	s.pprodCommits = []string{"", "", pushed}
+	cc := s.client(config.AgentConfig{})
+
+	samples, err := cc.pollPprodConverge(context.Background(), pushed)
+	require.NoError(t, err,
+		"pr_root_cause: per-request timeout MUST NOT terminate the loop; "+
+			"the loop budget governs total wait, the per-request timeout governs each in-flight call")
+	require.Len(t, samples, 1,
+		"only successful polls append samples; expected 1 on flake-then-recover")
+	assert.Equal(t, pushed, samples[0].Commit)
+	assert.Equal(t, 3, s.pprodCalls,
+		"loop must have attempted three polls (two errors + one success)")
+
+	// AC3: three structured daemon-log rows, one per attempt.
+	require.Len(t, s.convergeAttempts, 3,
+		"expected one daemon-log row per attempt; got %+v", s.convergeAttempts)
+	assert.Equal(t, 1, s.convergeAttempts[0].Attempt)
+	assert.Error(t, s.convergeAttempts[0].Err, "first attempt logged with err")
+	assert.False(t, s.convergeAttempts[0].MatchesTargetSHA)
+	assert.Equal(t, 2, s.convergeAttempts[1].Attempt)
+	assert.Error(t, s.convergeAttempts[1].Err, "second attempt logged with err")
+	assert.Equal(t, 3, s.convergeAttempts[2].Attempt)
+	assert.NoError(t, s.convergeAttempts[2].Err, "third attempt logged success")
+	assert.True(t, s.convergeAttempts[2].MatchesTargetSHA)
+	assert.Equal(t, pushed, s.convergeAttempts[2].Commit)
+}
+
+// TestPollPprodConverge_BudgetExhausted — sty_1cb6e9fa AC4 + AC5(c).
+// Every poll returns `context deadline exceeded`; the loop exhausts
+// its budget and reports failure. The returned error embeds the
+// loop's last-observed error so the failure-evidence path can record
+// the literal last-poll diagnosis. No samples are appended (each
+// fetch errored before producing a body). Daemon-log carries one
+// row per attempt — operators see how many retries happened before
+// the budget tripped.
+func TestPollPprodConverge_BudgetExhausted(t *testing.T) {
+	s := newHotpathStub(t)
+	pushed := "deadbeefcafe"
+	// Every poll errors; pprodFetcher repeats the last entry past
+	// the slice end, so the loop sees DeadlineExceeded indefinitely.
+	s.pprodErrors = []error{context.DeadlineExceeded}
+	cc := s.client(config.AgentConfig{})
+
+	samples, err := cc.pollPprodConverge(context.Background(), pushed)
+	require.Error(t, err)
+	assert.Empty(t, samples,
+		"AC4: a converge loop that only ever observed errors must append no samples")
+	assert.Contains(t, err.Error(), "pprod converge timeout",
+		"timeout error must carry the budget-exhaustion literal")
+	assert.Contains(t, err.Error(), "lastErr=",
+		"AC4: budget-exhaustion error must embed the last per-request error so the failure-evidence row can record the literal diagnosis")
+	assert.Contains(t, err.Error(), context.DeadlineExceeded.Error(),
+		"AC4: literal last-attempt error text expected in the wrapping error")
+	assert.GreaterOrEqual(t, s.pprodCalls, 2,
+		"loop should retry at least once within the budget before giving up; got %d calls", s.pprodCalls)
+	require.GreaterOrEqual(t, len(s.convergeAttempts), 2,
+		"AC3: one daemon-log row per attempt expected, got %d", len(s.convergeAttempts))
+	for i, a := range s.convergeAttempts {
+		assert.Equal(t, i+1, a.Attempt, "attempt counter is 1-indexed and monotonic")
+		assert.Error(t, a.Err, "every attempt errored in the budget-exhausted case")
+		assert.False(t, a.MatchesTargetSHA)
+	}
+}
+
+// TestRunMergeToMainHotPath_ConvergeFlakeRecovers — sty_1cb6e9fa
+// AC1 paired with AC5(b). End-to-end runner test: post-push converge
+// loop sees two transient errors then a matching SHA. The runner
+// MUST succeed, write the standard `kind:release-evidence` row
+// (NOT `release:pushed_unverified`), and close success.
+func TestRunMergeToMainHotPath_ConvergeFlakeRecovers(t *testing.T) {
+	s := newHotpathStub(t)
+	seedMergeToMainHappyStubs(t, s, "deadbeef")
+	// Override the seed's pprodCommits with a flake-then-recover
+	// pattern. Two per-request errors, then the matching SHA.
+	s.pprodCommits = []string{"", "", "deadbeef"}
+	s.pprodErrors = []error{
+		context.DeadlineExceeded,
+		context.DeadlineExceeded,
+		nil,
+	}
+
+	cc := s.client(config.AgentConfig{RepoPath: "/repo", BranchTemplate: "agent-{task_id}-from-{base_sha}"})
+	outcome, err := runMergeToMainTask(t, cc)
+	require.NoError(t, err,
+		"AC1: transient per-request HTTP timeouts must NOT fail the merge_to_main task when the converge gate recovers within the loop budget")
+	assert.Equal(t, OutcomeSuccess, outcome)
+
+	// AC1: the standard release-evidence row (NOT the pushed_unverified
+	// variant) is appended after recovery.
+	led := s.findLedgerAppendWithTag("kind:release-evidence")
+	require.NotNil(t, led, "release-evidence row missing after flake-then-recover")
+	require.Nil(t, s.findLedgerAppendWithTag("release:pushed_unverified"),
+		"flake-then-recover must NOT downgrade the row to pushed_unverified — convergence was reached")
+
+	// task_update(closed, success) was issued.
+	var sawClosedSuccess bool
+	for _, call := range s.findAllAPICalls("task_update") {
+		if call.Body["status"] == "closed" && call.Body["outcome"] == "success" {
+			sawClosedSuccess = true
+			break
+		}
+	}
+	assert.True(t, sawClosedSuccess, "task_update(closed,success) missing; saw %+v", s.findAllAPICalls("task_update"))
+
+	// AC3: three structured rows expected — two failed polls + one match.
+	require.Len(t, s.convergeAttempts, 3,
+		"AC3: expected three daemon-log rows on flake-then-recover; got %+v", s.convergeAttempts)
 }

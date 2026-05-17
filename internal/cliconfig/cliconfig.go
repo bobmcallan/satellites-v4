@@ -101,6 +101,21 @@ type Config struct {
 	// a TOML is awkward. sty_64e69db8.
 	UpdateCheckDisabled bool `toml:"update_check_disabled"`
 
+	// ConvergeRequestTimeout is the per-request HTTP timeout the
+	// merge_to_main hot-path runner applies to each satellites_info
+	// poll against pprod. Sized for Fly cold-start headroom — default
+	// 60s. The loop-level budget (ExecuteTimeout-shaped, ultimately
+	// gated by defaultPprodConvergeTimeout=5m) governs total wait;
+	// this knob governs each in-flight request's deadline. sty_1cb6e9fa.
+	ConvergeRequestTimeout time.Duration `toml:"converge_request_timeout"`
+
+	// ConvergeConsecutiveSuccesses is the number of consecutive
+	// matching satellites_info polls required before the runner
+	// declares pprod convergence. Default 1 preserves prior behaviour;
+	// operators raise this to require N-of-M flake-tolerant matches.
+	// sty_1cb6e9fa.
+	ConvergeConsecutiveSuccesses int `toml:"converge_consecutive_successes"`
+
 	// loadedTOMLPath records the path that was actually read; "" when
 	// the loader fell back to defaults.
 	loadedTOMLPath string
@@ -145,11 +160,13 @@ func (c Config) String() string {
 	return fmt.Sprintf(
 		"Config{server=%q token=%s oauth_enabled=%t repo_path=%q worktree_root=%q "+
 			"branch_template=%q execute_timeout=%s log_level=%q log_path=%q "+
-			"update_tolerance_patches=%d update_check_disabled=%t}",
+			"update_tolerance_patches=%d update_check_disabled=%t "+
+			"converge_request_timeout=%s converge_consecutive_successes=%d}",
 		c.Server, mask, c.OAuthEnabled,
 		c.RepoPath, c.WorktreeRoot, c.BranchTemplate,
 		c.ExecuteTimeout, c.LogLevel, c.LogPath,
 		c.UpdateTolerancePatches, c.UpdateCheckDisabled,
+		c.ConvergeRequestTimeout, c.ConvergeConsecutiveSuccesses,
 	)
 }
 
@@ -213,15 +230,17 @@ func defaults() *Config {
 		repoPath = filepath.Dir(exeDir)
 	}
 	return &Config{
-		Server:         "",
-		Token:          "",
-		OAuthEnabled:   false,
-		RepoPath:       repoPath,
-		WorktreeRoot:   worktreeRoot,
-		BranchTemplate: "client-{task_id}-from-{base_sha}",
-		ExecuteTimeout: 30 * time.Minute,
-		LogLevel:       "info",
-		LogPath:        logDir,
+		Server:                       "",
+		Token:                        "",
+		OAuthEnabled:                 false,
+		RepoPath:                     repoPath,
+		WorktreeRoot:                 worktreeRoot,
+		BranchTemplate:               "client-{task_id}-from-{base_sha}",
+		ExecuteTimeout:               30 * time.Minute,
+		LogLevel:                     "info",
+		LogPath:                      logDir,
+		ConvergeRequestTimeout:       60 * time.Second,
+		ConvergeConsecutiveSuccesses: 1,
 	}
 }
 
@@ -231,17 +250,19 @@ func defaults() *Config {
 // selectively. Durations decode via the local duration wrapper so
 // operators can write "30m", "5s" instead of nanoseconds.
 type tomlOverlay struct {
-	Server                 *string   `toml:"server"`
-	Token                  *string   `toml:"token"`
-	OAuthEnabled           *bool     `toml:"oauth_enabled"`
-	RepoPath               *string   `toml:"repo_path"`
-	WorktreeRoot           *string   `toml:"worktree_root"`
-	BranchTemplate         *string   `toml:"branch_template"`
-	ExecuteTimeout         *duration `toml:"execute_timeout"`
-	LogLevel               *string   `toml:"log_level"`
-	LogPath                *string   `toml:"log_path"`
-	UpdateTolerancePatches *int      `toml:"update_tolerance_patches"`
-	UpdateCheckDisabled    *bool     `toml:"update_check_disabled"`
+	Server                       *string   `toml:"server"`
+	Token                        *string   `toml:"token"`
+	OAuthEnabled                 *bool     `toml:"oauth_enabled"`
+	RepoPath                     *string   `toml:"repo_path"`
+	WorktreeRoot                 *string   `toml:"worktree_root"`
+	BranchTemplate               *string   `toml:"branch_template"`
+	ExecuteTimeout               *duration `toml:"execute_timeout"`
+	LogLevel                     *string   `toml:"log_level"`
+	LogPath                      *string   `toml:"log_path"`
+	UpdateTolerancePatches       *int      `toml:"update_tolerance_patches"`
+	UpdateCheckDisabled          *bool     `toml:"update_check_disabled"`
+	ConvergeRequestTimeout       *duration `toml:"converge_request_timeout"`
+	ConvergeConsecutiveSuccesses *int      `toml:"converge_consecutive_successes"`
 }
 
 // duration wraps time.Duration with a TextUnmarshaler so go-toml/v2 can
@@ -421,5 +442,20 @@ func (o tomlOverlay) applyTo(cfg *Config, warnings *[]string) {
 	}
 	if o.UpdateCheckDisabled != nil {
 		cfg.UpdateCheckDisabled = *o.UpdateCheckDisabled
+	}
+	if o.ConvergeRequestTimeout != nil {
+		d := time.Duration(*o.ConvergeRequestTimeout)
+		if d <= 0 {
+			*warnings = append(*warnings, fmt.Sprintf("client config: converge_request_timeout=%s must be > 0 — keeping %s", d, cfg.ConvergeRequestTimeout))
+		} else {
+			cfg.ConvergeRequestTimeout = d
+		}
+	}
+	if o.ConvergeConsecutiveSuccesses != nil {
+		if *o.ConvergeConsecutiveSuccesses < 1 {
+			*warnings = append(*warnings, fmt.Sprintf("client config: converge_consecutive_successes=%d must be >= 1 — keeping %d", *o.ConvergeConsecutiveSuccesses, cfg.ConvergeConsecutiveSuccesses))
+		} else {
+			cfg.ConvergeConsecutiveSuccesses = *o.ConvergeConsecutiveSuccesses
+		}
 	}
 }

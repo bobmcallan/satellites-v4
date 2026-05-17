@@ -135,6 +135,37 @@ rejection rests on (e.g. `pr_evidence_audit`, `pr_no_unrequested_compat`,
 `pr_root_cause`). The agent reading the verdict knows which class
 of fix to make.
 
+### 6. Version bump policy (branch-collective)
+
+Cite **pr_pipeline_authority**, **pr_root_cause**, **pr_evidence_audit**.
+The merge_to_main contract's `## Version bump policy` section
+requires every binary touched across the branch's commits
+collectively to be bumped at least once. Run
+`git diff $(git merge-base main HEAD)..HEAD -- .version` and
+compare against the branch-collective touched-binary list from
+`git diff --name-only $(git merge-base main HEAD)..HEAD`. Use
+the same touched-binary heuristic as `development_reviewer` §9:
+
+- `cmd/satellites-server/**` → `[satellites-server]`
+- `cmd/satellites-client/**` → `[satellites-client]`
+- `cmd/satellites-agent/**` → `[satellites-agent]`
+
+Sentinel scoping: a docs-only or test-only tail commit does not
+need its own bump — an earlier commit on the branch that bumped
+the relevant binary satisfies the rule (collectively, across the
+branch, not per-commit at merge time). When every branch-touched
+binary has at least one bump anywhere across the branch range,
+return `pass` for this gate. When a branch-touched binary has no
+`.version` bump anywhere across the branch range, return `fail`
+with rationale:
+
+> fail per pr_pipeline_authority: merge_to_main contract
+> `merge_to_main#version-bump-policy` requires `[<binary>]` to
+> bump at least once on the branch because `cmd/<binary>/**`
+> was touched (branch-touched binary list: `<list>`);
+> `git diff $(git merge-base main HEAD)..HEAD -- .version`
+> shows no bump for the section.
+
 ## Verdict format
 
 - `accepted` — rationale cites the ACs satisfied and any principles

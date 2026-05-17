@@ -147,6 +147,42 @@ markdown / docs / test changes that do NOT touch substrate
 primitives are exempt — the gate is about preventing the
 reviewer from enforcing concepts the substrate has retired.
 
+### 9. Version bump policy
+
+Cite **pr_pipeline_authority**, **pr_root_cause**, **pr_evidence_audit**.
+The commit contract's `## Version bump policy` section requires
+every commit in the push range to bump `[satellites-server]`,
+`[satellites-client]`, or `[satellites-agent]` in `.version` for
+the touched binary. Run
+`git diff HEAD~1..HEAD -- .version` against the closing commit
+and inspect the diff against the touched-binary list derived
+from `git diff --name-only HEAD~1..HEAD` via this heuristic:
+
+- `cmd/satellites-server/**` → `[satellites-server]`
+- `cmd/satellites-client/**` → `[satellites-client]`
+- `cmd/satellites-agent/**` → `[satellites-agent]`
+- `internal/**`, `config/**`, `docs/**`, root files: default to
+  the binary indicated by the commit title's conventional-commit
+  scope (`feat(satellites-server): …`). When the title is
+  scope-agnostic, every binary whose `cmd/<binary>/**` tree
+  consumes the touched code path must be bumped (when in doubt,
+  bump all three).
+
+Mixed-scope commits bump every touched binary in the same diff
+(multi-binary commits bump every touched binary in the same
+diff). When a touched binary has the correct bump in
+`.version` (every `cmd/<binary>/**` touched binary shows a
+section bump in `git diff HEAD~1..HEAD -- .version`), return
+`accepted` for this gate. When a touched binary has no
+corresponding `.version` section bump in the same diff, return
+`rejected` with rationale:
+
+> rejected per pr_pipeline_authority: commit contract
+> `commit#version-bump-policy` requires `[<binary>]` to bump on
+> this diff because `cmd/<binary>/**` was touched (touched-binary
+> list: `<list>`); `git diff HEAD~1..HEAD -- .version` shows no
+> bump for the section.
+
 ## Verdict format
 
 Same as `story_reviewer`:

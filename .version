@@ -1,5 +1,5 @@
 [satellites-server]
-version = 0.0.279
+version = 0.0.280
 build = 2026-05-17-09-43-00
 
 [satellites-agent]

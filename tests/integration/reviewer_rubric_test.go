@@ -146,6 +146,138 @@ func TestReviewerRubric_PostDriftFix(t *testing.T) {
 		assert.Contains(t, v3Lower, "develop close",
 			"agent_process_v3.md rubric-maintenance section must describe the develop-close gate")
 	})
+
+	t.Run("TC7_version_bump_rubric_enforced_in_both_reviewers", func(t *testing.T) {
+		// sty_fefc5dfa — both reviewers must enforce the .version
+		// bump policy codified in the commit + merge_to_main
+		// contracts. The check the sty_02ad5eb9 incident proved
+		// missing: development_reviewer at single-commit scope and
+		// story_reviewer at branch-collective scope. The two
+		// fixture cases the AC enumerates (touched binary with no
+		// bump → reject; every touched binary bumped → accept)
+		// are proven by asserting that the rubric prose names
+		// BOTH halves of the rule.
+
+		// (a) development_reviewer.md has a Version bump section.
+		assert.Regexp(t,
+			`(?m)^### [0-9]+\. Version bump`,
+			devReviewer,
+			"development_reviewer.md must gain a numbered 'Version bump' section (sty_fefc5dfa AC1)")
+
+		// (b) The literal single-commit diff command is named.
+		assert.Contains(t, devReviewer,
+			"git diff HEAD~1..HEAD -- .version",
+			"development_reviewer.md must instruct the literal `git diff HEAD~1..HEAD -- .version` (sty_fefc5dfa AC2)")
+
+		// (c) The rationale template cites pr_pipeline_authority
+		// co-located with the commit contract reference and the
+		// touched-binary heuristic.
+		assert.Regexp(t,
+			`(?s)pr_pipeline_authority.{0,400}commit`,
+			devReviewer,
+			"development_reviewer.md rationale template must cite pr_pipeline_authority alongside the commit contract (sty_fefc5dfa AC2/AC5)")
+
+		// (d) The touched-binary heuristic enumerates all three
+		// cmd/<binary>/** entries.
+		for _, hb := range []string{
+			"cmd/satellites-server/**",
+			"cmd/satellites-client/**",
+			"cmd/satellites-agent/**",
+		} {
+			assert.Containsf(t, devReviewer, hb,
+				"development_reviewer.md must name the touched-binary heuristic entry %q (sty_fefc5dfa AC1)", hb)
+		}
+
+		// (e) story_reviewer.md has a parallel Version bump section.
+		assert.Regexp(t,
+			`(?m)^### [0-9]+\. Version bump`,
+			storyReviewer,
+			"story_reviewer.md must gain a numbered 'Version bump' section (sty_fefc5dfa AC3)")
+
+		// (f) The branch-collective diff form is named verbatim.
+		assert.Contains(t, storyReviewer,
+			"git merge-base main HEAD",
+			"story_reviewer.md must name the branch-collective `git merge-base main HEAD` form (sty_fefc5dfa AC3)")
+		assert.Regexp(t,
+			`(?s)git diff.{0,80}\.version`,
+			storyReviewer,
+			"story_reviewer.md must instruct the branch-collective `git diff … .version` form (sty_fefc5dfa AC3)")
+
+		// (g) The story_reviewer rationale template cites the
+		// merge_to_main contract by name.
+		assert.Contains(t, storyReviewer, "merge_to_main",
+			"story_reviewer.md Version bump section must cite the merge_to_main contract (sty_fefc5dfa AC3)")
+
+		// (h) Both rubrics state the REJECT criterion (touched
+		// binary with no bump → reject/fail) AND the ACCEPT
+		// criterion (every touched binary bumped → accept/pass) —
+		// the two AC4 fixture cases encoded as rubric prose.
+		assert.Regexp(t,
+			`(?si)no.{0,30}version.{0,80}bump.{0,200}rejected`,
+			devReviewer,
+			"development_reviewer.md must state the REJECT criterion (no bump for touched binary → rejected) (sty_fefc5dfa AC4)")
+		assert.Regexp(t,
+			`(?si)(correct\s+bump|bump\s+(present|in)|every\s+.{0,40}touched\s+binary.{0,80}bump).{0,200}accepted`,
+			devReviewer,
+			"development_reviewer.md must state the ACCEPT criterion (every touched binary bumped → accepted) (sty_fefc5dfa AC4)")
+		assert.Regexp(t,
+			`(?si)no.{0,30}version.{0,80}bump.{0,200}fail`,
+			storyReviewer,
+			"story_reviewer.md must state the REJECT criterion (no bump for touched binary across branch → fail) (sty_fefc5dfa AC4)")
+		assert.Regexp(t,
+			`(?si)(every\s+branch-touched\s+binary|at\s+least\s+one\s+bump).{0,200}pass`,
+			storyReviewer,
+			"story_reviewer.md must state the ACCEPT criterion (every branch-touched binary bumped → pass) (sty_fefc5dfa AC4)")
+
+		// (i) AC5 — principle citations in both new sections.
+		// Extract the Version bump section from each rubric and
+		// verify each of the three principle ids is cited inside.
+		for _, body := range []struct {
+			name, content string
+		}{
+			{"development_reviewer.md", devReviewer},
+			{"story_reviewer.md", storyReviewer},
+		} {
+			section := extractVersionBumpSection(body.content)
+			require.NotEmptyf(t, section,
+				"%s Version bump section must be extractable", body.name)
+			for _, principle := range []string{
+				"pr_pipeline_authority",
+				"pr_root_cause",
+				"pr_evidence_audit",
+			} {
+				assert.Containsf(t, section, principle,
+					"%s Version bump section must cite %s (sty_fefc5dfa AC5)", body.name, principle)
+			}
+		}
+	})
+}
+
+// extractVersionBumpSection returns the text of the "### N. Version
+// bump …" section in a rubric body, stopping at the next `### ` or
+// `## ` heading. Returns empty string if no such section is found.
+func extractVersionBumpSection(body string) string {
+	lines := strings.Split(body, "\n")
+	start := -1
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "### ") && strings.Contains(strings.ToLower(trimmed), "version bump") {
+			start = i
+			break
+		}
+	}
+	if start == -1 {
+		return ""
+	}
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(trimmed, "### ") || strings.HasPrefix(trimmed, "## ") {
+			end = i
+			break
+		}
+	}
+	return strings.Join(lines[start:end], "\n")
 }
 
 // readSeedFile reads a path relative to the repo root, failing the

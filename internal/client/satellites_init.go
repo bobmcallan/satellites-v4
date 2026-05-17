@@ -29,6 +29,7 @@ import (
 
 	"github.com/bobmcallan/satellites/internal/audit/chaincoverage"
 	"github.com/bobmcallan/satellites/internal/document"
+	"github.com/bobmcallan/satellites/internal/satellitesinit"
 )
 
 // SatellitesInitInput is the caller-supplied input for SatellitesInit.
@@ -133,17 +134,16 @@ type SatellitesInitInstall struct {
 
 // SatellitesInitAuthBootstrap describes the auth step the operator runs
 // after the binary lands. Kept as a typed struct so future bootstrap
-// kinds (`oauth_pkce`, `device_code`, …) can be added without breaking
-// the wire shape.
+// kinds can be added without breaking the wire shape.
 //
-// Kind values:
-//   - "auth_login" — caller must run `satellites-client auth login` to
-//     mint a global per-user OAuth bearer (the only path for first-time
-//     human bootstrap on a fresh host with no MCP session).
-//   - "ready" — satellites_init minted (or re-used) a project-scoped
-//     agent API key on the caller's behalf; the AgentAPIKey field on
-//     the output carries the metadata (and cleartext on a fresh mint).
-//     Source distinguishes minted_at_init vs existing_key.
+// Kind values are seeded via the install-schema artifact rather than
+// hard-coded here (sty_193a5185). Today the schema's auth_bootstrap.kind
+// drives the first-time-human bootstrap flow (`satellitesinit` package);
+// `ready` is the in-code state stamped when satellites_init minted (or
+// re-used) a project-scoped agent API key on the caller's behalf — the
+// AgentAPIKey field on the output then carries the metadata (and
+// cleartext on a fresh mint). Source distinguishes minted_at_init vs
+// existing_key.
 type SatellitesInitAuthBootstrap struct {
 	Kind    string `json:"kind"`
 	Command string `json:"command,omitempty"`
@@ -239,20 +239,31 @@ func (c *Client) SatellitesInit(ctx context.Context, caller Caller, in Satellite
 		state = SatellitesInitStateUpdateAvailable
 	}
 
+	// Sty_193a5185: the install schema (target paths, default config,
+	// auth bootstrap shape) is sourced from a seeded system-scope
+	// artifact rather than Go literals. The release-pipeline-derived
+	// fields below (Install.{Version,Build,Commit,...}) still come from
+	// the live GitHub manifest fetched above — those are runtime
+	// metadata, not install schema.
+	schema, err := satellitesinit.Resolve(ctx, c.deps.Documents, in.WorkspaceID, in.ResolvedProjectID, in.Memberships)
+	if err != nil {
+		return SatellitesInitOutput{}, err
+	}
+
 	overrides := c.resolveWorkspaceOverrides(ctx, in)
 	coverage := c.resolveChainCoverage(ctx, in)
 
-	auth, agentKey := c.resolveInitAuthBootstrap(ctx, caller, in)
+	auth, agentKey := c.resolveInitAuthBootstrap(ctx, caller, in, schema.AuthBootstrap)
 
 	return SatellitesInitOutput{
 		State:             state,
-		TargetInstallPath: "./.satellites/satellites-client",
-		TargetConfigPath:  "./.satellites/satellites-client.toml",
+		TargetInstallPath: schema.TargetInstallPath,
+		TargetConfigPath:  schema.TargetConfigPath,
 		DefaultConfig: SatellitesInitDefaultConfig{
-			RepoPath:       ".",
-			WorktreeRoot:   "./.satellites/worktree",
-			LogPath:        "./.satellites/logs",
-			BranchTemplate: "client-{task_id}-from-{base_sha}",
+			RepoPath:       schema.DefaultConfig.RepoPath,
+			WorktreeRoot:   schema.DefaultConfig.WorktreeRoot,
+			LogPath:        schema.DefaultConfig.LogPath,
+			BranchTemplate: schema.DefaultConfig.BranchTemplate,
 		},
 		Install: SatellitesInitInstall{
 			Version:     manifest.Version,
@@ -275,17 +286,23 @@ func (c *Client) SatellitesInit(ctx context.Context, caller Caller, in Satellite
 
 // resolveInitAuthBootstrap decides which auth flow satellites_init
 // returns for this caller. When the MCP session is anonymous or not
-// project-bound, the operator must run `satellites-client auth login`
-// to mint a global per-user OAuth bearer (the only path for first-time
-// human bootstrap). When the session is authenticated AND
-// project-bound, mint (or re-use) a project-scoped agent API key on
-// the caller's behalf so the consumer install gets a self-contained
-// project-local bearer. sty_6b1e207a slice B.
-func (c *Client) resolveInitAuthBootstrap(ctx context.Context, caller Caller, in SatellitesInitInput) (SatellitesInitAuthBootstrap, *SatellitesInitAgentAPIKey) {
+// project-bound, the operator must run the bootstrap command the
+// install schema names (today `satellites-client auth login`) to mint
+// a global per-user OAuth bearer (the only path for first-time human
+// bootstrap). When the session is authenticated AND project-bound,
+// mint (or re-use) a project-scoped agent API key on the caller's
+// behalf so the consumer install gets a self-contained project-local
+// bearer. sty_6b1e207a slice B.
+//
+// schemaAuth carries the schema-defined auth_bootstrap shape (kind /
+// command / env_hint). Sty_193a5185 — the loginBootstrap envelope's
+// literal fields are sourced from this schema rather than Go
+// constants.
+func (c *Client) resolveInitAuthBootstrap(ctx context.Context, caller Caller, in SatellitesInitInput, schemaAuth satellitesinit.InstallSchemaAuthBootstrap) (SatellitesInitAuthBootstrap, *SatellitesInitAgentAPIKey) {
 	loginBootstrap := SatellitesInitAuthBootstrap{
-		Kind:    "auth_login",
-		Command: "satellites-client auth login",
-		EnvHint: "SATELLITES_TOKEN",
+		Kind:    schemaAuth.Kind,
+		Command: schemaAuth.Command,
+		EnvHint: schemaAuth.EnvHint,
 	}
 	if in.ResolvedProjectID == "" || caller.UserID == "" || c.deps.APIKeys == nil {
 		return loginBootstrap, nil

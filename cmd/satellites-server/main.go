@@ -428,6 +428,31 @@ func main() {
 		// + auto-verdicted is gone.
 	}
 
+	// Sty_193a5185: when SATELLITES_DB_DSN is empty (dev/test mode), fall
+	// back to an in-memory document store seeded from configseed so the
+	// substrate's seed-driven reads still resolve. Production always sets
+	// DBDSN and gets the Surreal-backed store above; the fallback is the
+	// only path the no-DB integration harness exercises. Without this,
+	// satellites_init's install-schema carve-out (now seeded as a
+	// type=artifact row) cannot resolve and the verb returns the typed
+	// "install schema not seeded" error.
+	if docStore == nil {
+		docStore = document.NewMemoryStore()
+		if summary, err := configseed.RunAll(ctx, docStore,
+			configseed.ResolveSeedDir(), configseed.ResolveHelpDir(),
+			"", "system", time.Now().UTC()); err != nil {
+			logger.Warn().Str("error", err.Error()).Msg("configseed run (memory fallback) failed")
+		} else {
+			logger.Info().
+				Int("loaded", summary.Loaded).
+				Int("created", summary.Created).
+				Int("updated", summary.Updated).
+				Int("skipped", summary.Skipped).
+				Int("errors", len(summary.Errors)).
+				Msg("configseed run (memory fallback) complete")
+		}
+	}
+
 	portalHandlers, err := portal.New(cfg, logger, sessions, users, projStore, ledgerStore, storyStore, taskStore, docStore, repoStore, repoIndexer, wsStore, startedAt)
 	if err != nil {
 		logger.Error().Str("error", err.Error()).Msg("portal init failed")

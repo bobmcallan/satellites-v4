@@ -12,7 +12,50 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bobmcallan/satellites/internal/document"
+	"github.com/bobmcallan/satellites/internal/satellitesinit"
 )
+
+// canonicalInstallSchema returns the schema with the values the
+// satellites_init verb must surface today. The pprod wire shape (AC3 of
+// sty_193a5185) is byte-identical to these values; any drift here
+// indicates a regression in the carve-out and surfaces as a hard
+// assertion failure rather than a silent semantic change.
+func canonicalInstallSchema() satellitesinit.InstallSchema {
+	return satellitesinit.InstallSchema{
+		TargetInstallPath: "./.satellites/satellites-client",
+		TargetConfigPath:  "./.satellites/satellites-client.toml",
+		DefaultConfig: satellitesinit.InstallSchemaDefaultConfig{
+			RepoPath:       ".",
+			WorktreeRoot:   "./.satellites/worktree",
+			LogPath:        "./.satellites/logs",
+			BranchTemplate: "client-{task_id}-from-{base_sha}",
+		},
+		AuthBootstrap: satellitesinit.InstallSchemaAuthBootstrap{
+			Kind:    "auth_login",
+			Command: "satellites-client auth login",
+			EnvHint: "SATELLITES_TOKEN",
+		},
+	}
+}
+
+// seedInstallSchema creates the canonical install schema artifact in
+// the supplied store. Mirrors the configseed loader's
+// installSchemaStructured payload shape so the verb's runtime path
+// exercises an identical Document.Structured byte slice.
+func seedInstallSchema(t *testing.T, store document.Store, schema satellitesinit.InstallSchema) {
+	t.Helper()
+	structured, err := satellitesinit.MarshalSchema(schema)
+	require.NoError(t, err)
+	_, err = store.Create(context.Background(), document.Document{
+		Type:       document.TypeArtifact,
+		Scope:      document.ScopeSystem,
+		Name:       satellitesinit.SystemDefaultName,
+		Structured: structured,
+		Tags:       []string{satellitesinit.KindTag, "seed", "configseed"},
+		Status:     document.StatusActive,
+	}, time.Now().UTC())
+	require.NoError(t, err)
+}
 
 // satellitesInitManifest returns a fixture manifest with linux/amd64,
 // linux/arm64 and darwin/arm64 entries covering the runtime tuples the
@@ -30,9 +73,11 @@ func satellitesInitManifest() string {
 	}`
 }
 
-// newSatellitesInitFixture stands up an httptest manifest server and
-// returns a Client wired to it. Resets the shared system_version cache
-// so each call exercises a fresh fetch path.
+// newSatellitesInitFixture stands up an httptest manifest server,
+// seeds the canonical install-schema artifact in a memory-backed
+// document store, and returns a Client wired to both. Resets the
+// shared system_version cache so each call exercises a fresh fetch
+// path.
 func newSatellitesInitFixture(t *testing.T) *Client {
 	t.Helper()
 	resetSystemVersionCache()
@@ -41,7 +86,9 @@ func newSatellitesInitFixture(t *testing.T) *Client {
 		_, _ = w.Write([]byte(satellitesInitManifest()))
 	}))
 	t.Cleanup(srv.Close)
-	return New(Deps{ManifestURL: srv.URL})
+	docs := document.NewMemoryStore()
+	seedInstallSchema(t, docs, canonicalInstallSchema())
+	return New(Deps{ManifestURL: srv.URL, Documents: docs})
 }
 
 // TestSatellitesInit_InstallRequired: empty CurrentVersion → state
@@ -145,6 +192,31 @@ func TestSatellitesInit_EmptyManifestURL(t *testing.T) {
 	assert.Contains(t, err.Error(), "manifest_url")
 }
 
+// TestSatellitesInit_InstallSchemaNotSeeded asserts the resolver path's
+// fail-loud invariant: when the install schema artifact has not been
+// seeded into the document store, the verb refuses to serve baked
+// defaults and returns the typed error. Sty_193a5185 — pr_substrate_model
+// enforces "new behaviour comes from new prose and a re-seed, not from
+// a code change", so missing-prose is an authoring error, not a
+// fallback condition.
+func TestSatellitesInit_InstallSchemaNotSeeded(t *testing.T) {
+	resetSystemVersionCache()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(satellitesInitManifest()))
+	}))
+	t.Cleanup(srv.Close)
+	// Documents store is configured but the install schema artifact is
+	// NOT seeded.
+	docs := document.NewMemoryStore()
+	c := New(Deps{ManifestURL: srv.URL, Documents: docs})
+	_, err := c.SatellitesInit(context.Background(), Caller{}, SatellitesInitInput{
+		OS: "linux", Arch: "amd64",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "install schema not seeded")
+}
+
 // recommendationFixture stands up a satellites_init Client wired to
 // a fake manifest server AND a memory-backed document store. The
 // caller seeds the store with whatever orchestrator / workflow /
@@ -168,6 +240,7 @@ func newRecommendationFixture(t *testing.T) *recommendationFixture {
 	}))
 	t.Cleanup(srv.Close)
 	docs := document.NewMemoryStore()
+	seedInstallSchema(t, docs, canonicalInstallSchema())
 	c := New(Deps{ManifestURL: srv.URL, Documents: docs})
 	const wsID = "wksp_recommendation"
 	return &recommendationFixture{

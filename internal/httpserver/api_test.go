@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +12,49 @@ import (
 
 	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/client"
+	"github.com/bobmcallan/satellites/internal/document"
+	"github.com/bobmcallan/satellites/internal/satellitesinit"
 )
+
+// seededInstallSchemaDocs returns a memory-backed document store with
+// the canonical install schema artifact pre-seeded. Required to drive
+// satellites_init through this test surface since sty_193a5185 carved
+// the install schema into a configseed-loaded artifact.
+func seededInstallSchemaDocs(t *testing.T) document.Store {
+	t.Helper()
+	docs := document.NewMemoryStore()
+	schema := satellitesinit.InstallSchema{
+		TargetInstallPath: "./.satellites/satellites-client",
+		TargetConfigPath:  "./.satellites/satellites-client.toml",
+		DefaultConfig: satellitesinit.InstallSchemaDefaultConfig{
+			RepoPath:       ".",
+			WorktreeRoot:   "./.satellites/worktree",
+			LogPath:        "./.satellites/logs",
+			BranchTemplate: "client-{task_id}-from-{base_sha}",
+		},
+		AuthBootstrap: satellitesinit.InstallSchemaAuthBootstrap{
+			Kind:    "auth_login",
+			Command: "satellites-client auth login",
+			EnvHint: "SATELLITES_TOKEN",
+		},
+	}
+	structured, err := satellitesinit.MarshalSchema(schema)
+	if err != nil {
+		t.Fatalf("marshal install schema: %v", err)
+	}
+	_, err = docs.Create(context.Background(), document.Document{
+		Type:       document.TypeArtifact,
+		Scope:      document.ScopeSystem,
+		Name:       satellitesinit.SystemDefaultName,
+		Structured: structured,
+		Tags:       []string{satellitesinit.KindTag, "seed", "configseed"},
+		Status:     document.StatusActive,
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("seed install schema: %v", err)
+	}
+	return docs
+}
 
 // expectedRoutes lists the verb routes the HTTP API surface exposes.
 // sty_068a6c46 shipped 20; sty_73207fc8 added /api/v1/story/get;
@@ -316,6 +359,7 @@ func TestAPI_SatellitesInit_HappyPath(t *testing.T) {
 	reg := NewAPIRegistrar(client.New(client.Deps{
 		StartedAt:   time.Now().UTC(),
 		ManifestURL: upstream.URL,
+		Documents:   seededInstallSchemaDocs(t),
 	}))
 	mux := http.NewServeMux()
 	reg.Register(mux)

@@ -305,12 +305,18 @@ func replicateVocabularyToInput(fm Frontmatter, body []byte, workspaceID, actor 
 // handshake markdown the MCP server returns to connecting clients —
 // authors edit a file under config/seed/system/artifacts/ instead of patching a
 // Go string constant. Sty_6c3f8091.
+//
+// Sty_193a5185: when the artifact is the `satellites_client_install`
+// schema row, the structured frontmatter keys (target_install_path,
+// target_config_path, default_config, auth_bootstrap) are JSON-encoded
+// into UpsertInput.Structured so the resolver can decode them as a
+// typed struct without re-parsing YAML at every read.
 func artifactToInput(fm Frontmatter, body []byte, workspaceID, actor string) (document.UpsertInput, error) {
 	name := fm.String("name")
 	if name == "" {
 		return document.UpsertInput{}, fmt.Errorf("artifact: name required")
 	}
-	return document.UpsertInput{
+	in := document.UpsertInput{
 		WorkspaceID: "",
 		ProjectID:   nil,
 		Type:        document.TypeArtifact,
@@ -319,7 +325,72 @@ func artifactToInput(fm Frontmatter, body []byte, workspaceID, actor string) (do
 		Scope:       document.ScopeSystem,
 		Tags:        appendDistinct(fm.StringSlice("tags"), "seed", "configseed"),
 		Actor:       actor,
-	}, nil
+	}
+	if name == installSchemaArtifactName {
+		structured, err := installSchemaStructured(fm)
+		if err != nil {
+			return document.UpsertInput{}, fmt.Errorf("artifact %q: %w", name, err)
+		}
+		in.Structured = structured
+	}
+	return in, nil
+}
+
+// installSchemaArtifactName is the canonical row name for the
+// satellites_init install schema. Kept local to the parser so the
+// resolver package can stay decoupled from configseed.
+const installSchemaArtifactName = "satellites_client_install"
+
+// installSchemaStructured walks the install-schema frontmatter and
+// JSON-encodes the canonical keys into the Structured payload the
+// satellitesinit resolver consumes. Fail-loud on missing required keys
+// — the carve-out's invariant is that the seed file IS the source of
+// truth; a partial seed is an authoring error, not a fallback.
+func installSchemaStructured(fm Frontmatter) ([]byte, error) {
+	payload := map[string]any{
+		"target_install_path": fm.String("target_install_path"),
+		"target_config_path":  fm.String("target_config_path"),
+		"default_config":      installSchemaDefaultConfig(fm["default_config"]),
+		"auth_bootstrap":      installSchemaAuthBootstrap(fm["auth_bootstrap"]),
+	}
+	if payload["target_install_path"] == "" {
+		return nil, fmt.Errorf("install schema: target_install_path required")
+	}
+	if payload["target_config_path"] == "" {
+		return nil, fmt.Errorf("install schema: target_config_path required")
+	}
+	return json.Marshal(payload)
+}
+
+// installSchemaDefaultConfig normalises the nested `default_config:`
+// frontmatter map into the canonical wire shape (repo_path,
+// worktree_root, log_path, branch_template).
+func installSchemaDefaultConfig(raw any) map[string]any {
+	m := asMap(raw)
+	if m == nil {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"repo_path":       stringOf(m["repo_path"]),
+		"worktree_root":   stringOf(m["worktree_root"]),
+		"log_path":        stringOf(m["log_path"]),
+		"branch_template": stringOf(m["branch_template"]),
+	}
+}
+
+// installSchemaAuthBootstrap normalises the nested `auth_bootstrap:`
+// frontmatter map into the canonical wire shape (kind, command,
+// env_hint).
+func installSchemaAuthBootstrap(raw any) map[string]any {
+	m := asMap(raw)
+	if m == nil {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"kind":     stringOf(m["kind"]),
+		"command":  stringOf(m["command"]),
+		"env_hint": stringOf(m["env_hint"]),
+	}
 }
 
 // skillToInput builds a document.UpsertInput for a kind=skill file.

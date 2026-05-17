@@ -13,10 +13,52 @@ import (
 
 	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/client"
+	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/project"
+	"github.com/bobmcallan/satellites/internal/satellitesinit"
 	"github.com/bobmcallan/satellites/internal/session"
 	"github.com/bobmcallan/satellites/internal/workspace"
 )
+
+// seededInstallSchemaDocs returns a memory-backed document store with
+// the canonical install schema artifact pre-seeded. The wire-adapter
+// tests need the resolver to find the seeded row; production seeding
+// goes through configseed.Run against the on-disk artifact file.
+func seededInstallSchemaDocs(t *testing.T) document.Store {
+	t.Helper()
+	docs := document.NewMemoryStore()
+	schema := satellitesinit.InstallSchema{
+		TargetInstallPath: "./.satellites/satellites-client",
+		TargetConfigPath:  "./.satellites/satellites-client.toml",
+		DefaultConfig: satellitesinit.InstallSchemaDefaultConfig{
+			RepoPath:       ".",
+			WorktreeRoot:   "./.satellites/worktree",
+			LogPath:        "./.satellites/logs",
+			BranchTemplate: "client-{task_id}-from-{base_sha}",
+		},
+		AuthBootstrap: satellitesinit.InstallSchemaAuthBootstrap{
+			Kind:    "auth_login",
+			Command: "satellites-client auth login",
+			EnvHint: "SATELLITES_TOKEN",
+		},
+	}
+	structured, err := satellitesinit.MarshalSchema(schema)
+	if err != nil {
+		t.Fatalf("marshal install schema: %v", err)
+	}
+	_, err = docs.Create(context.Background(), document.Document{
+		Type:       document.TypeArtifact,
+		Scope:      document.ScopeSystem,
+		Name:       satellitesinit.SystemDefaultName,
+		Structured: structured,
+		Tags:       []string{satellitesinit.KindTag, "seed", "configseed"},
+		Status:     document.StatusActive,
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("seed install schema: %v", err)
+	}
+	return docs
+}
 
 // fakeClientSession satisfies mark3labs/mcp-go's ClientSession interface
 // for tests. SessionID() returns the injected id; the other methods are
@@ -61,7 +103,7 @@ func TestHandleSatellitesInit_HappyPath(t *testing.T) {
 
 	s := &Server{
 		startedAt: time.Date(2026, 5, 13, 0, 0, 0, 0, time.UTC),
-		deps:      client.Deps{ManifestURL: manifestURL},
+		deps:      client.Deps{ManifestURL: manifestURL, Documents: seededInstallSchemaDocs(t)},
 	}
 	req := mcpgo.CallToolRequest{}
 	req.Params.Name = "satellites_init"
@@ -249,6 +291,7 @@ func TestHandleSatellitesInit_KindReadyOnBoundSession(t *testing.T) {
 			APIKeys:     auth.NewMemoryAgentAPIKeyStore(),
 			Projects:    projects,
 			Workspaces:  workspaces,
+			Documents:   seededInstallSchemaDocs(t),
 		},
 	}
 
@@ -343,6 +386,7 @@ func TestHandleSatellitesInit_KindReadyIdempotent(t *testing.T) {
 			APIKeys:     auth.NewMemoryAgentAPIKeyStore(),
 			Projects:    projects,
 			Workspaces:  workspaces,
+			Documents:   seededInstallSchemaDocs(t),
 		},
 	}
 

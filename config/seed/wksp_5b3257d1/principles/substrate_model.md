@@ -73,6 +73,50 @@ dispatch through the `Agent` tool, or whose `task_walk` chain
 is missing the per-slice MCP authoring rows that should
 accompany each delivered slice.
 
+## Worked failure mode — operator-memory drift
+
+A 28-entry MEMORY.md at
+`~/.claude/projects/<repo>/memory/MEMORY.md` accumulated under
+the operator's Claude Code session, duplicating substrate state
+that already lived in the rows: story IDs, commit SHAs, slice
+mappings, partial-delivery tracking, dispatch-shape preferences.
+The orchestrator (running inside that Claude Code session) read
+those entries as load-bearing context and let them shape
+substrate behaviour, in direct contradiction of the
+"Dispatched-agent isolation" rule above — memory is operator-
+side state, but the orchestrator IS the operator session, so
+the boundary blurs in the orchestrator's own context window
+unless the prose names it.
+
+The `sty_4db0e025` failure above was the surfacing incident,
+not the whole problem. The `feedback_in_session_dispatch_default.md`
+memory entry said "prefer in-session dispatch over `task run`",
+which the orchestrator interpreted as license to use Claude
+Code's `Agent` tool — a third channel the substrate's seed
+prose does NOT sanction. That memory entry was just one of
+twenty-eight; the rest catalogued story-state and slice-mapping
+that `story_get` / `task_walk` / `ledger_list` already returned
+authoritatively from the substrate. Memory was a parallel,
+divergent context store.
+
+The structural rule: any memory entry that describes substrate
+behaviour (dispatch path, contract sequencing, principle
+interpretation, story state) is a bug of *placement*, not of
+content. The same prose re-homed via MCP authoring — into the
+relevant agent body (`document_update` on `claude_orchestrator`
+or another `type=agent` doc), a workspace-scope or project-scope
+principle body, a contract body, or a story field — is the
+correct shape. Operator-only preferences (theme, statusline,
+naming idiosyncrasies, terminal-personal aesthetics) stay in
+memory; everything that bears on dispatched-agent behaviour
+moves to the substrate.
+
+This subsection is cross-linked from `claude_orchestrator`'s
+Pre-flight Rule 4 — "no memory-based substrate context". Cite
+`pr_substrate_model` on any close whose evidence sources a
+substrate decision from an operator-memory entry instead of an
+agent/principle/contract/story row.
+
 ## When to revisit the no-baseline-skills/reviewers rule
 
 Add a baseline if any of the following becomes true: a system-tier code path begins listing `type=skill` rows and failing-open is unacceptable; a system-tier code path begins reading `type=reviewer` rows; a generic skill becomes load-bearing for multiple agents and operators are each re-creating it project-by-project. Until then, the operator's first `skill_create` or `reviewer_create` is the right place for these to appear.

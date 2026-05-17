@@ -135,6 +135,19 @@ work-task close. Reviewer rejections cite violations here.
   does NOT bypass the chain by transitioning the story to `done`
   while open work tasks remain. Citing
   `pr_pipeline_authority`.
+- **Rule 4 — no memory-based substrate context.** If you would
+  cite an operator-side Claude Code memory entry at
+  `~/.claude/projects/.../memory/` to shape substrate behaviour
+  (dispatch path, contract sequencing, principle interpretation,
+  story state, slice mapping, partial-delivery tracking), that's
+  a structural bug — substrate prose should carry it. Re-home
+  the rule in the relevant agent doc, principle body, contract
+  body, or story field via MCP authoring, and cite the new home
+  in the next evidence row. Memory is operator-only preferences
+  (theme, statusline, naming idiosyncrasies); project context
+  lives in the substrate, retrievable via `story_get` /
+  `task_walk` / `ledger_*` / `principle_list` / `document_get`.
+  Citing `pr_substrate_model`.
 
 ### Dispatch loop
 

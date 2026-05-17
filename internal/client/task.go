@@ -384,6 +384,11 @@ type TaskAddInput struct {
 	Priority     string
 	PriorTaskID  string
 	ParentTaskID string
+	// Trigger carries an optional runner payload as a JSON object string
+	// (e.g. `{"branch":"…","sha":"…"}`). When non-empty it is stored
+	// verbatim on Task.Trigger as bytes — the substrate does not validate
+	// the JSON shape; downstream runners parse leniently. sty_a39e9e41.
+	Trigger      string
 	Memberships  []string
 	Resolve      TaskAddResolveDeps
 	Now          time.Time
@@ -615,7 +620,7 @@ func (c *Client) TaskAdd(ctx context.Context, caller Caller, in TaskAddInput) (T
 		}
 	}
 
-	work, err := c.deps.Tasks.Enqueue(ctx, task.Task{
+	newTask := task.Task{
 		WorkspaceID:  st.WorkspaceID,
 		ProjectID:    st.ProjectID,
 		StoryID:      st.ID,
@@ -628,7 +633,11 @@ func (c *Client) TaskAdd(ctx context.Context, caller Caller, in TaskAddInput) (T
 		Status:       task.StatusPublished,
 		PriorTaskID:  priorTaskID,
 		ParentTaskID: parentTaskID,
-	}, now)
+	}
+	if trimmed := strings.TrimSpace(in.Trigger); trimmed != "" {
+		newTask.Trigger = []byte(trimmed)
+	}
+	work, err := c.deps.Tasks.Enqueue(ctx, newTask, now)
 	if err != nil {
 		return TaskAddOutput{}, fmt.Errorf("task enqueue: %v", err)
 	}

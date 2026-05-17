@@ -107,6 +107,9 @@ func newTaskAddCmd() *cobra.Command {
 			if v, _ := cmd.Flags().GetString("parent-task-id"); v != "" {
 				out["parent_task_id"] = v
 			}
+			if v, _ := cmd.Flags().GetString("trigger"); v != "" {
+				out["trigger"] = v
+			}
 			return out, nil
 		}),
 	}
@@ -118,6 +121,7 @@ func newTaskAddCmd() *cobra.Command {
 	c.Flags().String("priority", "", "Priority: critical | high | medium (default) | low.")
 	c.Flags().String("prior-task-id", "", "Same-slot retry pointer. Caller wins over auto-supersession detection.")
 	c.Flags().String("parent-task-id", "", "Conversation-thread anchor.")
+	c.Flags().String("trigger", "", `Optional runner payload as a JSON object string, e.g. '{"branch":"…","sha":"…"}'. Stored verbatim on Task.Trigger; substrate does not validate the JSON shape.`)
 	_ = c.MarkFlagRequired("agent-id")
 	return c
 }

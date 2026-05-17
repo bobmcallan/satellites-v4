@@ -396,6 +396,56 @@ func TestTaskAdd_WorkspaceTier_CrossProjectInSameWorkspace(t *testing.T) {
 	require.Equal(t, otherProj.ID, row.ProjectID, "task project resolved from supplied story_id")
 }
 
+// TestTaskAdd_TriggerRoundtripsViaMCP locks sty_a39e9e41 Slice 1 AC4:
+// the MCP `trigger` argument lands verbatim on Task.Trigger bytes after
+// a full wire-layer call. Asserts the byte payload (not a parsed map) so
+// any future canonicalisation drift would fail the test.
+func TestTaskAdd_TriggerRoundtripsViaMCP(t *testing.T) {
+	t.Parallel()
+	f := newOrchestratorFixture(t)
+	devID := agentDocID(t, f.server, "developer_agent")
+	triggerJSON := `{"branch":"feature-x","sha":"deadbeef"}`
+
+	res := callAddHandler(t, f, map[string]any{
+		"agent_id": devID,
+		"prompt":   "carry trigger bytes through MCP",
+		"story_id": f.storyID,
+		"action":   task.ContractAction("develop"),
+		"trigger":  triggerJSON,
+	})
+	require.False(t, res.IsError, "trigger round-trip errored: %v", res.Content)
+	out := decodeResult(t, res)
+	taskID := out["task_id"].(string)
+	require.NotEmpty(t, taskID)
+
+	row, err := f.taskStore.GetByID(context.Background(), taskID, nil)
+	require.NoError(t, err)
+	require.Equal(t, triggerJSON, string(row.Trigger), "trigger bytes must round-trip verbatim via MCP")
+}
+
+// TestTaskAdd_TriggerOmittedViaMCPLeavesNil locks AC6: omitting the
+// trigger argument on the MCP call must leave Task.Trigger empty — pre-
+// existing task_add callers (every test fixture above) must continue to
+// land trigger-free rows.
+func TestTaskAdd_TriggerOmittedViaMCPLeavesNil(t *testing.T) {
+	t.Parallel()
+	f := newOrchestratorFixture(t)
+	devID := agentDocID(t, f.server, "developer_agent")
+
+	res := callAddHandler(t, f, map[string]any{
+		"agent_id": devID,
+		"prompt":   "no trigger today",
+		"story_id": f.storyID,
+		"action":   task.ContractAction("develop"),
+	})
+	require.False(t, res.IsError)
+	taskID := decodeResult(t, res)["task_id"].(string)
+
+	row, err := f.taskStore.GetByID(context.Background(), taskID, nil)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(row.Trigger), "omitted trigger must leave Task.Trigger empty")
+}
+
 // errorText returns the inner text of a tool result regardless of whether
 // it came back as IsError or as success — both shapes carry the message
 // in Content[0].

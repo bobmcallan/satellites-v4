@@ -67,6 +67,7 @@ func (s *Server) buildTaskAddInput(req mcpgo.CallToolRequest, memberships []stri
 		Priority:     strings.TrimSpace(req.GetString("priority", "")),
 		PriorTaskID:  strings.TrimSpace(req.GetString("prior_task_id", "")),
 		ParentTaskID: strings.TrimSpace(req.GetString("parent_task_id", "")),
+		Trigger:      req.GetString("trigger", ""),
 		Memberships:  memberships,
 		Now:          s.nowUTC(),
 		Resolve: client.TaskAddResolveDeps{

@@ -694,3 +694,67 @@ func TestTaskUpdate_RejectsStatusPlusLinkage(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "linkage patch cannot combine with status mutation")
 }
+
+// TestTaskAdd_TriggerPersists locks the sty_a39e9e41 round-trip: a JSON
+// object string handed to task_add lands verbatim on Task.Trigger bytes
+// — no canonicalisation, no whitespace stripping beyond the input trim.
+func TestTaskAdd_TriggerPersists(t *testing.T) {
+	f := newTaskFixture(t)
+	triggerJSON := `{"branch":"feature-x","sha":"abc123"}`
+
+	add, err := f.c.TaskAdd(context.Background(), f.caller, TaskAddInput{
+		AgentID:     f.devID,
+		Prompt:      "x",
+		StoryID:     f.storyID,
+		Action:      task.ContractAction("develop"),
+		Trigger:     triggerJSON,
+		Memberships: f.caller.Memberships,
+		Now:         f.now,
+	})
+	require.NoError(t, err)
+
+	row, err := f.taskStore.GetByID(context.Background(), add.TaskID, f.caller.Memberships)
+	require.NoError(t, err)
+	assert.Equal(t, triggerJSON, string(row.Trigger), "trigger bytes must round-trip verbatim")
+}
+
+// TestTaskAdd_TriggerOmittedLeavesNil locks the empty-trigger contract:
+// when the caller omits Trigger, the substrate must not stamp a zero-
+// length []byte artefact — pre-existing fixtures stay byte-identical.
+func TestTaskAdd_TriggerOmittedLeavesNil(t *testing.T) {
+	f := newTaskFixture(t)
+	add, err := f.c.TaskAdd(context.Background(), f.caller, TaskAddInput{
+		AgentID:     f.devID,
+		Prompt:      "x",
+		StoryID:     f.storyID,
+		Action:      task.ContractAction("develop"),
+		Memberships: f.caller.Memberships,
+		Now:         f.now,
+	})
+	require.NoError(t, err)
+
+	row, err := f.taskStore.GetByID(context.Background(), add.TaskID, f.caller.Memberships)
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(row.Trigger), "omitted trigger must leave Task.Trigger empty")
+}
+
+// TestTaskAdd_TriggerWhitespaceTrimmedThenEmptyLeavesNil covers the
+// trim-empty edge: a caller passing whitespace-only Trigger gets the
+// same nil-byte outcome as omission, so contract noise (`"   "`) does
+// not pollute the row.
+func TestTaskAdd_TriggerWhitespaceTrimmedThenEmptyLeavesNil(t *testing.T) {
+	f := newTaskFixture(t)
+	add, err := f.c.TaskAdd(context.Background(), f.caller, TaskAddInput{
+		AgentID:     f.devID,
+		Prompt:      "x",
+		StoryID:     f.storyID,
+		Action:      task.ContractAction("develop"),
+		Trigger:     "   \n\t  ",
+		Memberships: f.caller.Memberships,
+		Now:         f.now,
+	})
+	require.NoError(t, err)
+	row, err := f.taskStore.GetByID(context.Background(), add.TaskID, f.caller.Memberships)
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(row.Trigger), "whitespace-only trigger must leave Task.Trigger empty")
+}

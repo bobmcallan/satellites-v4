@@ -840,6 +840,136 @@ func TestStoryClose_DeployBehind_PprodOlderThanRelease(t *testing.T) {
 	assertStoryUnchanged(t, f)
 }
 
+// appendTemplateFieldCarrier seeds a kind:template-field:<name>
+// ledger row scoped to the fixture's story at the requested offset.
+// sty_4885dc89 — exercises the close-gate roll-up that projects
+// carrier rows onto `story.fields` last-write-wins.
+func appendTemplateFieldCarrier(t *testing.T, f *storyCloseFixture, field, value string, offsetMin int) {
+	t.Helper()
+	_, err := f.c.deps.Ledger.Append(context.Background(), ledger.LedgerEntry{
+		WorkspaceID: f.wsID,
+		ProjectID:   f.projectID,
+		StoryID:     ledger.StringPtr(f.storyID),
+		Type:        ledger.TypeEvidence,
+		Tags:        []string{"kind:template-field:" + field, "story_id:" + f.storyID},
+		Content:     value,
+		Durability:  ledger.DurabilityDurable,
+		SourceType:  ledger.SourceAgent,
+		Status:      ledger.StatusActive,
+		CreatedBy:   "u_dev",
+	}, f.now.Add(time.Duration(offsetMin)*time.Minute))
+	require.NoError(t, err)
+}
+
+// improvementTemplateJSON mirrors the seed
+// `config/seed/system/story_templates/improvement.md` shape — three
+// fields gated at the done transition (before_after, fix_commit,
+// regression_test_path) plus motivation gated at in_progress. The
+// roll-up tests target the done fields.
+const improvementTemplateJSON = `{
+	"category":"improvement",
+	"fields":[
+		{"name":"motivation","type":"text","required":true,"prompt":"why"},
+		{"name":"before_after","type":"text","required":false,"prompt":"shape"},
+		{"name":"fix_commit","type":"string","required":false,"prompt":"sha"},
+		{"name":"regression_test_path","type":"string","required":false,"prompt":"path"}
+	],
+	"hooks":{
+		"done":{
+			"structured":[
+				{"type":"field_present","field":"before_after"},
+				{"type":"field_present","field":"fix_commit"},
+				{"type":"field_present","field":"regression_test_path"}
+			]
+		}
+	}
+}`
+
+// TestStoryClose_RollsUpTemplateFieldCarriers — sty_4885dc89 anchor.
+// Three carrier rows populate the three done-gated improvement fields;
+// the close gate walks straight through to PASS without any
+// operator-side story_update(fields=…) call.
+func TestStoryClose_RollsUpTemplateFieldCarriers(t *testing.T) {
+	opts := happyOpts()
+	opts.SeedTemplate = true
+	opts.TemplateJSON = improvementTemplateJSON
+	opts.Fields = map[string]any{"motivation": "anchor sty_4885dc89"}
+	f := newStoryCloseFixture(t, "improvement", opts)
+
+	appendTemplateFieldCarrier(t, f, "before_after", "before: manual story_field_set; after: substrate roll-up", 6)
+	appendTemplateFieldCarrier(t, f, "fix_commit", "abc1234def567", 7)
+	appendTemplateFieldCarrier(t, f, "regression_test_path", "tests/integration/story_close_template_field_test.go", 8)
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	require.Equal(t, "pass", out.Status, "carrier rows should populate fields and pass the template gate; gaps=%+v", out.Gaps)
+	assert.Equal(t, story.StatusDone, out.StoryStatus)
+	assert.NotEmpty(t, out.EvidenceID)
+
+	st, err := f.c.deps.Stories.GetByID(context.Background(), f.storyID, f.caller.Memberships)
+	require.NoError(t, err)
+	assert.Equal(t, "abc1234def567", st.Fields["fix_commit"])
+	assert.Equal(t, "tests/integration/story_close_template_field_test.go", st.Fields["regression_test_path"])
+	assert.Equal(t, "before: manual story_field_set; after: substrate roll-up", st.Fields["before_after"])
+}
+
+// TestStoryClose_CarrierLastWriteWins — sty_4885dc89 RC-3. Two carrier
+// rows for the same field name with different timestamps; the
+// chronologically newer row's content lands. The store's ledger.List
+// returns newest-first, so the loop encounters the newer row first
+// and the seen-set blocks the older row.
+func TestStoryClose_CarrierLastWriteWins(t *testing.T) {
+	opts := happyOpts()
+	opts.SeedTemplate = true
+	opts.TemplateJSON = improvementTemplateJSON
+	opts.Fields = map[string]any{
+		"motivation":           "anchor sty_4885dc89",
+		"before_after":         "stub",
+		"regression_test_path": "stub",
+	}
+	f := newStoryCloseFixture(t, "improvement", opts)
+
+	appendTemplateFieldCarrier(t, f, "fix_commit", "old-sha", 6) // older
+	appendTemplateFieldCarrier(t, f, "fix_commit", "new-sha", 8) // newer
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	require.Equal(t, "pass", out.Status, "last-write-wins must yield newer-sha; gaps=%+v", out.Gaps)
+
+	st, err := f.c.deps.Stories.GetByID(context.Background(), f.storyID, f.caller.Memberships)
+	require.NoError(t, err)
+	assert.Equal(t, "new-sha", st.Fields["fix_commit"], "newer carrier row's content must win")
+}
+
+// TestStoryClose_CarrierUnknownFieldIgnored — sty_4885dc89 RC-2. A
+// carrier row tagged kind:template-field:not_declared produces no
+// error, no field write, no gap. The substrate's silent-ignore
+// invariant lets the contract prose define the valid set of field
+// names without growing a substrate-side rejection path.
+func TestStoryClose_CarrierUnknownFieldIgnored(t *testing.T) {
+	opts := happyOpts()
+	opts.SeedTemplate = true
+	opts.TemplateJSON = improvementTemplateJSON
+	opts.Fields = map[string]any{
+		"motivation":           "anchor sty_4885dc89",
+		"before_after":         "stub",
+		"fix_commit":           "stub",
+		"regression_test_path": "stub",
+	}
+	f := newStoryCloseFixture(t, "improvement", opts)
+
+	appendTemplateFieldCarrier(t, f, "not_declared", "should be ignored", 6)
+
+	out, err := f.c.StoryClose(context.Background(), f.caller, f.closeInput())
+	require.NoError(t, err)
+	require.Equal(t, "pass", out.Status, "unknown carrier field must not abort the close; gaps=%+v", out.Gaps)
+
+	st, err := f.c.deps.Stories.GetByID(context.Background(), f.storyID, f.caller.Memberships)
+	require.NoError(t, err)
+	_, present := st.Fields["not_declared"]
+	assert.False(t, present, "unknown field must not be written")
+}
+
 func assertGap(t *testing.T, gaps []StoryCloseGap, code, detail string) {
 	t.Helper()
 	for _, g := range gaps {

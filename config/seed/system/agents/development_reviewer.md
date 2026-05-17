@@ -48,12 +48,25 @@ project's standard, not a hardcoded language preset.
 
 ### 2. Tests pass
 
-Cite **pr_evidence_audit**. The close evidence must include the output of
-the project's build / lint / test gates (whichever the develop
-contract names). Pre-existing failures are acceptable when the agent
-verifies they are pre-existing (typically via a stash round-trip
-that reproduces identical output). New failures introduced by the
-change are a hard reject.
+Cite **pr_evidence_audit**. The close evidence MUST include the
+output of the project's build / lint / unit-test gates as
+`kind:unit-test-run` ledger rows — these are the per-task mandatory
+gates. Pre-existing failures are acceptable when the agent verifies
+they are pre-existing (typically via a stash round-trip that
+reproduces identical output). New failures introduced by the change
+are a hard reject.
+
+Integration tests are an OPT-IN checkpoint, not a per-task gate. A
+develop close without `kind:integration-test-run` evidence is
+accepted UNLESS the parent task carries the `integration-boundary`
+tag. The orchestrator marks the slice as an integration boundary
+when the checkpoint is required (typically the last slice before
+commit, or when a substantial slice-set lands). Reject for missing
+integration evidence ONLY when the tag is present AND the
+`kind:integration-test-run` row is absent or fails. Inferring "this
+slice felt big enough for integration" without the tag is NOT a
+valid reject — the orchestrator is the authoring authority for
+integration boundaries.
 
 ### 3. Commit discipline
 

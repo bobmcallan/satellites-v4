@@ -42,11 +42,78 @@ audit-of-record for evidence.
 - Branch name and the base SHA the worktree was cut from.
 - Files-changed list with a one-line reason per file.
 - Output of every gate the project requires (build, tests,
-  formatters, linters, type checks — whatever the project supplies).
+  formatters, linters, type checks — whatever the project supplies)
+  as `kind:unit-test-run` ledger rows (see "Test evidence —
+  unit vs integration" below).
 - AC-by-AC mapping with file:line citations or command-output
   excerpts.
 - `git diff --stat` summary.
 - Commit SHA on the work branch and the commit subject.
+- Template-field carrier ledger rows (see "Template field carrier"
+  below) for each value this slice produces that the parent story's
+  template will require at close time.
+
+## Template field carrier
+
+A develop task that produces a value the parent story's template
+will require at close time MAY append a `kind:template-field:<name>`
+ledger row, scoped to the parent story, with the value as `content`.
+The `story_close` gate rolls carrier rows up last-write-wins into
+`story.fields` BEFORE evaluating the category template's `done`
+transition hook. The mechanism eliminates the manual
+`story_update(fields={…})` step the operator used to invoke after a
+develop close.
+
+Authoring shape (one row per field, via `ledger_append`):
+
+```
+project_id: <project_id>
+story_id:   <parent story_id>
+type:       evidence
+tags:       ["kind:template-field:<name>", "story_id:<parent>"]
+content:    <value to write to story.fields.<name>>
+```
+
+Field names MUST match the parent story's template. For the
+`improvement` template (covering the majority of substrate work),
+slices that produce these values SHOULD carry them:
+
+- `fix_commit` — the commit SHA the develop close created. Authored
+  by the develop agent immediately after `git commit` lands.
+- `regression_test_path` — `path/to/test_file.go:TestName` for the
+  regression locking the new behaviour. Authored when the test
+  exists.
+- `before_after` — a concise behaviour-shape sketch. Authored on
+  the develop close that materialises the user-visible change
+  (often the last slice).
+
+Carrier rows for field names the template does not declare are
+recorded but not applied — no error, no gate. Last-write-wins is
+per field name across the story's full carrier-row set (the
+substrate iterates newest-first and uses the first occurrence per
+name).
+
+## Test evidence — unit vs integration
+
+Two kinds of test-run rows live in the develop evidence packet:
+
+- `kind:unit-test-run` — cheap per-task gates the develop contract
+  always requires. Build, unit tests, linters, formatters,
+  type-checks — whatever the project's toolchain supplies. Every
+  develop close carries at least one `kind:unit-test-run` row.
+- `kind:integration-test-run` — expensive cross-surface tests
+  (testcontainers, end-to-end fixtures, pprod-shaped dogfood
+  paths). Treated as a named checkpoint, not a per-task gate. The
+  orchestrator authors integration evidence at meaningful
+  boundaries — typically the last develop slice before commit, or
+  when a substantial slice-set has landed.
+
+Integration evidence is REQUIRED only when the parent develop task
+is tagged `integration-boundary` (the orchestrator's choice when
+authoring the task). Absent that tag, a develop close without
+`kind:integration-test-run` is accepted. The orchestrator owns the
+"when" — develop agents do not infer integration boundaries from
+slice size.
 
 ## Review policy
 

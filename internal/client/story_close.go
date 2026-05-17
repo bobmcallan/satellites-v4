@@ -179,6 +179,38 @@ func (c *Client) StoryClose(ctx context.Context, caller Caller, in StoryCloseInp
 
 	// AC3(d) — template fields per the resolved infrastructure template.
 	if tmpl, ok := c.loadStoryTemplate(ctx, st.Category); ok {
+		// sty_4885dc89 — template-field carrier roll-up. A develop slice
+		// (or any in-chain task) MAY emit a `kind:template-field:<name>`
+		// ledger row carrying the value the parent story's template will
+		// require at close time. We roll those rows up into `story.fields`
+		// last-write-wins BEFORE running EvaluateTransition so the gap-
+		// check reads the freshly-populated map. Carrier rows for field
+		// names the resolved template does NOT declare are silently
+		// ignored — no error, no gate; the contract prose documents which
+		// names are valid for each category.
+		declared := make(map[string]struct{}, len(tmpl.Fields))
+		for _, f := range tmpl.Fields {
+			declared[f.Name] = struct{}{}
+		}
+		seen := make(map[string]struct{})
+		for i := range rows {
+			name := templateFieldNameFromTags(rows[i].Tags)
+			if name == "" {
+				continue
+			}
+			if _, ok := declared[name]; !ok {
+				continue
+			}
+			if _, dup := seen[name]; dup {
+				continue
+			}
+			seen[name] = struct{}{}
+			updated, err := c.deps.Stories.SetField(ctx, st.ID, name, rows[i].Content, caller.UserID, now, memberships)
+			if err != nil {
+				return StoryCloseOutput{}, err
+			}
+			st = updated
+		}
 		ev := story.EvaluationContext{
 			LedgerEntriesForStory: func(ctx context.Context, storyID string) ([]ledger.LedgerEntry, error) {
 				return rows, nil
@@ -398,6 +430,21 @@ func latestReleaseEvidenceRow(rows []ledger.LedgerEntry) *ledger.LedgerEntry {
 		}
 	}
 	return picked
+}
+
+// templateFieldNameFromTags extracts the `<name>` from the first
+// `kind:template-field:<name>` tag in tags. Empty string when no
+// such tag is present. sty_4885dc89 — the close gate's roll-up uses
+// this to project a ledger row onto the corresponding story.fields
+// entry via story.Store.SetField.
+func templateFieldNameFromTags(tags []string) string {
+	const prefix = "kind:template-field:"
+	for _, t := range tags {
+		if strings.HasPrefix(t, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(t, prefix))
+		}
+	}
+	return ""
 }
 
 // pushedSHAFromTags extracts the value following the `pushed_sha:`

@@ -110,7 +110,10 @@ func (s *Server) wrapperAdd(kind string) func(context.Context, mcpgo.CallToolReq
 
 // wrapperGet pins the type filter to kind on document_get so a typed
 // wrapper rejects a same-name row of a different type. Mirrors the
-// shape of wrapperList / wrapperSearch.
+// shape of wrapperList / wrapperSearch. sty_9f658001 slice 1: stamps
+// ctx with the wrapper verb name (`<kind>_get`) so the context-fetch
+// audit row carries the right wire-verb label even though all wrapper
+// kinds collapse to DocumentGet on *Client.
 func (s *Server) wrapperGet(kind string) func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	return func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		args := req.GetArguments()
@@ -119,12 +122,15 @@ func (s *Server) wrapperGet(kind string) func(context.Context, mcpgo.CallToolReq
 		}
 		args["type"] = kind
 		req.Params.Arguments = args
+		ctx = client.WithOriginVerb(ctx, kind+"_get")
 		return s.handleDocumentGet(ctx, req)
 	}
 }
 
 // wrapperList pins the type filter to kind; ignores any caller-supplied
-// type override.
+// type override. sty_9f658001 slice 1: stamps ctx with `<kind>_list` so
+// principle_list / contract_list / agent_list / skill_list audit rows
+// carry the wire-verb label.
 func (s *Server) wrapperList(kind string) func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	return func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		args := req.GetArguments()
@@ -133,6 +139,7 @@ func (s *Server) wrapperList(kind string) func(context.Context, mcpgo.CallToolRe
 		}
 		args["type"] = kind
 		req.Params.Arguments = args
+		ctx = client.WithOriginVerb(ctx, kind+"_list")
 		return s.handleDocumentList(ctx, req)
 	}
 }

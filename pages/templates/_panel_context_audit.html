@@ -1,0 +1,65 @@
+{{define "_panel_context_audit.html"}}
+<!-- Context audit panel — kind:context-fetch ledger rows (sty_9f658001 slice 2). -->
+<section class="panel-headed" data-testid="context-audit-panel">
+  <header class="panel-header">
+    <h2>context audit</h2>
+    <span class="panel-header-meta">
+      <code>(<span data-testid="context-audit-fetches">{{.Composite.ContextAudit.Summary.Fetches}}</span> fetches)</code>
+      <span class="live-dot" :class="liveClass" aria-label="live">●</span>
+    </span>
+  </header>
+  <div class="panel-body">
+    <!-- Summary row -->
+    <dl class="kv-list" data-testid="context-audit-summary">
+      <dt>fetches</dt><dd><code data-testid="context-audit-summary-fetches">{{.Composite.ContextAudit.Summary.Fetches}}</code></dd>
+      <dt>unique verbs</dt><dd><code data-testid="context-audit-summary-verbs">{{.Composite.ContextAudit.Summary.UniqueVerbs}}</code></dd>
+      <dt>total bytes</dt><dd><code data-testid="context-audit-summary-bytes">{{.Composite.ContextAudit.Summary.TotalBytes}}</code></dd>
+      <dt>R1 fails</dt><dd><code data-testid="context-audit-summary-r1fails">{{.Composite.ContextAudit.Summary.R1FailCount}}</code></dd>
+    </dl>
+
+    <!-- Violations table -->
+    <h3>violations</h3>
+    {{if not .Composite.ContextAudit.Violations}}
+      <p class="muted" data-testid="context-audit-violations-empty">No R1 violations for this story.</p>
+    {{else}}
+      <table class="data-table" data-testid="context-audit-violations-table">
+        <thead>
+          <tr><th>when</th><th>verb</th><th>sections</th><th>refs</th></tr>
+        </thead>
+        <tbody>
+          {{range .Composite.ContextAudit.Violations}}
+          <tr data-testid="context-audit-violation-row" data-ledger-id="{{.LedgerID}}">
+            <td><code>{{.CreatedAt}}</code></td>
+            <td><code class="verb-pill">{{.Verb}}</code></td>
+            <td>{{range .Sections}}<code class="tag-chip">{{.}}</code> {{end}}</td>
+            <td>{{range .Refs}}<code class="tag-chip">{{.}}</code> {{end}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    {{end}}
+
+    <!-- Top sections table -->
+    <h3>top sections</h3>
+    {{if not .Composite.ContextAudit.TopSections}}
+      <p class="muted" data-testid="context-audit-top-sections-empty">No section data yet.</p>
+    {{else}}
+      <table class="data-table" data-testid="context-audit-top-sections-table">
+        <thead>
+          <tr><th>name</th><th>total bytes</th><th>fetches</th><th>scopes</th></tr>
+        </thead>
+        <tbody>
+          {{range .Composite.ContextAudit.TopSections}}
+          <tr data-testid="context-audit-section-row" data-section="{{.Name}}">
+            <td><code>{{.Name}}</code></td>
+            <td><code>{{.TotalBytes}}</code></td>
+            <td><code>{{.Fetches}}</code></td>
+            <td>{{range .Scopes}}<code class="tag-chip">{{.}}</code> {{end}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    {{end}}
+  </div>
+</section>
+{{end}}

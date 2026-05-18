@@ -416,7 +416,17 @@ func (a *APIRegistrar) runDocumentList(w http.ResponseWriter, r *http.Request, p
 		Tags:      req.Tags,
 		Limit:     req.Limit,
 	}
-	out, err := a.client.DocumentList(r.Context(), cc, client.DocumentListInput{
+	// sty_9f658001 slice 1: stamp the wire verb (e.g. principle_list,
+	// contract_list, agent_list, document_list) so the context-fetch
+	// audit row carries the right label. The verb name is the pinned
+	// type ("<type>_list") for the type-pinned wrappers and "document_list"
+	// for the bare endpoint.
+	verb := "document_list"
+	if pinnedType != "" {
+		verb = pinnedType + "_list"
+	}
+	ctx := client.WithOriginVerb(r.Context(), verb)
+	out, err := a.client.DocumentList(ctx, cc, client.DocumentListInput{
 		Options:     opts,
 		WorkspaceID: wsID,
 		Memberships: cc.Memberships,
@@ -500,7 +510,8 @@ func (a *APIRegistrar) handlePrincipleGet(w http.ResponseWriter, r *http.Request
 	}
 	cc := a.clientCaller(r)
 	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
-	out, err := a.client.PrincipleGet(r.Context(), cc, req.ID, req.Name, req.ProjectID, cc.Memberships)
+	ctx := client.WithOriginVerb(r.Context(), "principle_get")
+	out, err := a.client.PrincipleGet(ctx, cc, req.ID, req.Name, req.ProjectID, cc.Memberships)
 	if err != nil {
 		writeAPIError(w, err)
 		return

@@ -250,6 +250,13 @@ func (c *Client) PrincipleGet(ctx context.Context, caller Caller, id, name, proj
 	}
 	resolvedProj, _ := c.ResolveProjectID(ctx, projectID, "", caller, memberships)
 	wsID := c.ResolveProjectWorkspaceID(ctx, resolvedProj)
+	// sty_9f658001 slice 1: tag the typed call with verb=principle_get
+	// so DocumentGet's audit row carries the right wire-verb label.
+	// Cf pr_mcp_cli_shared_path — DocumentGet is the shared method, the
+	// verb name flows in via context.
+	if OriginVerbFromContext(ctx) == "" {
+		ctx = WithOriginVerb(ctx, "principle_get")
+	}
 	return c.DocumentGet(ctx, caller, DocumentGetInput{
 		ID:                id,
 		Name:              name,

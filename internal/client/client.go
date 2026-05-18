@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/ternarybob/arbor"
@@ -102,6 +103,12 @@ type Deps struct {
 // and returns (out, err) — no wire-format concerns.
 type Client struct {
 	deps Deps
+	// audit hosts the bounded-channel queue + worker goroutine that
+	// drains kind:context-fetch ledger rows asynchronously. Lazily
+	// initialised on the first emit call via ensureContextAuditWorker.
+	// sty_9f658001 slice 1.
+	audit     *contextAuditWorker
+	auditInit sync.Once
 }
 
 // New constructs a Client bound to the supplied dependency bundle.

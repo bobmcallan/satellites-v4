@@ -258,7 +258,20 @@ func buildLedgerListOptionsFromArgs(in LedgerListArgs) ledger.ListOptions {
 // LedgerList returns rows scoped to the resolved project, applying
 // the supplied list options (type / story_id / tags / durability /
 // source_type / status / sensitive / include_dereferenced / limit).
-func (c *Client) LedgerList(ctx context.Context, caller Caller, in LedgerListInput) ([]ledger.LedgerEntry, error) {
+func (c *Client) LedgerList(ctx context.Context, caller Caller, in LedgerListInput) (rows []ledger.LedgerEntry, err error) {
+	defer func() {
+		if err != nil {
+			return
+		}
+		c.dispatchContextAudit(ctx, fetchAuditDispatchInput{
+			Verb:        "ledger_list",
+			ProjectID:   in.ResolvedProjectID,
+			WorkspaceID: c.ResolveProjectWorkspaceID(ctx, in.ResolvedProjectID),
+			StoryID:     in.Options.StoryID,
+			ArgsMap:     map[string]any{"project_id": in.ResolvedProjectID, "type": in.Options.Type, "story_id": in.Options.StoryID, "tags": in.Options.Tags, "limit": in.Options.Limit},
+			Caller:      caller,
+		}, sectionsForLedgerListOutput(rows))
+	}()
 	if c.deps.Ledger == nil {
 		return nil, ErrLedgerStoreNotConfigured
 	}

@@ -492,6 +492,75 @@ function storyPanel() {
                 this._applyTaskEvent(ev, projectID);
                 return;
             }
+            // sty_9f658001 slice 3: explicit-kind matching only — no
+            // substring/startsWith derivation. Cf sty_ec83484f's lesson
+            // (the prefix-strip antipattern at _applyStoryEvent).
+            if (ev.Kind === 'ledger.append') {
+                this._applyLedgerEvent(ev, projectID);
+                return;
+            }
+        },
+        // _applyLedgerEvent surfaces a fresh kind:context-fetch row on
+        // the Context audit panel (sty_9f658001 slice 3). Reads the
+        // event's tag set; when the row carries kind:context-fetch AND
+        // matches the currently-rendered story, appends a summary row
+        // and bumps the counters. Off-page or off-story events are
+        // no-op.
+        _applyLedgerEvent(ev, projectID) {
+            const data = ev.Data || ev.data || {};
+            if (data.project_id && projectID && data.project_id !== projectID) { return; }
+            const tags = Array.isArray(data.tags) ? data.tags : [];
+            let isContextFetch = false;
+            let eventStoryID = data.story_id || '';
+            let verb = '';
+            let audit = '';
+            for (let i = 0; i < tags.length; i++) {
+                const tag = String(tags[i] || '');
+                if (tag === 'kind:context-fetch') { isContextFetch = true; continue; }
+                if (tag.indexOf('story_id:') === 0) { eventStoryID = tag.slice('story_id:'.length); continue; }
+                if (tag.indexOf('verb:') === 0) { verb = tag.slice('verb:'.length); continue; }
+                if (tag.indexOf('audit:') === 0) { audit = tag.slice('audit:'.length); continue; }
+            }
+            if (!isContextFetch) { return; }
+            const panel = document.querySelector('[data-testid="context-audit-panel"]');
+            if (!panel) { return; }
+            // Story scoping: panel only renders rows for the current story.
+            const currentStoryID = window.SATELLITES_STORY && window.SATELLITES_STORY.storyID;
+            if (currentStoryID && eventStoryID && currentStoryID !== eventStoryID) { return; }
+
+            // Bump fetches counter.
+            const fetchCountEl = panel.querySelector('[data-testid="context-audit-summary-fetches"]');
+            if (fetchCountEl) {
+                const cur = parseInt(fetchCountEl.textContent || '0', 10);
+                fetchCountEl.textContent = String((isNaN(cur) ? 0 : cur) + 1);
+            }
+            const headerFetchEl = panel.querySelector('[data-testid="context-audit-fetches"]');
+            if (headerFetchEl) {
+                const cur = parseInt(headerFetchEl.textContent || '0', 10);
+                headerFetchEl.textContent = String((isNaN(cur) ? 0 : cur) + 1);
+            }
+            // Bump r1 fail counter when applicable.
+            if (audit === 'r1_fail') {
+                const r1El = panel.querySelector('[data-testid="context-audit-summary-r1fails"]');
+                if (r1El) {
+                    const cur = parseInt(r1El.textContent || '0', 10);
+                    r1El.textContent = String((isNaN(cur) ? 0 : cur) + 1);
+                }
+                // Append a row to the violations table.
+                const tbl = panel.querySelector('[data-testid="context-audit-violations-table"] tbody');
+                if (tbl) {
+                    const tr = document.createElement('tr');
+                    tr.setAttribute('data-testid', 'context-audit-violation-row');
+                    tr.setAttribute('data-ledger-id', String(data.ledger_id || ''));
+                    const when = (data.created_at ? String(data.created_at) : new Date().toISOString());
+                    tr.innerHTML =
+                        '<td><code>' + this._escape(when) + '</code></td>' +
+                        '<td><code class="verb-pill">' + this._escape(verb) + '</code></td>' +
+                        '<td><code class="tag-chip muted">—</code></td>' +
+                        '<td><code class="tag-chip muted">—</code></td>';
+                    tbl.insertBefore(tr, tbl.firstChild);
+                }
+            }
         },
         _applyStoryEvent(ev, projectID) {
             const data = ev.Data || ev.data || {};

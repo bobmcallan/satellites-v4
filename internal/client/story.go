@@ -99,29 +99,46 @@ const recentEvidenceLimit = 10
 // the category template when one exists. Missing dependencies degrade
 // individual sections; the call only fails when the story itself
 // can't be resolved.
-func (c *Client) StoryGet(ctx context.Context, caller Caller, in StoryGetInput) (StoryGetOutput, error) {
+func (c *Client) StoryGet(ctx context.Context, caller Caller, in StoryGetInput) (out StoryGetOutput, err error) {
+	defer func() {
+		if err != nil {
+			return
+		}
+		c.dispatchContextAudit(ctx, fetchAuditDispatchInput{
+			Verb:        "story_get",
+			ProjectID:   out.Story.ProjectID,
+			WorkspaceID: out.Story.WorkspaceID,
+			StoryID:     out.Story.ID,
+			ArgsMap:     map[string]any{"id": in.ID},
+			Caller:      caller,
+		}, sectionsForStoryGetOutput(out))
+	}()
 	if c.deps.Stories == nil {
-		return StoryGetOutput{}, errStoryStoreNotConfigured
+		err = errStoryStoreNotConfigured
+		return
 	}
 	if in.ID == "" {
-		return StoryGetOutput{}, errors.New("id required")
+		err = errors.New("id required")
+		return
 	}
 	memberships := in.Memberships
 	if memberships == nil {
 		memberships = c.ResolveCallerMemberships(ctx, caller)
 	}
-	st, err := c.deps.Stories.GetByID(ctx, in.ID, memberships)
-	if err != nil {
-		return StoryGetOutput{}, errStoryNotFoundForUpdate
+	st, getErr := c.deps.Stories.GetByID(ctx, in.ID, memberships)
+	if getErr != nil {
+		err = errStoryNotFoundForUpdate
+		return
 	}
-	if _, err := c.ResolveProjectID(ctx, st.ProjectID, "", caller, memberships); err != nil {
-		return StoryGetOutput{}, errStoryNotFoundForUpdate
+	if _, rerr := c.ResolveProjectID(ctx, st.ProjectID, "", caller, memberships); rerr != nil {
+		err = errStoryNotFoundForUpdate
+		return
 	}
 
-	out := StoryGetOutput{Story: st}
+	out.Story = st
 
 	if c.deps.Projects != nil {
-		if p, err := c.deps.Projects.GetByID(ctx, st.ProjectID, memberships); err == nil {
+		if p, perr := c.deps.Projects.GetByID(ctx, st.ProjectID, memberships); perr == nil {
 			out.Project = &p
 			bundle := c.BuildOrientation(ctx, p)
 			out.IntentBody = bundle.IntentBody
@@ -130,11 +147,11 @@ func (c *Client) StoryGet(ctx context.Context, caller Caller, in StoryGetInput) 
 	}
 
 	if c.deps.Ledger != nil {
-		entries, err := c.deps.Ledger.List(ctx, st.ProjectID, ledger.ListOptions{
+		entries, lerr := c.deps.Ledger.List(ctx, st.ProjectID, ledger.ListOptions{
 			StoryID: st.ID,
 			Limit:   recentEvidenceLimit,
 		}, memberships)
-		if err == nil && len(entries) > 0 {
+		if lerr == nil && len(entries) > 0 {
 			out.RecentEvidence = entries
 		}
 	}

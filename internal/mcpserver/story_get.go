@@ -39,6 +39,7 @@ func (s *Server) handleStoryGet(ctx context.Context, req mcpgo.CallToolRequest) 
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
 	memberships := s.resolveCallerMemberships(ctx, caller)
+	ctx = client.WithOriginVerb(ctx, "story_get")
 	out, err := s.cli().StoryGet(ctx, client.Caller{
 		UserID:      caller.UserID,
 		Email:       caller.Email,

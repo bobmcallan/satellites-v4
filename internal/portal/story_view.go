@@ -57,6 +57,44 @@ type storyComposite struct {
 	Activity      []storyActivityRow `json:"activity"`
 	ActivityKinds []string           `json:"activity_kinds"`
 	Delivery      deliveryStrip      `json:"delivery"`
+	// ContextAudit aggregates kind:context-fetch ledger rows scoped to
+	// this story into the three sub-section view-model the
+	// _panel_context_audit.html template renders. sty_9f658001 slice 2.
+	ContextAudit contextAuditPanel `json:"context_audit"`
+}
+
+// contextAuditPanel is the view-model for the Context audit panel —
+// summary counters + violations table + top-sections table. Populated
+// by buildContextAudit from kind:context-fetch ledger rows.
+type contextAuditPanel struct {
+	Summary    contextAuditSummary       `json:"summary"`
+	Violations []contextAuditViolation   `json:"violations"`
+	TopSections []contextAuditTopSection `json:"top_sections"`
+}
+
+// contextAuditSummary is the top header of the Context audit panel.
+type contextAuditSummary struct {
+	Fetches       int `json:"fetches"`
+	UniqueVerbs   int `json:"unique_verbs"`
+	TotalBytes    int `json:"total_bytes"`
+	R1FailCount   int `json:"r1_fail_count"`
+}
+
+// contextAuditViolation is one R1-violating context-fetch row.
+type contextAuditViolation struct {
+	LedgerID  string   `json:"ledger_id"`
+	Verb      string   `json:"verb"`
+	CreatedAt string   `json:"created_at"`
+	Sections  []string `json:"sections"`
+	Refs      []string `json:"refs"`
+}
+
+// contextAuditTopSection aggregates fetches by section name.
+type contextAuditTopSection struct {
+	Name       string   `json:"name"`
+	TotalBytes int      `json:"total_bytes"`
+	Fetches    int      `json:"fetches"`
+	Scopes     []string `json:"scopes"`
 }
 
 // sourceDocLink is the source-documents-panel view-model.
@@ -171,6 +209,7 @@ func buildStoryComposite(
 		c.ActivityKinds = resolveStoryActivityKinds(ctx, ledgerStore, s.WorkspaceID, s.ProjectID, memberships)
 		c.Activity = buildStoryActivity(ctx, ledgerStore, s.ProjectID, storyID, c.ActivityKinds, memberships)
 		c.Delivery = applyDeliveryVerdict(c.Delivery, c.Verdicts)
+		c.ContextAudit = buildContextAudit(ctx, ledgerStore, s.ProjectID, storyID, memberships)
 	}
 	if tasks != nil {
 		c.TaskChain = taskChainForStory(ctx, tasks, ledgerStore, s.ProjectID, storyID, memberships)
@@ -532,4 +571,152 @@ func truncate(s string, maxRunes int) string {
 		return s
 	}
 	return string(r[:maxRunes]) + "…"
+}
+
+// contextAuditPanelLimit caps the per-story window. Older rows are
+// queryable via the full ledger inspection page.
+const contextAuditPanelLimit = 200
+
+// contextAuditViolationLimit caps the violations table rendered in the
+// panel; older violations roll off the visible window.
+const contextAuditViolationLimit = 25
+
+// contextAuditTopSectionLimit caps the top-sections table.
+const contextAuditTopSectionLimit = 10
+
+// buildContextAudit fetches kind:context-fetch rows scoped to storyID,
+// unmarshals each row's structured payload, and aggregates into the
+// three sub-section view-models. Aggregation lives here, not on the
+// substrate — the rows are the read primitive.
+//
+// sty_9f658001 slice 2: portal-side surface for the per-story drift
+// surface. Substrate-emitted rows (kind:context-fetch) are
+// substrate-emitted (cf development_reviewer.md §7a) — agent close
+// evidence does not count these rows.
+func buildContextAudit(ctx context.Context, ledgerStore ledger.Store, projectID, storyID string, memberships []string) contextAuditPanel {
+	panel := contextAuditPanel{
+		Violations:  []contextAuditViolation{},
+		TopSections: []contextAuditTopSection{},
+	}
+	if ledgerStore == nil || projectID == "" || storyID == "" {
+		return panel
+	}
+	rows, err := ledgerStore.List(ctx, projectID, ledger.ListOptions{
+		StoryID: storyID,
+		Tags:    []string{"kind:context-fetch"},
+		Limit:   contextAuditPanelLimit,
+	}, memberships)
+	if err != nil {
+		return panel
+	}
+
+	type aggSection struct {
+		bytes   int
+		fetches int
+		scopes  map[string]struct{}
+	}
+	verbs := map[string]struct{}{}
+	sections := map[string]*aggSection{}
+	totalBytes := 0
+	r1FailCount := 0
+
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].CreatedAt.After(rows[j].CreatedAt)
+	})
+
+	for _, r := range rows {
+		var payload struct {
+			Verb       string `json:"verb"`
+			TotalBytes int    `json:"total_bytes"`
+			Sections   []struct {
+				Name        string `json:"name"`
+				Bytes       int    `json:"bytes"`
+				OriginScope string `json:"origin_scope"`
+			} `json:"sections"`
+			Rules struct {
+				R1 struct {
+					Violations []struct {
+						Section string   `json:"section"`
+						Scope   string   `json:"scope"`
+						Refs    []string `json:"refs"`
+					} `json:"violations"`
+				} `json:"r1"`
+			} `json:"rules"`
+		}
+		if len(r.Structured) == 0 {
+			continue
+		}
+		if err := json.Unmarshal(r.Structured, &payload); err != nil {
+			continue
+		}
+		verbs[payload.Verb] = struct{}{}
+		totalBytes += payload.TotalBytes
+		for _, sec := range payload.Sections {
+			agg, ok := sections[sec.Name]
+			if !ok {
+				agg = &aggSection{scopes: map[string]struct{}{}}
+				sections[sec.Name] = agg
+			}
+			agg.bytes += sec.Bytes
+			agg.fetches++
+			agg.scopes[sec.OriginScope] = struct{}{}
+		}
+		if len(payload.Rules.R1.Violations) == 0 {
+			continue
+		}
+		r1FailCount++
+		if len(panel.Violations) >= contextAuditViolationLimit {
+			continue
+		}
+		viol := contextAuditViolation{
+			LedgerID:  r.ID,
+			Verb:      payload.Verb,
+			CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339),
+			Sections:  make([]string, 0, len(payload.Rules.R1.Violations)),
+			Refs:      []string{},
+		}
+		seenRefs := map[string]struct{}{}
+		for _, v := range payload.Rules.R1.Violations {
+			viol.Sections = append(viol.Sections, v.Section)
+			for _, ref := range v.Refs {
+				if _, dup := seenRefs[ref]; dup {
+					continue
+				}
+				seenRefs[ref] = struct{}{}
+				viol.Refs = append(viol.Refs, ref)
+			}
+		}
+		sort.Strings(viol.Refs)
+		panel.Violations = append(panel.Violations, viol)
+	}
+
+	panel.Summary = contextAuditSummary{
+		Fetches:     len(rows),
+		UniqueVerbs: len(verbs),
+		TotalBytes:  totalBytes,
+		R1FailCount: r1FailCount,
+	}
+
+	top := make([]contextAuditTopSection, 0, len(sections))
+	for name, agg := range sections {
+		scopes := make([]string, 0, len(agg.scopes))
+		for s := range agg.scopes {
+			scopes = append(scopes, s)
+		}
+		sort.Strings(scopes)
+		top = append(top, contextAuditTopSection{
+			Name:       name,
+			TotalBytes: agg.bytes,
+			Fetches:    agg.fetches,
+			Scopes:     scopes,
+		})
+	}
+	sort.Slice(top, func(i, j int) bool {
+		return top[i].TotalBytes > top[j].TotalBytes
+	})
+	if len(top) > contextAuditTopSectionLimit {
+		top = top[:contextAuditTopSectionLimit]
+	}
+	panel.TopSections = top
+	return panel
 }

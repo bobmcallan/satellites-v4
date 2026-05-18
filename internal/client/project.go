@@ -119,16 +119,29 @@ const (
 // canonical) index. Project resolution then loads the project row by
 // id without re-applying memberships (the repo lookup already gated
 // workspace membership).
-func (c *Client) ProjectSet(ctx context.Context, caller Caller, in ProjectSetInput) (ProjectSetOutput, error) {
-	canonical, err := canoniseGitRemote(in.RepoURL)
-	if err != nil {
-		return ProjectSetOutput{}, err
+func (c *Client) ProjectSet(ctx context.Context, caller Caller, in ProjectSetInput) (out ProjectSetOutput, err error) {
+	defer func() {
+		if err != nil || out.Status != ProjectSetStatusResolved {
+			return
+		}
+		c.dispatchContextAudit(ctx, fetchAuditDispatchInput{
+			Verb:        "project_set",
+			ProjectID:   out.ResolvedProject.ID,
+			WorkspaceID: out.ResolvedProject.WorkspaceID,
+			ArgsMap:     map[string]any{"repo_url": in.RepoURL},
+			Caller:      caller,
+		}, sectionsForProjectSetOutput(out))
+	}()
+	canonical, cErr := canoniseGitRemote(in.RepoURL)
+	if cErr != nil {
+		err = cErr
+		return
 	}
 	now := in.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	out := ProjectSetOutput{RepoURLCanonical: canonical}
+	out.RepoURLCanonical = canonical
 	p, ok := c.resolveProjectByRemote(ctx, in.WorkspaceID, canonical)
 	if !ok {
 		out.Status = ProjectSetStatusNoProject

@@ -19,6 +19,7 @@ func (s *Server) handleTaskWalk(ctx context.Context, req mcpgo.CallToolRequest) 
 	}
 	caller, _ := auth.UserFrom(ctx)
 	memberships := s.resolveCallerMemberships(ctx, caller)
+	ctx = client.WithOriginVerb(ctx, "task_walk")
 	out, err := s.cli().TaskWalk(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.TaskWalkInput{StoryID: storyID, Memberships: memberships})
 	if err != nil {
 		body, _ := json.Marshal(map[string]any{"error": err.Error()})

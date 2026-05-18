@@ -422,7 +422,8 @@ func (a *APIRegistrar) handleLedgerList(w http.ResponseWriter, r *http.Request) 
 		v := false
 		opts.Sensitive = &v
 	}
-	out, err := a.client.LedgerList(r.Context(), cc, client.LedgerListInput{
+	ctx := client.WithOriginVerb(r.Context(), "ledger_list")
+	out, err := a.client.LedgerList(ctx, cc, client.LedgerListInput{
 		ResolvedProjectID: projectID,
 		Options:           opts,
 		Memberships:       cc.Memberships,
@@ -584,7 +585,8 @@ func (a *APIRegistrar) handleDocumentGet(w http.ResponseWriter, r *http.Request)
 	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
 	resolvedProj, _ := a.client.ResolveProjectID(r.Context(), req.ProjectID, "", cc, cc.Memberships)
 	wsID := a.client.ResolveProjectWorkspaceID(r.Context(), resolvedProj)
-	out, err := a.client.DocumentGet(r.Context(), cc, client.DocumentGetInput{
+	ctx := client.WithOriginVerb(r.Context(), "document_get")
+	out, err := a.client.DocumentGet(ctx, cc, client.DocumentGetInput{
 		ID:                req.ID,
 		Name:              req.Name,
 		Type:              req.Type,
@@ -625,7 +627,8 @@ func (a *APIRegistrar) handleDocumentList(w http.ResponseWriter, r *http.Request
 		Scope:     req.Scope,
 		Limit:     req.Limit,
 	}
-	out, err := a.client.DocumentList(r.Context(), cc, client.DocumentListInput{
+	ctx := client.WithOriginVerb(r.Context(), "document_list")
+	out, err := a.client.DocumentList(ctx, cc, client.DocumentListInput{
 		Options:     opts,
 		WorkspaceID: wsID,
 		Memberships: cc.Memberships,
@@ -668,7 +671,8 @@ func (a *APIRegistrar) handleTaskWalk(w http.ResponseWriter, r *http.Request) {
 	}
 	cc := a.clientCaller(r)
 	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
-	out, err := a.client.TaskWalk(r.Context(), cc, client.TaskWalkInput{
+	ctx := client.WithOriginVerb(r.Context(), "task_walk")
+	out, err := a.client.TaskWalk(ctx, cc, client.TaskWalkInput{
 		StoryID:     req.StoryID,
 		Memberships: cc.Memberships,
 	})
@@ -809,7 +813,8 @@ func (a *APIRegistrar) handleStoryGet(w http.ResponseWriter, r *http.Request) {
 	}
 	cc := a.clientCaller(r)
 	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
-	out, err := a.client.StoryGet(r.Context(), cc, client.StoryGetInput{
+	ctx := client.WithOriginVerb(r.Context(), "story_get")
+	out, err := a.client.StoryGet(ctx, cc, client.StoryGetInput{
 		ID:          req.ID,
 		Memberships: cc.Memberships,
 	})
@@ -838,7 +843,8 @@ func (a *APIRegistrar) handleProjectSet(w http.ResponseWriter, r *http.Request) 
 	}
 	cc := a.clientCaller(r)
 	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
-	out, err := a.client.ProjectSet(r.Context(), cc, client.ProjectSetInput{
+	ctx := client.WithOriginVerb(r.Context(), "project_set")
+	out, err := a.client.ProjectSet(ctx, cc, client.ProjectSetInput{
 		RepoURL:   req.RepoURL,
 		SessionID: req.SessionID,
 	})

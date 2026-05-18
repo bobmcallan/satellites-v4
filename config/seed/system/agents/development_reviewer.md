@@ -123,6 +123,18 @@ blocks in its `Structured` JSON payload (sty_af701a67):
   Lands on the `kind:agent-execute-evidence` row, not the develop
   close row, but both surfaces reach the reviewer via the same
   evidence packet. `total == input + output` is invariant.
+- `kind:context-fetch` — **substrate-emitted**, NOT agent-emitted.
+  Written automatically by `internal/client/context_audit.go` after
+  each orientation-verb call (`project_set`, `story_get`,
+  `agent_get`, `contract_get`, `principle_get`, `principle_list`,
+  `document_get`, `task_walk`, `ledger_list`). These rows do NOT
+  count toward the agent's close-evidence obligation — agents
+  cannot author them and reviewers must not credit them as
+  developer evidence. They surface in the story page's Context
+  audit panel for drift review (sty_9f658001). Cite
+  `pr_no_unrequested_compat` if a develop close evidence packet
+  attempts to claim a `kind:context-fetch` row as agent-authored
+  evidence.
 
 **When present, apply mechanical AC checks:**
 

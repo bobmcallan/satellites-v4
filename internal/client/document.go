@@ -90,22 +90,42 @@ type DocumentGetInput struct {
 // row workspace-blind and re-applies the membership predicate only
 // for non-system rows; Name-mode delegates to the store's
 // ResolveByName which walks the tier ladder internally.
-func (c *Client) DocumentGet(ctx context.Context, caller Caller, in DocumentGetInput) (document.Document, error) {
+func (c *Client) DocumentGet(ctx context.Context, caller Caller, in DocumentGetInput) (doc document.Document, err error) {
+	defer func() {
+		if err != nil {
+			return
+		}
+		verb := OriginVerbFromContext(ctx)
+		if verb == "" {
+			verb = "document_get"
+		}
+		projectID := in.ResolvedProjectID
+		if projectID == "" && doc.ProjectID != nil {
+			projectID = *doc.ProjectID
+		}
+		c.dispatchContextAudit(ctx, fetchAuditDispatchInput{
+			Verb:        verb,
+			ProjectID:   projectID,
+			WorkspaceID: in.WorkspaceID,
+			ArgsMap:     map[string]any{"id": in.ID, "name": in.Name, "type": in.Type},
+			Caller:      caller,
+		}, sectionsForDocumentGet(doc))
+	}()
 	if c.deps.Documents == nil {
 		return document.Document{}, ErrDocumentStoreNotConfigured
 	}
 	if in.ID != "" {
-		doc, err := c.deps.Documents.GetByID(ctx, in.ID, nil)
-		if err != nil {
-			return document.Document{}, err
+		row, gerr := c.deps.Documents.GetByID(ctx, in.ID, nil)
+		if gerr != nil {
+			return document.Document{}, gerr
 		}
-		if doc.Scope != document.ScopeSystem && !inDocMemberships(doc.WorkspaceID, in.Memberships) {
+		if row.Scope != document.ScopeSystem && !inDocMemberships(row.WorkspaceID, in.Memberships) {
 			return document.Document{}, document.ErrNotFound
 		}
-		if in.Type != "" && doc.Type != in.Type {
-			return document.Document{}, fmt.Errorf("document_get: row %s has type=%q, not %q", in.ID, doc.Type, in.Type)
+		if in.Type != "" && row.Type != in.Type {
+			return document.Document{}, fmt.Errorf("document_get: row %s has type=%q, not %q", in.ID, row.Type, in.Type)
 		}
-		return doc, nil
+		return row, nil
 	}
 	if in.Name == "" {
 		return document.Document{}, errors.New("either id or name is required")
@@ -126,7 +146,23 @@ type DocumentListInput struct {
 // the store's ResolveList encapsulates and returns the union. Empty
 // scope filter unions across all three tiers; an explicit scope
 // pins to that tier alone.
-func (c *Client) DocumentList(ctx context.Context, caller Caller, in DocumentListInput) ([]document.Document, error) {
+func (c *Client) DocumentList(ctx context.Context, caller Caller, in DocumentListInput) (rows []document.Document, err error) {
+	defer func() {
+		if err != nil {
+			return
+		}
+		verb := OriginVerbFromContext(ctx)
+		if verb == "" {
+			return
+		}
+		c.dispatchContextAudit(ctx, fetchAuditDispatchInput{
+			Verb:        verb,
+			ProjectID:   in.Options.ProjectID,
+			WorkspaceID: in.WorkspaceID,
+			ArgsMap:     map[string]any{"type": in.Options.Type, "scope": in.Options.Scope, "project_id": in.Options.ProjectID, "tags": in.Options.Tags, "limit": in.Options.Limit},
+			Caller:      caller,
+		}, sectionsForDocumentList(rows))
+	}()
 	if c.deps.Documents == nil {
 		return nil, ErrDocumentStoreNotConfigured
 	}

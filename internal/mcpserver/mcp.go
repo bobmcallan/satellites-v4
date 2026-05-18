@@ -1153,6 +1153,13 @@ func (s *Server) handleDocumentGet(ctx context.Context, req mcpgo.CallToolReques
 	if wsID == "" {
 		wsID = s.resolveCallerWorkspaceID(ctx, caller)
 	}
+	// sty_9f658001 slice 1: stamp the wire verb so the context-fetch
+	// audit row carries "document_get" (wrappers like agent_get /
+	// contract_get / principle_get stamp their own pre-call so this
+	// branch only matches a direct document_get verb).
+	if client.OriginVerbFromContext(ctx) == "" {
+		ctx = client.WithOriginVerb(ctx, "document_get")
+	}
 	doc, err := s.cli().DocumentGet(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, client.DocumentGetInput{
 		ID:                id,
 		Name:              name,
@@ -1462,6 +1469,7 @@ func (s *Server) handleProjectSet(ctx context.Context, req mcpgo.CallToolRequest
 		return mcpgo.NewToolResultError("no caller identity"), nil
 	}
 	repoURL := req.GetString("repo_url", "")
+	ctx = client.WithOriginVerb(ctx, "project_set")
 	out, err := s.cli().ProjectSet(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: s.resolveCallerMemberships(ctx, caller)}, client.ProjectSetInput{
 		RepoURL:     repoURL,
 		WorkspaceID: s.resolveCallerWorkspaceID(ctx, caller),
@@ -2231,6 +2239,7 @@ func (s *Server) handleLedgerList(ctx context.Context, req mcpgo.CallToolRequest
 	args := buildLedgerListArgs(req)
 	args.ResolvedProjectID = resolvedID
 	args.Memberships = memberships
+	ctx = client.WithOriginVerb(ctx, "ledger_list")
 	entries, err := s.cli().LedgerListByArgs(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships}, args)
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil

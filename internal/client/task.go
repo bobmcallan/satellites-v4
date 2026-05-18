@@ -118,21 +118,39 @@ type TaskWalkActionSummary struct {
 // payload: story header, ordered tasks, current-task pointer, and a
 // per-action summary. Returns ErrStoryNotFound when the story id does
 // not resolve in the caller's workspaces.
-func (c *Client) TaskWalk(ctx context.Context, caller Caller, in TaskWalkInput) (TaskWalkOutput, error) {
+func (c *Client) TaskWalk(ctx context.Context, caller Caller, in TaskWalkInput) (out TaskWalkOutput, err error) {
+	var storyProjectID, storyWorkspaceID string
+	defer func() {
+		if err != nil {
+			return
+		}
+		c.dispatchContextAudit(ctx, fetchAuditDispatchInput{
+			Verb:        "task_walk",
+			ProjectID:   storyProjectID,
+			WorkspaceID: storyWorkspaceID,
+			StoryID:     in.StoryID,
+			ArgsMap:     map[string]any{"story_id": in.StoryID},
+			Caller:      caller,
+		}, sectionsForTaskWalkOutput(out))
+	}()
 	if c.deps.Stories == nil || c.deps.Tasks == nil {
 		return TaskWalkOutput{}, errors.New("task_walk unavailable: story or task store missing")
 	}
 	if in.StoryID == "" {
 		return TaskWalkOutput{}, errors.New("story_id required")
 	}
-	st, err := c.deps.Stories.GetByID(ctx, in.StoryID, in.Memberships)
-	if err != nil {
-		return TaskWalkOutput{}, ErrStoryNotFound
+	st, sErr := c.deps.Stories.GetByID(ctx, in.StoryID, in.Memberships)
+	if sErr != nil {
+		err = ErrStoryNotFound
+		return
 	}
+	storyProjectID = st.ProjectID
+	storyWorkspaceID = st.WorkspaceID
 
-	tasks, err := c.deps.Tasks.List(ctx, task.ListOptions{StoryID: in.StoryID, Limit: 500}, in.Memberships)
-	if err != nil {
-		return TaskWalkOutput{}, err
+	tasks, lErr := c.deps.Tasks.List(ctx, task.ListOptions{StoryID: in.StoryID, Limit: 500}, in.Memberships)
+	if lErr != nil {
+		err = lErr
+		return
 	}
 	sort.Slice(tasks, func(i, j int) bool {
 		return tasks[i].CreatedAt.Before(tasks[j].CreatedAt)
@@ -154,14 +172,12 @@ func (c *Client) TaskWalk(ctx context.Context, caller Caller, in TaskWalkInput) 
 		}
 	}
 
-	out := TaskWalkOutput{
-		Story: TaskWalkStory{
-			ID:     st.ID,
-			Title:  st.Title,
-			Status: st.Status,
-		},
-		Tasks: make([]TaskWalkTask, 0, len(tasks)),
+	out.Story = TaskWalkStory{
+		ID:     st.ID,
+		Title:  st.Title,
+		Status: st.Status,
 	}
+	out.Tasks = make([]TaskWalkTask, 0, len(tasks))
 
 	currentTaskID := ""
 	for _, t := range tasks {

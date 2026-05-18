@@ -222,12 +222,12 @@ func TestSatellitesInit_InstallSchemaNotSeeded(t *testing.T) {
 // caller seeds the store with whatever orchestrator / workflow /
 // contract docs the test case wants the verb to observe.
 type recommendationFixture struct {
-	t       *testing.T
-	c       *Client
-	docs    document.Store
-	srv     *httptest.Server
-	wsID    string
-	projID  string
+	t           *testing.T
+	c           *Client
+	docs        document.Store
+	srv         *httptest.Server
+	wsID        string
+	projID      string
 	memberships []string
 }
 

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,8 +13,9 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/bobmcallan/satellites/tests/common/containers"
 )
 
 // TestDocumentIngestAndGetRoundTrip spins up SurrealDB next to the
@@ -30,48 +30,11 @@ func TestDocumentIngestAndGetRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
 
-	net, err := network.New(ctx)
-	if err != nil {
-		t.Fatalf("create network: %v", err)
-	}
-	t.Cleanup(func() { _ = net.Remove(ctx) })
-
-	// SurrealDB.
-	surreal, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        "surrealdb/surrealdb:v3.0.0",
-			ExposedPorts: []string{"8000/tcp"},
-			Cmd:          []string{"start", "--user", "root", "--pass", "root"},
-			Networks:     []string{net.Name},
-			NetworkAliases: map[string][]string{
-				net.Name: {"surrealdb"},
-			},
-			WaitingFor: wait.ForListeningPort("8000/tcp").WithStartupTimeout(90 * time.Second),
-		},
-		Started: true,
+	stack := containers.StartStack(t, ctx, containers.Options{
+		ServerEnv: map[string]string{"SATELLITES_API_KEYS": "key_doc"},
 	})
-	if err != nil {
-		t.Fatalf("start surrealdb: %v", err)
-	}
-	t.Cleanup(func() { _ = surreal.Terminate(ctx) })
-
-	// Satellites with DB_DSN pointing at the surreal alias + docs/ mounted.
-	docsHost := filepath.Join(repoRoot(t), "docs")
-	baseURL, stop := startServerContainerWithOptions(t, ctx, startOptions{
-		Network: net.Name,
-		Env: map[string]string{
-			"SATELLITES_DB_DSN":   "ws://root:root@surrealdb:8000/rpc/satellites/satellites",
-			"SATELLITES_API_KEYS": "key_doc",
-			"SATELLITES_DOCS_DIR": "/app/docs",
-		},
-		Mounts: []mount.Mount{{
-			Type:     mount.TypeBind,
-			Source:   docsHost,
-			Target:   "/app/docs",
-			ReadOnly: true,
-		}},
-	})
-	defer stop()
+	defer stack.Stop()
+	baseURL := stack.BaseURL
 
 	mcpURL := baseURL + "/mcp"
 

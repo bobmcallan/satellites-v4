@@ -436,7 +436,7 @@ func TestProjectDelete_CascadesStoriesAndAPIKeys(t *testing.T) {
 		ID:          auth.NewAPIKeyID(),
 		Prefix:      "sat_test",
 		KeyHash:     "abc",
-		KeySalt:        "deadbeef",
+		KeySalt:     "deadbeef",
 		OwnerUserID: "u_alice",
 		ProjectID:   p.ID,
 		Status:      auth.APIKeyStatusActive,

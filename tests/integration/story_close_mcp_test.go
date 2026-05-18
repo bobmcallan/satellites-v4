@@ -21,22 +21,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/network"
-	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/bobmcallan/satellites/tests/common/containers"
 )
 
 // storyCloseFixtures collects the per-test stable identity rows the
 // chain-mint helpers need.
 type storyCloseFixtures struct {
-	baseURL              string
-	mcpURL               string
-	bearer               string
-	projectID            string
-	developerAgent       string
-	storyReviewAgent     string
-	developmentReviewer  string
-	releaserAgent        string
+	baseURL             string
+	mcpURL              string
+	bearer              string
+	projectID           string
+	developerAgent      string
+	storyReviewAgent    string
+	developmentReviewer string
+	releaserAgent       string
 }
 
 // TestStoryCloseMCP boots the full container stack once and runs the
@@ -48,44 +46,13 @@ func TestStoryCloseMCP(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 360*time.Second)
 	defer cancel()
 
-	net, err := network.New(ctx)
-	if err != nil {
-		t.Fatalf("network: %v", err)
-	}
-	t.Cleanup(func() { _ = net.Remove(ctx) })
-
-	surreal, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:          "surrealdb/surrealdb:v3.0.0",
-			ExposedPorts:   []string{"8000/tcp"},
-			Cmd:            []string{"start", "--user", "root", "--pass", "root"},
-			Networks:       []string{net.Name},
-			NetworkAliases: map[string][]string{net.Name: {"surrealdb"}},
-			WaitingFor:     wait.ForListeningPort("8000/tcp").WithStartupTimeout(90 * time.Second),
-		},
-		Started: true,
-	})
-	if err != nil {
-		t.Fatalf("surreal: %v", err)
-	}
-	t.Cleanup(func() { _ = surreal.Terminate(ctx) })
-
-	// SATELLITES_API_KEYS bearer flow mirrors TestStoryMCPRoundTrip.
-	// The cookie-auth + agent_apikey_create flow used by
-	// agent_apikey_test / api_parity_test currently surfaces a
-	// pre-existing "tool 'agent_apikey_create' not found" error
-	// against the testcontainers boot (independently reproducible on
-	// origin/main); the API-key flow avoids that path entirely.
 	const bearer = "key_story_close"
-	baseURL, stop := startServerContainerWithOptions(t, ctx, startOptions{
-		Network: net.Name,
-		Env: map[string]string{
-			"SATELLITES_DB_DSN":   "ws://root:root@surrealdb:8000/rpc/satellites/satellites",
-			"SATELLITES_API_KEYS": bearer,
-			"SATELLITES_DOCS_DIR": "/app/docs",
-		},
+	stack := containers.StartStack(t, ctx, containers.Options{
+		ServerEnv:     map[string]string{"SATELLITES_API_KEYS": bearer},
+		SkipDocsMount: true,
 	})
-	defer stop()
+	defer stack.Stop()
+	baseURL := stack.BaseURL
 
 	mcpURL := baseURL + "/mcp"
 	rpcInit(t, ctx, mcpURL, bearer)
@@ -156,38 +123,13 @@ func TestStoryCloseLifecycleE2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 360*time.Second)
 	defer cancel()
 
-	net, err := network.New(ctx)
-	if err != nil {
-		t.Fatalf("network: %v", err)
-	}
-	t.Cleanup(func() { _ = net.Remove(ctx) })
-
-	surreal, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:          "surrealdb/surrealdb:v3.0.0",
-			ExposedPorts:   []string{"8000/tcp"},
-			Cmd:            []string{"start", "--user", "root", "--pass", "root"},
-			Networks:       []string{net.Name},
-			NetworkAliases: map[string][]string{net.Name: {"surrealdb"}},
-			WaitingFor:     wait.ForListeningPort("8000/tcp").WithStartupTimeout(90 * time.Second),
-		},
-		Started: true,
-	})
-	if err != nil {
-		t.Fatalf("surreal: %v", err)
-	}
-	t.Cleanup(func() { _ = surreal.Terminate(ctx) })
-
 	const bearer = "key_lifecycle_e2e"
-	baseURL, stop := startServerContainerWithOptions(t, ctx, startOptions{
-		Network: net.Name,
-		Env: map[string]string{
-			"SATELLITES_DB_DSN":   "ws://root:root@surrealdb:8000/rpc/satellites/satellites",
-			"SATELLITES_API_KEYS": bearer,
-			"SATELLITES_DOCS_DIR": "/app/docs",
-		},
+	stack := containers.StartStack(t, ctx, containers.Options{
+		ServerEnv:     map[string]string{"SATELLITES_API_KEYS": bearer},
+		SkipDocsMount: true,
 	})
-	defer stop()
+	defer stack.Stop()
+	baseURL := stack.BaseURL
 
 	mcpURL := baseURL + "/mcp"
 	rpcInit(t, ctx, mcpURL, bearer)

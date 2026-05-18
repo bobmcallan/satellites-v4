@@ -16,8 +16,8 @@ import (
 
 	"github.com/bobmcallan/satellites/internal/agent/worker"
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
-	"github.com/bobmcallan/satellites/internal/cliexit"
 	"github.com/bobmcallan/satellites/internal/clientdaemon"
+	"github.com/bobmcallan/satellites/internal/cliexit"
 	"github.com/bobmcallan/satellites/internal/config"
 )
 
@@ -261,4 +261,3 @@ func runServeStatus(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "stale (pid=%d not alive, pidfile=%s) — run `satellites-client serve stop` to clean up\n", pid, pidfilePath)
 	return nil
 }
-

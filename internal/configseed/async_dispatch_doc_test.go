@@ -43,20 +43,20 @@ func TestSeedLoad_AsyncDispatchDocs(t *testing.T) {
 	}
 
 	required := []string{
-		"Async dispatch pattern",              // AC1 subsection header
-		"the default-async branch",            // AC1 pattern-sentence anchor (post sty_ad40584f C4)
-		"task run <task_id>",                  // AC1 pattern names the no-flag invocation
-		"task walk --story-id",                // AC1 polling verb 1
-		"ledger list --task-id",               // AC1 polling verb 2
-		"kind:agent-execute-evidence",         // AC1 terminal row form
-		"Default 30s",                         // AC3 cadence default
-		"30-60s",                              // AC3 cadence range
-		"satellites-client serve start",       // AC4 recovery step 1
-		"kind:daemon-orphaned-subprocess",     // AC4 recovery step 2
-		"task_add(prior_task_id=",             // AC4 recovery step 3
-		"Worked example",                      // AC5 parallel-example anchor
-		"two stories",                         // AC5 anchor body
-		"develop slices in parallel",          // AC5 anchor body
+		"Async dispatch pattern",          // AC1 subsection header
+		"the default-async branch",        // AC1 pattern-sentence anchor (post sty_ad40584f C4)
+		"task run <task_id>",              // AC1 pattern names the no-flag invocation
+		"task walk --story-id",            // AC1 polling verb 1
+		"ledger list --task-id",           // AC1 polling verb 2
+		"kind:agent-execute-evidence",     // AC1 terminal row form
+		"Default 30s",                     // AC3 cadence default
+		"30-60s",                          // AC3 cadence range
+		"satellites-client serve start",   // AC4 recovery step 1
+		"kind:daemon-orphaned-subprocess", // AC4 recovery step 2
+		"task_add(prior_task_id=",         // AC4 recovery step 3
+		"Worked example",                  // AC5 parallel-example anchor
+		"two stories",                     // AC5 anchor body
+		"develop slices in parallel",      // AC5 anchor body
 	}
 
 	docNames := []string{"claude_orchestrator", "default_async_dispatch"}

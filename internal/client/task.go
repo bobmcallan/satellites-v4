@@ -388,10 +388,10 @@ type TaskAddInput struct {
 	// (e.g. `{"branch":"…","sha":"…"}`). When non-empty it is stored
 	// verbatim on Task.Trigger as bytes — the substrate does not validate
 	// the JSON shape; downstream runners parse leniently. sty_a39e9e41.
-	Trigger      string
-	Memberships  []string
-	Resolve      TaskAddResolveDeps
-	Now          time.Time
+	Trigger     string
+	Memberships []string
+	Resolve     TaskAddResolveDeps
+	Now         time.Time
 }
 
 // TaskAddResolveDeps wires the project/workspace resolution callbacks

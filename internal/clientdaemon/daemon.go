@@ -91,22 +91,22 @@ type Daemon struct {
 
 	// queue is the FIFO of waiting task IDs. mu guards both queue
 	// and running.
-	mu          sync.Mutex
-	queue       []QueuedEntry
-	running     map[string]*runningHandle
-	notify      chan struct{} // signal scheduler that queue/running changed
-	draining    atomic.Bool
-	drainStart  atomic.Pointer[time.Time]
-	wg          sync.WaitGroup // counts in-flight runOne goroutines
+	mu         sync.Mutex
+	queue      []QueuedEntry
+	running    map[string]*runningHandle
+	notify     chan struct{} // signal scheduler that queue/running changed
+	draining   atomic.Bool
+	drainStart atomic.Pointer[time.Time]
+	wg         sync.WaitGroup // counts in-flight runOne goroutines
 }
 
 // runningHandle is the per-task state held while runOne executes.
 type runningHandle struct {
 	TaskID       string
 	StartedAt    time.Time
-	PID          int            // worker PID (matches dispatchteam start frame)
+	PID          int // worker PID (matches dispatchteam start frame)
 	processOnce  sync.Once
-	process      *os.Process    // claude subprocess handle when adopted (v1: nil; daemon process pid is recorded)
+	process      *os.Process // claude subprocess handle when adopted (v1: nil; daemon process pid is recorded)
 	cancel       context.CancelFunc
 	suppressStop atomic.Bool
 }

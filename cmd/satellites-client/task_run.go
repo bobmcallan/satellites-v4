@@ -13,8 +13,8 @@ import (
 	"github.com/bobmcallan/satellites/internal/agent/dispatchteam"
 	"github.com/bobmcallan/satellites/internal/agent/worker"
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
-	"github.com/bobmcallan/satellites/internal/cliexit"
 	"github.com/bobmcallan/satellites/internal/clientdaemon"
+	"github.com/bobmcallan/satellites/internal/cliexit"
 	"github.com/bobmcallan/satellites/internal/config"
 )
 

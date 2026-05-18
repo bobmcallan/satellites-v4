@@ -661,6 +661,84 @@ function storyPanel() {
     };
 }
 
+// taskPanel — Alpine scope for /projects/{id}/tasks. SSR-rendered
+// panes are filtered server-side via the form's ?q= submit; the panel
+// only owns click-to-expand row state and tag-chip clicks that append
+// `key:value` to the filter input and resubmit.
+function taskPanel() {
+    return {
+        query: '',
+        expanded: '',
+        init() {
+            const input = this.$el.querySelector('[data-testid="project-tasks-filter-input"]');
+            if (input) { this.query = input.value || ''; }
+            this._readExpandFromURL();
+        },
+        isExpanded(el) {
+            const id = (el && el.dataset && el.dataset.detailFor) || '';
+            return !!id && this.expanded === id;
+        },
+        rowClass(el) {
+            const id = (el && el.dataset && el.dataset.id) || '';
+            return id && this.expanded === id ? 'is-expanded' : '';
+        },
+        toggleRow(ev) {
+            const target = ev && ev.currentTarget;
+            const id = (target && target.dataset && target.dataset.id) || '';
+            if (!id) { return; }
+            this.expanded = this.expanded === id ? '' : id;
+            this._syncExpandToURL();
+        },
+        addTagToQuery(ev) {
+            const target = ev && ev.currentTarget;
+            const tag = (target && target.dataset && target.dataset.tag) || '';
+            if (!tag) { return; }
+            const q = (this.query || '').trim();
+            const parts = q.length ? q.split(/\s+/) : [];
+            if (parts.indexOf(tag) !== -1) { return; }
+            parts.push(tag);
+            this.query = parts.join(' ');
+            // Direct navigation instead of form.submit(): @alpinejs/csp
+            // wraps handlers in a way that swallows the navigation that
+            // form.submit() initiates synchronously. Building the URL
+            // ourselves matches the GET-form's submit semantics (replace
+            // the query string with the form's name=value pairs) and
+            // always navigates.
+            const url = new URL(window.location.href);
+            url.searchParams.set('q', this.query);
+            url.searchParams.delete('expand');
+            window.location.href = url.toString();
+        },
+        _syncExpandToURL() {
+            if (typeof window === 'undefined' || !window.history || typeof window.history.replaceState !== 'function') { return; }
+            try {
+                const url = new URL(window.location.href);
+                const current = (url.searchParams.get('expand') || '')
+                    .split(',').map(s => s.trim()).filter(Boolean);
+                const others = current.filter(t => t.indexOf('task_') !== 0);
+                const next = this.expanded ? others.concat([this.expanded]) : others;
+                if (next.length) { url.searchParams.set('expand', next.join(',')); }
+                else { url.searchParams.delete('expand'); }
+                window.history.replaceState(window.history.state, '', url.toString());
+            } catch (err) { /* best effort */ }
+        },
+        _readExpandFromURL() {
+            if (typeof window === 'undefined' || !window.location) { return; }
+            try {
+                const url = new URL(window.location.href);
+                const tokens = (url.searchParams.get('expand') || '')
+                    .split(',').map(s => s.trim()).filter(Boolean);
+                for (let i = 0; i < tokens.length; i++) {
+                    if (tokens[i].indexOf('task_') === 0) {
+                        this.expanded = tokens[i];
+                        return;
+                    }
+                }
+            } catch (err) { /* best effort */ }
+        },
+    };
+}
+
 // parseStoryQuery splits a story-panel query string into structured
 // tokens. V3 parity (sty_48198f3e):
 //   - `order:<field>` (single) — updated|created|priority|status|title.
@@ -906,5 +984,6 @@ document.addEventListener('alpine:init', () => {
     });
     Alpine.data('sectionToggle', sectionToggle);
     Alpine.data('storyPanel', storyPanel);
+    Alpine.data('taskPanel', taskPanel);
     Alpine.data('footerStatus', footerStatus);
 });

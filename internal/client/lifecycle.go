@@ -33,11 +33,11 @@ import (
 
 // Lifecycle status values returned by computeLifecycleStatus.
 const (
-	LifecycleOnShape           = "on_shape"
-	LifecyclePlanAbsent        = "drifted:plan_absent"
-	LifecycleReviewSkipped     = "drifted:review_skipped"
-	LifecycleCloseBeforePush   = "drifted:close_before_push"
-	LifecyclePhaseUnknownPfx   = "drifted:phase_unknown:"
+	LifecycleOnShape         = "on_shape"
+	LifecyclePlanAbsent      = "drifted:plan_absent"
+	LifecycleReviewSkipped   = "drifted:review_skipped"
+	LifecycleCloseBeforePush = "drifted:close_before_push"
+	LifecyclePhaseUnknownPfx = "drifted:phase_unknown:"
 )
 
 // lifecyclePhase is one slot in the canonical chain order. The list

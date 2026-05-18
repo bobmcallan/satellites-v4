@@ -23,15 +23,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
 
-	"github.com/moby/moby/api/types/mount"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/network"
-	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/bobmcallan/satellites/tests/common/containers"
 )
 
 // TestAutoSupersession_ChainShapeGateAccepts is the AC2 evidence
@@ -49,45 +45,14 @@ func TestAutoSupersession_ChainShapeGateAccepts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 
-	net, err := network.New(ctx)
-	if err != nil {
-		t.Fatalf("network: %v", err)
-	}
-	t.Cleanup(func() { _ = net.Remove(ctx) })
-
-	surreal, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:          "surrealdb/surrealdb:v3.0.0",
-			ExposedPorts:   []string{"8000/tcp"},
-			Cmd:            []string{"start", "--user", "root", "--pass", "root"},
-			Networks:       []string{net.Name},
-			NetworkAliases: map[string][]string{net.Name: {"surrealdb"}},
-			WaitingFor:     wait.ForListeningPort("8000/tcp").WithStartupTimeout(90 * time.Second),
-		},
-		Started: true,
-	})
-	if err != nil {
-		t.Fatalf("surreal: %v", err)
-	}
-	t.Cleanup(func() { _ = surreal.Terminate(ctx) })
-
 	const bearer = "key_auto_supersession_test"
-	docsHost := filepath.Join(repoRoot(t), "docs")
-	baseURL, stop := startServerContainerWithOptions(t, ctx, startOptions{
-		Network: net.Name,
-		Env: map[string]string{
-			"SATELLITES_DB_DSN":   "ws://root:root@surrealdb:8000/rpc/satellites/satellites",
+	stack := containers.StartStack(t, ctx, containers.Options{
+		ServerEnv: map[string]string{
 			"SATELLITES_API_KEYS": bearer,
-			"SATELLITES_DOCS_DIR": "/app/docs",
 		},
-		Mounts: []mount.Mount{{
-			Type:     mount.TypeBind,
-			Source:   docsHost,
-			Target:   "/app/docs",
-			ReadOnly: true,
-		}},
 	})
-	defer stop()
+	defer stack.Stop()
+	baseURL := stack.BaseURL
 
 	// 1. Project — the auth middleware resolves the api-key caller
 	//    against this project's workspace memberships.

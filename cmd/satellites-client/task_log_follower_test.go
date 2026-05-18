@@ -28,8 +28,8 @@ import (
 
 func TestTaskLogFollowerReconnects(t *testing.T) {
 	var (
-		mu              sync.Mutex
-		requestCount    atomic.Int32
+		mu               sync.Mutex
+		requestCount     atomic.Int32
 		lastEventIDsSeen []string
 	)
 

@@ -165,7 +165,7 @@ func (c *Client) TaskLogList(ctx context.Context, caller Caller, in TaskLogListI
 			Kind:        r.Kind,
 			Payload:     json.RawMessage(r.Payload),
 			CreatedAt:   r.CreatedAt,
-		}, )
+		})
 	}
 	return out, nil
 }

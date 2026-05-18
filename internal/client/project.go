@@ -491,4 +491,3 @@ func (c *Client) cascadeCancelStories(ctx context.Context, projectID string, mem
 	}
 	return cancelled, nil
 }
-

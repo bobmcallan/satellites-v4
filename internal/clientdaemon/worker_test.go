@@ -29,10 +29,10 @@ func TestWorkerShape(t *testing.T) {
 	})
 
 	type capture struct {
-		cfg       config.AgentConfig
-		env       worker.TaskEnvelope
-		stdoutOK  bool
-		stderrOK  bool
+		cfg      config.AgentConfig
+		env      worker.TaskEnvelope
+		stdoutOK bool
+		stderrOK bool
 	}
 	captureCh := make(chan capture, 1)
 

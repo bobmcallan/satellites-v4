@@ -37,8 +37,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/bobmcallan/satellites/internal/cliexit"
 	"github.com/bobmcallan/satellites/internal/clientdaemon"
+	"github.com/bobmcallan/satellites/internal/cliexit"
 )
 
 // asyncEnqueueTimeout caps the total round-trip to the daemon. The

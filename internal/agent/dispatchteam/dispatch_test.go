@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bobmcallan/satellites/internal/agent/worker"
 	satarbor "github.com/bobmcallan/satellites/internal/arbor"
 	"github.com/bobmcallan/satellites/internal/cliremote"
-	"github.com/bobmcallan/satellites/internal/agent/worker"
 )
 
 type recordedAppend struct {

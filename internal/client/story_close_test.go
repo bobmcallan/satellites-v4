@@ -65,11 +65,11 @@ func newStoryCloseFixture(t *testing.T, category string, opts storyCloseFixtureO
 
 	if opts.SeedTemplate {
 		_, err = docStore.Create(ctx, document.Document{
-			Type:   document.TypeStoryTemplate,
-			Scope:  document.ScopeSystem,
-			Name:   category,
-			Body:   "stub template",
-			Status: document.StatusActive,
+			Type:       document.TypeStoryTemplate,
+			Scope:      document.ScopeSystem,
+			Name:       category,
+			Body:       "stub template",
+			Status:     document.StatusActive,
 			Structured: []byte(opts.TemplateJSON),
 		}, now)
 		require.NoError(t, err)
@@ -663,8 +663,8 @@ func TestStoryClose_DeployBehind_SatellitesSelfPath(t *testing.T) {
 // fixable knobs.
 func TestStoryClose_DeployBehind_NoDeployEndpoint(t *testing.T) {
 	opts := happyOpts()
-	opts.PprodCommitOverride = ""    // no caller proof
-	opts.SelfProjectID = ""          // no satellites-self match
+	opts.PprodCommitOverride = "" // no caller proof
+	opts.SelfProjectID = ""       // no satellites-self match
 	opts.ReleaseEvidenceSHA = "release-sha-aaa"
 	f := newStoryCloseFixture(t, "improvement", opts)
 

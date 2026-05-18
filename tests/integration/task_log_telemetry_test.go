@@ -32,15 +32,11 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/moby/moby/api/types/mount"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/network"
-	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/bobmcallan/satellites/tests/common/containers"
 )
 
 func TestTaskLogTelemetry_EndToEnd(t *testing.T) {
@@ -50,49 +46,16 @@ func TestTaskLogTelemetry_EndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
 
-	net, err := network.New(ctx)
-	if err != nil {
-		t.Fatalf("create network: %v", err)
-	}
-	t.Cleanup(func() { _ = net.Remove(ctx) })
-
-	surreal, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        "surrealdb/surrealdb:v3.0.0",
-			ExposedPorts: []string{"8000/tcp"},
-			Cmd:          []string{"start", "--user", "root", "--pass", "root"},
-			Networks:     []string{net.Name},
-			NetworkAliases: map[string][]string{
-				net.Name: {"surrealdb"},
-			},
-			WaitingFor: wait.ForListeningPort("8000/tcp").WithStartupTimeout(90 * time.Second),
-		},
-		Started: true,
-	})
-	if err != nil {
-		t.Fatalf("start surrealdb: %v", err)
-	}
-	t.Cleanup(func() { _ = surreal.Terminate(ctx) })
-
-	docsHost := filepath.Join(repoRoot(t), "docs")
 	const envBearer = "tasklog-telemetry-test"
-	baseURL, stop := startServerContainerWithOptions(t, ctx, startOptions{
-		Network: net.Name,
-		Env: map[string]string{
-			"SATELLITES_DB_DSN":       "ws://root:root@surrealdb:8000/rpc/satellites/satellites",
+	stack := containers.StartStack(t, ctx, containers.Options{
+		ServerEnv: map[string]string{
 			"SATELLITES_DEV_USERNAME": "dev@local",
 			"SATELLITES_DEV_PASSWORD": "letmein",
-			"SATELLITES_DOCS_DIR":     "/app/docs",
 			"SATELLITES_API_KEYS":     envBearer,
 		},
-		Mounts: []mount.Mount{{
-			Type:     mount.TypeBind,
-			Source:   docsHost,
-			Target:   "/app/docs",
-			ReadOnly: true,
-		}},
 	})
-	defer stop()
+	defer stack.Stop()
+	baseURL := stack.BaseURL
 
 	// project_add + story_add are reachable only via /api/v1 +
 	// satellites-client CLI (sty_4db0e025 C9 removed them from MCP).

@@ -38,8 +38,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bobmcallan/satellites/internal/cliexit"
 	"github.com/bobmcallan/satellites/internal/clientdaemon"
+	"github.com/bobmcallan/satellites/internal/cliexit"
 )
 
 // TestTaskRunRejectsAsyncFlag is the AC3 regression guard for
@@ -275,24 +275,24 @@ func TestTaskRunAsyncImports(t *testing.T) {
 
 	forbidden := map[string]struct{}{
 		"github.com/bobmcallan/satellites/internal/agent/dispatchteam": {},
-		"github.com/bobmcallan/satellites/internal/agent/worker":      {},
-		"github.com/bobmcallan/satellites/internal/document":          {},
-		"github.com/bobmcallan/satellites/internal/story":             {},
-		"github.com/bobmcallan/satellites/internal/task":              {},
-		"github.com/bobmcallan/satellites/internal/principle":         {},
-		"github.com/bobmcallan/satellites/internal/skill":             {},
-		"github.com/bobmcallan/satellites/internal/reviewer":          {},
-		"github.com/bobmcallan/satellites/internal/role":              {},
-		"github.com/bobmcallan/satellites/internal/contract":          {},
-		"github.com/bobmcallan/satellites/internal/repo":              {},
-		"github.com/bobmcallan/satellites/internal/kv":                {},
-		"github.com/bobmcallan/satellites/internal/changelog":         {},
-		"github.com/bobmcallan/satellites/internal/workspace":         {},
-		"github.com/bobmcallan/satellites/internal/project":           {},
-		"github.com/bobmcallan/satellites/internal/ledger":            {},
-		"github.com/bobmcallan/satellites/internal/portalreplicate":   {},
-		"github.com/bobmcallan/satellites/internal/agentprocess":      {},
-		"github.com/bobmcallan/satellites/internal/session":           {},
+		"github.com/bobmcallan/satellites/internal/agent/worker":       {},
+		"github.com/bobmcallan/satellites/internal/document":           {},
+		"github.com/bobmcallan/satellites/internal/story":              {},
+		"github.com/bobmcallan/satellites/internal/task":               {},
+		"github.com/bobmcallan/satellites/internal/principle":          {},
+		"github.com/bobmcallan/satellites/internal/skill":              {},
+		"github.com/bobmcallan/satellites/internal/reviewer":           {},
+		"github.com/bobmcallan/satellites/internal/role":               {},
+		"github.com/bobmcallan/satellites/internal/contract":           {},
+		"github.com/bobmcallan/satellites/internal/repo":               {},
+		"github.com/bobmcallan/satellites/internal/kv":                 {},
+		"github.com/bobmcallan/satellites/internal/changelog":          {},
+		"github.com/bobmcallan/satellites/internal/workspace":          {},
+		"github.com/bobmcallan/satellites/internal/project":            {},
+		"github.com/bobmcallan/satellites/internal/ledger":             {},
+		"github.com/bobmcallan/satellites/internal/portalreplicate":    {},
+		"github.com/bobmcallan/satellites/internal/agentprocess":       {},
+		"github.com/bobmcallan/satellites/internal/session":            {},
 	}
 
 	fset := token.NewFileSet()

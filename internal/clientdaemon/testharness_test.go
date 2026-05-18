@@ -24,9 +24,9 @@ import (
 type stubServer struct {
 	mu sync.Mutex
 
-	taskGet         map[string]map[string]any // task_id -> response payload
-	taskLogAppends  []map[string]any
-	ledgerAppends   []map[string]any
+	taskGet        map[string]map[string]any // task_id -> response payload
+	taskLogAppends []map[string]any
+	ledgerAppends  []map[string]any
 
 	srv *httptest.Server
 }
@@ -155,9 +155,11 @@ func newTestDaemon(t *testing.T, stub *stubServer, opts func(*Options)) *Daemon 
 			ExecuteTimeout:   30 * time.Second,
 			LogLevel:         "info",
 		},
-		API:      api,
-		Logger:   satarbor.New("info"),
-		Dispatch: func(_ context.Context, _ config.AgentConfig, _ arbor.ILogger, _ *cliremote.Client, _ worker.TaskEnvelope, _, _ io.Writer) (worker.Outcome, error) { return worker.OutcomeSuccess, nil },
+		API:    api,
+		Logger: satarbor.New("info"),
+		Dispatch: func(_ context.Context, _ config.AgentConfig, _ arbor.ILogger, _ *cliremote.Client, _ worker.TaskEnvelope, _, _ io.Writer) (worker.Outcome, error) {
+			return worker.OutcomeSuccess, nil
+		},
 	}
 	if opts != nil {
 		opts(&o)

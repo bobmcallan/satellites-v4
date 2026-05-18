@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bobmcallan/satellites/internal/cliexit"
 	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/clientdaemon"
+	"github.com/bobmcallan/satellites/internal/cliexit"
 )
 
 // TestChainAdvanceRegistersStoryIDFlag confirms cobra surfaces the

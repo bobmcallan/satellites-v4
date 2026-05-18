@@ -13,10 +13,10 @@ import (
 // regression anchor. RunWorkspace on the real config/seed tree MUST
 // produce:
 //
-//   1. A type=skill row named "local_build" at scope=workspace,
-//      workspace_id=wksp_5b3257d1.
-//   2. A type=agent row named "developer_agent" whose
-//      AgentSettings.SkillRefs contains "local_build".
+//  1. A type=skill row named "local_build" at scope=workspace,
+//     workspace_id=wksp_5b3257d1.
+//  2. A type=agent row named "developer_agent" whose
+//     AgentSettings.SkillRefs contains "local_build".
 //
 // Either part regressing means a self-modifying slice can ship without
 // the build-and-swap evidence the substrate is supposed to teach the

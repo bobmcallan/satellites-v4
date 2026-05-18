@@ -48,26 +48,32 @@ type projectTasksComposite struct {
 	Closed   []projectTaskRow `json:"closed"`
 }
 
-// projectTaskRow is one row in any of the three panes. Includes the
-// story title for the link badge, iteration / required_role per AC,
-// age computed server-side.
+// projectTaskRow is one row in any of the three panes. Layout
+// mirrors the story-row (id / title / status / updated) plus a
+// status-aware duration column. Outcome and iteration are surfaced
+// as tag chips inside the title cell; full timestamps move to the
+// click-to-expand detail row.
 type projectTaskRow struct {
-	ID               string `json:"id"`
-	Origin           string `json:"origin"`
-	Status           string `json:"status"`
-	Priority         string `json:"priority"`
-	Kind             string `json:"kind,omitempty"`
-	ContractCategory string `json:"contract_category"`
-	Iteration        int    `json:"iteration"`
-	StoryID          string `json:"story_id"`
-	StoryTitle       string `json:"story_title"`
-	StoryHref        string `json:"story_href"`
-	WalkHref         string `json:"walk_href"`
-	ClaimedByUser    string `json:"claimed_by_user"`
-	Age              string `json:"age"`
-	Outcome          string `json:"outcome"`
-	CreatedAt        string `json:"created_at"`
-	ClosedAt         string `json:"closed_at,omitempty"`
+	ID            string   `json:"id"`
+	Origin        string   `json:"origin"`
+	Title         string   `json:"title"`
+	Tags          []string `json:"tags,omitempty"`
+	Status        string   `json:"status"`
+	Priority      string   `json:"priority"`
+	Kind          string   `json:"kind,omitempty"`
+	Iteration     int      `json:"iteration"`
+	StoryID       string   `json:"story_id,omitempty"`
+	StoryTitle    string   `json:"story_title,omitempty"`
+	StoryHref     string   `json:"story_href,omitempty"`
+	WalkHref      string   `json:"walk_href,omitempty"`
+	ClaimedByUser string   `json:"claimed_by_user,omitempty"`
+	Outcome       string   `json:"outcome,omitempty"`
+	Duration      string   `json:"duration,omitempty"`
+	CreatedAt     string   `json:"created_at"`
+	ClaimedAt     string   `json:"claimed_at,omitempty"`
+	ClosedAt      string   `json:"closed_at,omitempty"`
+	UpdatedAt     string   `json:"updated_at"`
+	PriorTaskID   string   `json:"prior_task_id,omitempty"`
 }
 
 // projectTasksFilter mirrors the filter tokens from the sty_953c4907 AC.
@@ -263,9 +269,24 @@ func buildProjectTasksComposite(
 			Kind:          t.Kind,
 			Iteration:     t.Iteration,
 			ClaimedByUser: t.ClaimedBy,
-			Age:           humaniseAge(now, t.CreatedAt),
 			Outcome:       t.Outcome,
 			CreatedAt:     t.CreatedAt.UTC().Format(time.RFC3339),
+			PriorTaskID:   t.PriorTaskID,
+		}
+		if t.ClaimedAt != nil {
+			row.ClaimedAt = t.ClaimedAt.UTC().Format(time.RFC3339)
+		}
+		if t.CompletedAt != nil {
+			row.ClosedAt = t.CompletedAt.UTC().Format(time.RFC3339)
+		}
+		// Title derives from contract category. Action is canonical
+		// `contract:<name>`; the system contract doc may override the
+		// category via Structured.
+		if cn := contractNameFromAction(t.Action); cn != "" {
+			row.Title = cn
+			if cat := jsonStringField(resolveContractDoc(cn).Structured, "category"); cat != "" {
+				row.Title = cat
+			}
 		}
 		row.StoryID = t.StoryID
 		row.StoryTitle = storyTitles[row.StoryID]
@@ -273,18 +294,9 @@ func buildProjectTasksComposite(
 			row.StoryHref = fmt.Sprintf("/projects/%s/stories/%s", projectID, row.StoryID)
 			row.WalkHref = fmt.Sprintf("/stories/%s/walk", row.StoryID)
 		}
-		if t.CompletedAt != nil {
-			row.ClosedAt = t.CompletedAt.UTC().Format(time.RFC3339)
-		}
-		// Resolve contract category from the task's Action. The action
-		// is canonical `contract:<name>`; the system contract doc may
-		// override the category via Structured.
-		if cn := contractNameFromAction(t.Action); cn != "" {
-			row.ContractCategory = cn
-			if cat := jsonStringField(resolveContractDoc(cn).Structured, "category"); cat != "" {
-				row.ContractCategory = cat
-			}
-		}
+		row.Duration = humaniseDuration(now, t)
+		row.UpdatedAt = taskUpdatedAt(t).UTC().Format(time.RFC3339)
+		row.Tags = buildTaskTags(row)
 
 		if !filterMatches(row, t, filter, closedWindowStart, now) {
 			continue
@@ -315,7 +327,7 @@ func filterMatches(row projectTaskRow, t task.Task, filter projectTasksFilter, c
 	if filter.StoryID != "" && filter.StoryID != row.StoryID {
 		return false
 	}
-	if filter.ContractName != "" && filter.ContractName != row.ContractCategory {
+	if filter.ContractName != "" && filter.ContractName != row.Title {
 		return false
 	}
 	if filter.IterationOp != "" {
@@ -343,7 +355,7 @@ func filterMatches(row projectTaskRow, t task.Task, filter projectTasksFilter, c
 	}
 	if filter.FreeText != "" {
 		needle := strings.ToLower(filter.FreeText)
-		hay := strings.ToLower(row.ID + " " + row.StoryTitle + " " + row.ContractCategory + " " + row.ClaimedByUser)
+		hay := strings.ToLower(row.ID + " " + row.StoryTitle + " " + row.Title + " " + row.ClaimedByUser)
 		if !strings.Contains(hay, needle) {
 			return false
 		}
@@ -385,24 +397,82 @@ func priorityRank(p string) int {
 	return 999
 }
 
-// humaniseAge returns a coarse "Nh ago" / "Nm ago" string suitable for
-// table cells. Tests use frozen clocks so the resolution stays at
-// minute granularity.
-func humaniseAge(now, then time.Time) string {
-	if then.IsZero() {
+// humaniseDuration returns a short wall-clock string sized by the
+// task's current lifecycle state: queue-wait for enqueued/published,
+// run-time-so-far for claimed/in_flight, total run time for closed.
+func humaniseDuration(now time.Time, t task.Task) string {
+	var d time.Duration
+	switch t.Status {
+	case task.StatusEnqueued, task.StatusPublished:
+		d = now.Sub(t.CreatedAt)
+	case task.StatusClaimed, task.StatusInFlight:
+		if t.ClaimedAt == nil {
+			return ""
+		}
+		d = now.Sub(*t.ClaimedAt)
+	case task.StatusClosed:
+		if t.ClaimedAt == nil || t.CompletedAt == nil {
+			return ""
+		}
+		d = t.CompletedAt.Sub(*t.ClaimedAt)
+	default:
 		return ""
 	}
-	d := now.Sub(then)
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	if d < 0 {
+		return ""
 	}
+	return humaniseShortDuration(d)
+}
+
+// humaniseShortDuration formats a Duration as a coarse "5s" / "12m" /
+// "3h" / "2d" string suitable for a table cell.
+func humaniseShortDuration(d time.Duration) string {
+	switch {
+	case d < time.Second:
+		return "<1s"
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
+}
+
+// taskUpdatedAt returns the most recent state-change timestamp:
+// CompletedAt > ClaimedAt > CreatedAt.
+func taskUpdatedAt(t task.Task) time.Time {
+	if t.CompletedAt != nil {
+		return *t.CompletedAt
+	}
+	if t.ClaimedAt != nil {
+		return *t.ClaimedAt
+	}
+	return t.CreatedAt
+}
+
+// buildTaskTags returns the key:value chip list rendered inside the
+// title cell. Mirrors story-row tag chips — clickable to add to the
+// filter.
+func buildTaskTags(row projectTaskRow) []string {
+	tags := make([]string, 0, 4)
+	if row.Kind != "" {
+		tags = append(tags, "kind:"+row.Kind)
+	}
+	if row.Iteration > 1 {
+		tags = append(tags, fmt.Sprintf("iter:%d", row.Iteration))
+	}
+	if row.Outcome != "" {
+		tags = append(tags, "outcome:"+row.Outcome)
+	}
+	if row.StoryTitle != "" {
+		tags = append(tags, "story:"+row.StoryTitle)
+	} else if row.StoryID != "" {
+		tags = append(tags, "story:"+row.StoryID)
+	}
+	return tags
 }
 
 // jsonStringField reads a single string field from raw JSON. Defensive

@@ -39,16 +39,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/moby/moby/api/types/mount"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/network"
-	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/bobmcallan/satellites/tests/common/containers"
 )
 
 // universalExempt is the strip set applied to every response on both
@@ -119,48 +115,14 @@ func TestAPIParityWithMCP(t *testing.T) {
 
 	envBearer := "parity-env-bearer-abc123XYZ"
 
-	net, err := network.New(ctx)
-	if err != nil {
-		t.Fatalf("network: %v", err)
-	}
-	t.Cleanup(func() { _ = net.Remove(ctx) })
-
-	surreal, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        "surrealdb/surrealdb:v3.0.0",
-			ExposedPorts: []string{"8000/tcp"},
-			Cmd:          []string{"start", "--user", "root", "--pass", "root"},
-			Networks:     []string{net.Name},
-			NetworkAliases: map[string][]string{
-				net.Name: {"surrealdb"},
-			},
-			WaitingFor: wait.ForListeningPort("8000/tcp").WithStartupTimeout(90 * time.Second),
-		},
-		Started: true,
-	})
-	if err != nil {
-		t.Fatalf("surreal: %v", err)
-	}
-	t.Cleanup(func() { _ = surreal.Terminate(ctx) })
-
-	docsHost := filepath.Join(repoRoot(t), "docs")
-	baseURL, stop := startServerContainerWithOptions(t, ctx, startOptions{
-		Network: net.Name,
-		Env: map[string]string{
-			"SATELLITES_DB_DSN":       "ws://root:root@surrealdb:8000/rpc/satellites/satellites",
-			"SATELLITES_DEV_USERNAME": "dev@local",
+	stack := containers.StartStack(t, ctx, containers.Options{
+		ServerEnv: map[string]string{"SATELLITES_DEV_USERNAME": "dev@local",
 			"SATELLITES_DEV_PASSWORD": "letmein",
-			"SATELLITES_DOCS_DIR":     "/app/docs",
 			"SATELLITES_API_KEYS":     envBearer,
 		},
-		Mounts: []mount.Mount{{
-			Type:     mount.TypeBind,
-			Source:   docsHost,
-			Target:   "/app/docs",
-			ReadOnly: true,
-		}},
 	})
-	defer stop()
+	defer stack.Stop()
+	baseURL := stack.BaseURL
 
 	mcpURL := baseURL + "/mcp"
 	cookie := devLogin(t, ctx, baseURL, "dev@local", "letmein")

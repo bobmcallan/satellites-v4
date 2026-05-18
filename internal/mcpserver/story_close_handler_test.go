@@ -101,10 +101,10 @@ func seedStoryCloseAlice(t *testing.T, s *Server) string {
 	}
 	if _, err := s.deps.Ledger.Append(ctx, ledger.LedgerEntry{
 		WorkspaceID: ws.ID, ProjectID: proj.ID,
-		StoryID: ledger.StringPtr(st.ID),
-		Type:    ledger.TypeDecision,
-		Tags:    []string{"kind:verdict", "task_id:" + review.ID, "verdict:pass"},
-		Content: `{"rationale":"stub"}`,
+		StoryID:    ledger.StringPtr(st.ID),
+		Type:       ledger.TypeDecision,
+		Tags:       []string{"kind:verdict", "task_id:" + review.ID, "verdict:pass"},
+		Content:    `{"rationale":"stub"}`,
 		Durability: ledger.DurabilityDurable, SourceType: ledger.SourceAgent,
 		Status: ledger.StatusActive, CreatedBy: "u_alice",
 	}, now.Add(4*time.Minute)); err != nil {
@@ -116,10 +116,10 @@ func seedStoryCloseAlice(t *testing.T, s *Server) string {
 	// release-evidence row so the close passes the gate.
 	if _, err := s.deps.Ledger.Append(ctx, ledger.LedgerEntry{
 		WorkspaceID: ws.ID, ProjectID: proj.ID,
-		StoryID: ledger.StringPtr(st.ID),
-		Type:    ledger.TypeEvidence,
-		Tags:    []string{"kind:release-evidence", "phase:merge_to_main", "pushed_sha:unknown"},
-		Content: "## release-evidence stub for wire-shape close",
+		StoryID:    ledger.StringPtr(st.ID),
+		Type:       ledger.TypeEvidence,
+		Tags:       []string{"kind:release-evidence", "phase:merge_to_main", "pushed_sha:unknown"},
+		Content:    "## release-evidence stub for wire-shape close",
 		Durability: ledger.DurabilityDurable, SourceType: ledger.SourceAgent,
 		Status: ledger.StatusActive, CreatedBy: "u_alice",
 	}, now.Add(5*time.Minute)); err != nil {

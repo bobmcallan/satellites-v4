@@ -35,7 +35,9 @@ func TestProjectTasks_RendersThreePanesWithRoleAndIteration(t *testing.T) {
 	t.Parallel()
 	p, users, sessions, projects, _, stories, docs, _ := newTestPortalWithContracts(t, &config.Config{Env: "dev"})
 	ctx := context.Background()
-	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+	// Use real now so the closed-pane 24h window (computed against
+	// time.Now in the handler) accepts the test's recently-closed task.
+	now := time.Now().UTC()
 	user := auth.User{ID: "u_alice", Email: "alice@local"}
 	users.Add(user)
 	proj, _ := projects.Create(ctx, user.ID, "wksp_a", "alpha", now)
@@ -114,13 +116,28 @@ func TestProjectTasks_RendersThreePanesWithRoleAndIteration(t *testing.T) {
 		`data-testid="pane-enqueued"`,
 		`data-testid="pane-in-flight"`,
 		`data-testid="pane-closed"`,
+		`x-data="taskPanel"`,
+		// Column headers — mirrors story-row layout.
 		`>id<`,
-		`>role<`,
-		`>iter<`,
-		`>story<`,
-		`developer`,
-		`develop`,
-		`loop story`,
+		`>title<`,
+		`>duration<`,
+		`>status<`,
+		`>updated<`,
+		// Per-row markup.
+		`data-testid="project-task-row"`,
+		`class="task-row-title"`,
+		`class="task-row-tags"`,
+		`class="tag-chip is-clickable"`,
+		`class="duration-pill"`,
+		// Tag chips replace the old role/iter/outcome columns.
+		`data-tag="kind:work"`,
+		`data-tag="iter:2"`,           // the enqueued task has Iteration=2
+		`data-tag="outcome:success"`,  // the closed task has OutcomeSuccess
+		`data-tag="story:loop story"`, // story title chip linkable to filter
+		// Expansion row + detail content.
+		`class="task-detail`,
+		`>timing<`,
+		`>created</dt>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q", want)

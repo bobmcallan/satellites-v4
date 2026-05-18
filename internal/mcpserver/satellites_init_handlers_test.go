@@ -67,8 +67,8 @@ type fakeClientSession struct {
 	id string
 }
 
-func (f *fakeClientSession) Initialize()                                       {}
-func (f *fakeClientSession) Initialized() bool                                 { return true }
+func (f *fakeClientSession) Initialize()       {}
+func (f *fakeClientSession) Initialized() bool { return true }
 func (f *fakeClientSession) NotificationChannel() chan<- mcpgo.JSONRPCNotification {
 	return make(chan mcpgo.JSONRPCNotification, 1)
 }

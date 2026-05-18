@@ -3,14 +3,11 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"github.com/bobmcallan/satellites/internal/ledger"
 	"testing"
 	"time"
 
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/network"
-	"github.com/testcontainers/testcontainers-go/wait"
-
-	"github.com/bobmcallan/satellites/internal/ledger"
+	"github.com/bobmcallan/satellites/tests/common/containers"
 )
 
 // TestLedgerMCPRoundTrip exercises ledger_append + ledger_list over the
@@ -30,37 +27,12 @@ func TestLedgerMCPRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
 
-	net, err := network.New(ctx)
-	if err != nil {
-		t.Fatalf("network: %v", err)
-	}
-	t.Cleanup(func() { _ = net.Remove(ctx) })
-
-	surreal, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:          "surrealdb/surrealdb:v3.0.0",
-			ExposedPorts:   []string{"8000/tcp"},
-			Cmd:            []string{"start", "--user", "root", "--pass", "root"},
-			Networks:       []string{net.Name},
-			NetworkAliases: map[string][]string{net.Name: {"surrealdb"}},
-			WaitingFor:     wait.ForListeningPort("8000/tcp").WithStartupTimeout(90 * time.Second),
-		},
-		Started: true,
+	stack := containers.StartStack(t, ctx, containers.Options{
+		ServerEnv:     map[string]string{"SATELLITES_API_KEYS": "key_ledger"},
+		SkipDocsMount: true,
 	})
-	if err != nil {
-		t.Fatalf("surrealdb: %v", err)
-	}
-	t.Cleanup(func() { _ = surreal.Terminate(ctx) })
-
-	baseURL, stop := startServerContainerWithOptions(t, ctx, startOptions{
-		Network: net.Name,
-		Env: map[string]string{
-			"SATELLITES_DB_DSN":   "ws://root:root@surrealdb:8000/rpc/satellites/satellites",
-			"SATELLITES_API_KEYS": "key_ledger",
-			"SATELLITES_DOCS_DIR": "/app/docs",
-		},
-	})
-	defer stop()
+	defer stack.Stop()
+	baseURL := stack.BaseURL
 
 	mcpURL := baseURL + "/mcp"
 

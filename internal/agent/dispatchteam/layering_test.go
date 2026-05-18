@@ -36,10 +36,10 @@ func TestExtractionComplete(t *testing.T) {
 	}
 
 	forbidden := map[string]struct{}{
-		"emitLifecycle":         {},
-		"runHeartbeat":          {},
-		"appendTaskLogPointer":  {},
-		"newTaskLogUploader":    {},
+		"emitLifecycle":        {},
+		"runHeartbeat":         {},
+		"appendTaskLogPointer": {},
+		"newTaskLogUploader":   {},
 	}
 	for _, decl := range file.Decls {
 		fd, ok := decl.(*ast.FuncDecl)

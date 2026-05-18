@@ -877,6 +877,55 @@ function applyStoryOrder(host, field) {
     }
 }
 
+// projectStaleBanner (sty_7bc94f80) — project-page banner that surfaces
+// when the shared realtime bridge transitions into reconnecting or
+// disconnected. Listens to `satellites:realtime:status` CustomEvents the
+// bridge dispatches; does NOT construct its own SatellitesWS.
+function projectStaleBanner() {
+    return {
+        status: 'idle',
+        _handler: null,
+        init() {
+            const self = this;
+            this._handler = function (ev) {
+                if (ev && ev.detail && typeof ev.detail.status === 'string') {
+                    self.status = ev.detail.status;
+                }
+            };
+            document.addEventListener('satellites:realtime:status', this._handler);
+        },
+        destroy() {
+            if (this._handler) {
+                document.removeEventListener('satellites:realtime:status', this._handler);
+                this._handler = null;
+            }
+        },
+        get isReconnecting() { return this.status === 'reconnecting'; },
+        get isDisconnected() { return this.status === 'disconnected'; },
+        get isVisible() { return this.isReconnecting || this.isDisconnected; },
+        get visibilityClass() { return this.isVisible ? '' : 'is-hidden'; },
+        get stateClass() {
+            if (this.isDisconnected) { return 'project-stale-banner-disconnected'; }
+            if (this.isReconnecting) { return 'project-stale-banner-reconnecting'; }
+            return '';
+        },
+        get bannerClasses() {
+            return [this.visibilityClass, this.stateClass].filter(Boolean).join(' ');
+        },
+        get hiddenWhenNotDisconnected() { return this.isDisconnected ? '' : 'is-hidden'; },
+        get copyText() {
+            if (this.isDisconnected) { return 'Live updates unavailable — refresh to reload.'; }
+            if (this.isReconnecting) { return 'Live updates paused — reconnecting…'; }
+            return '';
+        },
+        reload() {
+            if (typeof window !== 'undefined' && window.location) {
+                window.location.reload();
+            }
+        },
+    };
+}
+
 // footerStatus (sty_558c0431) — three-slot footer Alpine factory.
 // Owns the local uptime tick and the /api/health poll cycle. The right
 // slot is data-driven from `footerStatusItems` — adding a status badge
@@ -1031,4 +1080,5 @@ document.addEventListener('alpine:init', () => {
     Alpine.data('sectionToggle', sectionToggle);
     Alpine.data('storyPanel', storyPanel);
     Alpine.data('footerStatus', footerStatus);
+    Alpine.data('projectStaleBanner', projectStaleBanner);
 });

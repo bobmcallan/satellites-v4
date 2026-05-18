@@ -8,6 +8,20 @@
   {{template "nav.html" .}}
   <main class="portal-main" data-testid="project-page" data-project-id="{{.Project.ID}}">
 
+    <div class="project-stale-banner is-hidden"
+         x-data="projectStaleBanner"
+         :class="bannerClasses"
+         data-testid="project-stale-banner"
+         role="status"
+         aria-live="polite">
+      <span class="project-stale-banner-text" x-text="copyText"></span>
+      <button type="button"
+              class="project-stale-banner-refresh"
+              data-testid="project-stale-banner-refresh"
+              :class="hiddenWhenNotDisconnected"
+              @click="reload">refresh</button>
+    </div>
+
     {{range .Panels}}
     <section class="panel-headed" data-testid="panel-{{.ID}}"
              x-data="sectionToggle"

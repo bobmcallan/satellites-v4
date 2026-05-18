@@ -46,6 +46,11 @@ function realtimeBridge() {
                 workspaceId: cfg.workspaceId,
                 projectId: this._projectID,
                 debug: this._debug,
+                onStatusChange: function (next) {
+                    document.dispatchEvent(new CustomEvent('satellites:realtime:status', {
+                        detail: { status: next }
+                    }));
+                },
                 onEvent: function (ev) { self._dispatch(ev); },
             });
             this._ws.connect();

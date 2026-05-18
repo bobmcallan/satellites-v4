@@ -2004,6 +2004,37 @@ code {
     border-color: #888;
 }
 
+/* Project-page stale-data banner (sty_7bc94f80). Surfaces when the
+   shared realtime bridge transitions to reconnecting / disconnected.
+   State-coloured variants reuse the .ws-indicator-reconnecting /
+   .ws-indicator-disconnected palette literals so theme behaviour
+   matches the nav indicator. */
+.project-stale-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    margin: 0 0 1rem 0;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    font-size: 0.9rem;
+}
+.project-stale-banner.is-hidden { display: none; }
+.project-stale-banner-text { flex: 1 1 auto; }
+.project-stale-banner-refresh {
+    background: transparent;
+    border: 1px solid currentColor;
+    border-radius: 3px;
+    padding: 0.2rem 0.6rem;
+    cursor: pointer;
+    color: inherit;
+    font-size: 0.85rem;
+}
+.project-stale-banner-refresh.is-hidden { display: none; }
+.project-stale-banner-refresh:hover { background: rgba(0, 0, 0, 0.08); }
+.project-stale-banner-reconnecting { background: #f5a623; color: #1a1a1a; }
+.project-stale-banner-disconnected { background: #e04f5f; color: #fff; }
+
 /* Websocket connection indicator (slice 10.4) */
 .ws-indicator {
     position: relative;

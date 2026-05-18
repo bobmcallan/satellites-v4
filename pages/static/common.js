@@ -118,6 +118,23 @@ function sectionToggle() {
     };
 }
 
+// STORY_STATUS_KINDS — sty_ec83484f. Whitelist of story.<status> WS
+// kinds that route into _applyStoryEvent. Mirrors
+// internal/story/transitions.go::IsKnownStatus exactly (six members);
+// any future enum addition needs a coordinated edit on both sides.
+// Any non-status story.* event (e.g. story.activity.append from
+// sty_e55f335e) drops at the dispatcher — storyPanel does not render
+// those events; the per-story page owns activity.append and the
+// Context-audit panel from sty_9f658001 owns ledger.append.
+const STORY_STATUS_KINDS = new Set([
+    'story.backlog',
+    'story.ready',
+    'story.in_progress',
+    'story.blocked',
+    'story.done',
+    'story.cancelled',
+]);
+
 // storyPanel (sty_70c0f7a3 + sty_6300fb27 + sty_48198f3e) — V3-style
 // story panel.
 //
@@ -484,10 +501,16 @@ function storyPanel() {
         // order.
         _applyEvent(ev, projectID) {
             if (!ev || !ev.Kind) { return; }
-            if (ev.Kind.indexOf('story.') === 0) {
+            // sty_ec83484f: route only known story.<status> kinds into
+            // _applyStoryEvent. The previous indexOf('story.') predicate
+            // let story.activity.append (sty_e55f335e) corrupt the
+            // status pill via the prefix-strip in _applyStoryEvent.
+            if (STORY_STATUS_KINDS.has(ev.Kind)) {
                 this._applyStoryEvent(ev, projectID);
                 return;
             }
+            // task.* branch untouched here — sibling sty_08fc8d20 owns
+            // the task-side discipline sweep.
             if (ev.Kind.indexOf('task.') === 0) {
                 this._applyTaskEvent(ev, projectID);
                 return;

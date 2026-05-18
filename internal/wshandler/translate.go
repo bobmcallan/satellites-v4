@@ -79,6 +79,14 @@ func translate(ev surreallive.Event) []WireEvent {
 		return translateStory(ev, row)
 	case "ledger":
 		return translateLedger(ev, row)
+	case "documents":
+		return translateDocument(ev, row)
+	case "repos":
+		return translateRepo(ev, row)
+	case "commits":
+		return translateCommit(ev, row)
+	case "projects":
+		return translateProject(ev, row)
 	}
 	return nil
 }
@@ -201,6 +209,143 @@ func translateLedger(ev surreallive.Event, row map[string]any) []WireEvent {
 	}
 	out = append(out, wireEvent("story.activity.append", ev.WorkspaceID, activity))
 	return out
+}
+
+// translateDocument emits document.<status> on CREATE/UPDATE of the
+// documents table. When the row's type is "contract", an additional
+// contract.<status> WireEvent is emitted (the contract panel
+// subscribes on that kind; the document panel subscribes on
+// document.<status>). DELETE drops — mirrors task/story.
+func translateDocument(ev surreallive.Event, row map[string]any) []WireEvent {
+	if ev.Action == surreallive.ActionDelete {
+		return nil
+	}
+	status, _ := row["status"].(string)
+	if status == "" {
+		return nil
+	}
+	documentID := pickStringID(row, "id", "document_id")
+	docType := pickString(row, "type")
+	payload := map[string]any{
+		"workspace_id": ev.WorkspaceID,
+		"project_id":   ev.ProjectID,
+		"document_id":  documentID,
+		"type":         docType,
+		"name":         pickString(row, "name"),
+		"scope":        pickString(row, "scope"),
+		"status":       status,
+	}
+	if v, ok := row["updated_at"]; ok {
+		payload["updated_at"] = v
+	}
+	out := []WireEvent{wireEvent("document."+status, ev.WorkspaceID, payload)}
+	if docType == "contract" {
+		contractPayload := map[string]any{
+			"workspace_id": ev.WorkspaceID,
+			"project_id":   ev.ProjectID,
+			"contract_id":  documentID,
+			"name":         pickString(row, "name"),
+			"scope":        pickString(row, "scope"),
+			"status":       status,
+		}
+		out = append(out, wireEvent("contract."+status, ev.WorkspaceID, contractPayload))
+	}
+	return out
+}
+
+// translateRepo emits repo.<event> on CREATE/UPDATE of the repos
+// table. CREATE → repo.created. UPDATE with status == "archived" →
+// repo.archived; other UPDATEs → repo.updated. DELETE drops.
+func translateRepo(ev surreallive.Event, row map[string]any) []WireEvent {
+	if ev.Action == surreallive.ActionDelete {
+		return nil
+	}
+	repoID := pickStringID(row, "id", "repo_id")
+	status := pickString(row, "status")
+	switch ev.Action {
+	case surreallive.ActionCreate:
+		payload := map[string]any{
+			"workspace_id": ev.WorkspaceID,
+			"project_id":   ev.ProjectID,
+			"repo_id":      repoID,
+			"git_remote":   pickString(row, "git_remote"),
+			"status":       status,
+		}
+		return []WireEvent{wireEvent("repo.created", ev.WorkspaceID, payload)}
+	case surreallive.ActionUpdate:
+		payload := map[string]any{
+			"workspace_id": ev.WorkspaceID,
+			"project_id":   ev.ProjectID,
+			"repo_id":      repoID,
+			"status":       status,
+			"head_sha":     pickString(row, "head_sha"),
+			"symbol_count": row["symbol_count"],
+			"file_count":   row["file_count"],
+		}
+		if v, ok := row["last_indexed_at"]; ok {
+			payload["last_indexed_at"] = v
+		}
+		kind := "repo.updated"
+		if status == "archived" {
+			kind = "repo.archived"
+		}
+		return []WireEvent{wireEvent(kind, ev.WorkspaceID, payload)}
+	}
+	return nil
+}
+
+// translateCommit emits repo.commit_appended on CREATE of a row in
+// the commits table. UPDATE and DELETE drop — commits are
+// append-only; later edits surface via the parent repos row's
+// last_indexed_at advance (translateRepo's repo.updated path).
+func translateCommit(ev surreallive.Event, row map[string]any) []WireEvent {
+	if ev.Action != surreallive.ActionCreate {
+		return nil
+	}
+	payload := map[string]any{
+		"workspace_id": ev.WorkspaceID,
+		"project_id":   ev.ProjectID,
+		"repo_id":      pickString(row, "repo_id"),
+		"sha":          pickString(row, "sha"),
+		"author":       pickString(row, "author"),
+	}
+	if v, ok := row["committed_at"]; ok {
+		payload["committed_at"] = v
+	}
+	return []WireEvent{wireEvent("repo.commit_appended", ev.WorkspaceID, payload)}
+}
+
+// translateProject emits project.updated on UPDATE and
+// project.deleted on DELETE. CREATE drops — the project panel listens
+// for mutation on existing rows; first-time creation is observed via
+// the project_add MCP verb's response, not the WS surface. DELETE
+// delivery depends on the surreallive notification carrying enough
+// row payload to populate workspace_id; if the DELETE row is empty
+// (no workspace_id) the event is dropped at the top-level guard in
+// translate().
+func translateProject(ev surreallive.Event, row map[string]any) []WireEvent {
+	projectID := pickStringID(row, "id", "project_id")
+	switch ev.Action {
+	case surreallive.ActionUpdate:
+		payload := map[string]any{
+			"workspace_id":  ev.WorkspaceID,
+			"project_id":    projectID,
+			"name":          pickString(row, "name"),
+			"owner_user_id": pickString(row, "owner_user_id"),
+			"status":        pickString(row, "status"),
+		}
+		if v, ok := row["updated_at"]; ok {
+			payload["updated_at"] = v
+		}
+		return []WireEvent{wireEvent("project.updated", ev.WorkspaceID, payload)}
+	case surreallive.ActionDelete:
+		payload := map[string]any{
+			"workspace_id": ev.WorkspaceID,
+			"project_id":   projectID,
+		}
+		return []WireEvent{wireEvent("project.deleted", ev.WorkspaceID, payload)}
+	}
+	return nil
 }
 
 func wireEvent(kind, workspaceID string, payload map[string]any) WireEvent {

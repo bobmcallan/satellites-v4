@@ -50,6 +50,14 @@ func NewSurrealLiveSource(live *surreallive.Subscriber, members Membership, logg
 	}
 }
 
+// PanelTables is the canonical set of SurrealDB tables the
+// SurrealLiveSource subscribes to. Each entry has a matching case in
+// translate(); adding a table here without a translator silently
+// drops its events.
+func PanelTables() []string {
+	return []string{"tasks", "stories", "ledger", "documents", "repos", "commits", "projects"}
+}
+
 // Run kicks off the per-table dial loops. Returns when ctx is
 // cancelled or every dial loop has exited. Subscribers' channels
 // stay open until the parent context cancels.
@@ -57,7 +65,7 @@ func (s *SurrealLiveSource) Run(ctx context.Context) {
 	if s == nil || s.live == nil {
 		return
 	}
-	tables := []string{"tasks", "stories", "ledger"}
+	tables := PanelTables()
 	var wg sync.WaitGroup
 	for _, table := range tables {
 		wg.Add(1)

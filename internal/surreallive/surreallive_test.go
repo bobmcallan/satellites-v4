@@ -363,3 +363,64 @@ func TestSubscriber_PanicInOnEventDoesNotKillLoop(t *testing.T) {
 		t.Fatalf("expected loop to survive panic and process 2 events, got %d", calls.Load())
 	}
 }
+
+// sty_bc732746 regression — the wshandler now subscribes to four
+// additional tables (documents, repos, commits, projects), so a
+// translator that panics on a malformed row for any of them must not
+// stop the dial loop. Mirrors the production wiring in
+// SurrealLiveSource.Run: the onEvent closure is `translate → fanout`,
+// and dispatch wraps it with recover. This regression asserts the
+// recover-guard scope remains load-bearing: a translator panic on
+// event N still allows event N+1 (and N+2) to be delivered.
+func TestSubscriber_TranslatePanic_DoesNotStopSubsequentDelivery(t *testing.T) {
+	t.Parallel()
+	stub := &stubDB{}
+	ch := make(chan surreallive.Notification, 3)
+	stub.push(ch)
+
+	sub := surreallive.New(stub, surreallive.Config{
+		MinBackoff: 5 * time.Millisecond,
+		MaxBackoff: 10 * time.Millisecond,
+	}, nil)
+
+	var delivered atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		// Mirrors SurrealLiveSource.Run's translate→fanout shape; the
+		// "translator" panics on the second event but the first and
+		// third must still be observed by the fanout-shaped
+		// downstream.
+		_ = sub.Subscribe(ctx, "documents", nil, func(ev surreallive.Event) {
+			if ev.Action == surreallive.ActionUpdate {
+				panic("translator panicked on UPDATE")
+			}
+			delivered.Add(1)
+		})
+	}()
+
+	ch <- surreallive.Notification{
+		Action: surreallive.ActionCreate,
+		Result: map[string]any{"workspace_id": "wksp_a", "id": "doc_1", "status": "new"},
+	}
+	ch <- surreallive.Notification{
+		Action: surreallive.ActionUpdate,
+		Result: map[string]any{"workspace_id": "wksp_a", "id": "doc_1", "status": "x"},
+	}
+	ch <- surreallive.Notification{
+		Action: surreallive.ActionCreate,
+		Result: map[string]any{"workspace_id": "wksp_a", "id": "doc_2", "status": "new"},
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if delivered.Load() >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := delivered.Load(); got < 2 {
+		t.Fatalf("translate panic killed the loop: delivered=%d want>=2", got)
+	}
+}

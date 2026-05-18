@@ -97,9 +97,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 // subscribeMsg is the inbound subscribe request.
 type subscribeMsg struct {
-	Type    string `json:"type"`
-	Topic   string `json:"topic"`
-	SinceID string `json:"since_id,omitempty"`
+	Type      string `json:"type"`
+	Topic     string `json:"topic"`
+	SinceID   string `json:"since_id,omitempty"`
+	ProjectID string `json:"project_id,omitempty"`
 }
 
 // errorMsg is the outbound error frame sent before closing a
@@ -235,7 +236,7 @@ func (c *connection) reader() {
 		// since_id is parsed but ignored: surreallive has no replay
 		// buffer. Higher-level consumers backstop via tab-focus
 		// refresh / polling Claim.
-		ch, err := c.h.deps.Source.Subscribe(c.ctx, msg.Topic, c.subID, c.userID)
+		ch, err := c.h.deps.Source.Subscribe(c.ctx, msg.Topic, c.subID, c.userID, msg.ProjectID)
 		if err != nil {
 			c.writeError(errCode(err), err.Error())
 			return

@@ -55,6 +55,7 @@ class SatellitesWS {
     constructor(opts) {
         opts = opts || {};
         this.workspaceId = opts.workspaceId || '';
+        this.projectId = opts.projectId || '';
         this.debug = !!opts.debug;
         this.onStatusChange = opts.onStatusChange || function () {};
         this.onEvent = opts.onEvent || function () {};
@@ -134,6 +135,9 @@ class SatellitesWS {
         const msg = { type: 'subscribe', topic: topic };
         if (this.lastEventID) {
             msg.since_id = this.lastEventID;
+        }
+        if (this.projectId) {
+            msg.project_id = this.projectId;
         }
         try {
             this.conn.send(JSON.stringify(msg));

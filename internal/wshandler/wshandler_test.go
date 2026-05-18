@@ -81,7 +81,7 @@ func (s *stubSource) addMember(wsID, userID string) {
 	s.members[wsID][userID] = true
 }
 
-func (s *stubSource) Subscribe(_ context.Context, topic, subID, userID string) (<-chan WireEvent, error) {
+func (s *stubSource) Subscribe(_ context.Context, topic, subID, userID, _ string) (<-chan WireEvent, error) {
 	wsID, err := ParseTopicWorkspace(topic)
 	if err != nil {
 		return nil, err

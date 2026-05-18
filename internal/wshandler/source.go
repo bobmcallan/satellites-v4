@@ -53,7 +53,13 @@ type EventSource interface {
 	// Implementations enforce membership via the Membership the
 	// source was constructed with; non-members receive ErrNotMember.
 	// Topics outside the ws:<workspace_id> shape return ErrInvalidTopic.
-	Subscribe(ctx context.Context, topic, subscriberID, userID string) (<-chan WireEvent, error)
+	//
+	// projectID narrows delivery to events whose payload carries a
+	// matching `project_id` key (the per-subscription gate added by
+	// sty_fbcde932). Empty projectID preserves the legacy
+	// workspace-only behaviour — every event on the topic is
+	// delivered after the membership gate.
+	Subscribe(ctx context.Context, topic, subscriberID, userID, projectID string) (<-chan WireEvent, error)
 	// Unsubscribe releases subscriberID's channel. Safe to call on an
 	// unknown id.
 	Unsubscribe(subscriberID string)

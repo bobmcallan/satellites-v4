@@ -126,6 +126,12 @@ function sectionToggle() {
 // sty_e55f335e) drops at the dispatcher — storyPanel does not render
 // those events; the per-story page owns activity.append and the
 // Context-audit panel from sty_9f658001 owns ledger.append.
+//
+// sty_08fc8d20 — the registry of allowed kinds lives in
+// internal/wsbus/event_kinds.go; the configseed lint at boot asserts
+// every Kind composed in internal/wshandler/translate.go is registered
+// there. The Sets below are the panel-side mirror of that registry —
+// they MUST stay coordinated with the wsbus contents.
 const STORY_STATUS_KINDS = new Set([
     'story.backlog',
     'story.ready',
@@ -133,6 +139,23 @@ const STORY_STATUS_KINDS = new Set([
     'story.blocked',
     'story.done',
     'story.cancelled',
+]);
+
+// TASK_STATUS_KINDS — sty_08fc8d20. Sibling of STORY_STATUS_KINDS.
+// Whitelist of task.<status> WS kinds that route into _applyTaskEvent.
+// Mirrors internal/task/task.go Status* consts exactly. Any future
+// task.<sub-namespace> event (analogous to story.activity.append) drops
+// at the dispatcher rather than being prefix-stripped into a corrupted
+// status pill — the regression class sty_ec83484f fixed on the story
+// arm.
+const TASK_STATUS_KINDS = new Set([
+    'task.planned',
+    'task.published',
+    'task.enqueued',
+    'task.claimed',
+    'task.in_flight',
+    'task.closed',
+    'task.archived',
 ]);
 
 // storyPanel (sty_70c0f7a3 + sty_6300fb27 + sty_48198f3e) — V3-style
@@ -488,6 +511,7 @@ function storyPanel() {
         // route inbound CustomEvents to the patcher fns below. Kind
         // filtering inside each patcher remains the panel's
         // responsibility (story-status-only via STORY_STATUS_KINDS,
+        // task-status-only via TASK_STATUS_KINDS — sty_08fc8d20,
         // ledger.append-only for context-audit). The workspace-scoped
         // WS connection is owned by realtime_bridge.js.
         // _applyLedgerEvent surfaces a fresh kind:context-fetch row on
@@ -676,7 +700,11 @@ function storyPanel() {
         // Events for unrendered stories (panel filtered out, story not
         // expanded) find no host and silently drop.
         _applyTaskEvent(ev) {
-            if (!ev || !ev.Kind || ev.Kind.indexOf('task.') !== 0) { return; }
+            // sty_08fc8d20 — gate on the TASK_STATUS_KINDS whitelist
+            // (sibling of sty_ec83484f's _applyStoryEvent gate). Drops
+            // any future task.<sub-namespace> event rather than
+            // prefix-stripping it into a corrupted status pill.
+            if (!ev || !TASK_STATUS_KINDS.has(ev.Kind)) { return; }
             const data = ev.Data || ev.data || {};
             const storyID = data.story_id;
             const taskID = data.task_id;

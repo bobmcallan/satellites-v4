@@ -7,11 +7,13 @@
 package wshandler
 
 import (
+	"log"
 	"strconv"
 	"sync/atomic"
 	"time"
 
 	"github.com/bobmcallan/satellites/internal/surreallive"
+	"github.com/bobmcallan/satellites/internal/wsbus"
 )
 
 // activityKindSet mirrors internal/ledger.DefaultStoryActivityKindTags
@@ -121,7 +123,11 @@ func translateTask(ev surreallive.Event, row map[string]any) []WireEvent {
 	if v, ok := row["outcome"].(string); ok && v != "" {
 		payload["outcome"] = v
 	}
-	return []WireEvent{wireEvent("task."+status, ev.WorkspaceID, payload)}
+	out, ok := emitWireEvent("task."+status, ev.WorkspaceID, payload)
+	if !ok {
+		return nil
+	}
+	return []WireEvent{out}
 }
 
 func translateStory(ev surreallive.Event, row map[string]any) []WireEvent {
@@ -150,7 +156,11 @@ func translateStory(ev surreallive.Event, row map[string]any) []WireEvent {
 	if v, ok := row["updated_at"]; ok {
 		payload["updated_at"] = v
 	}
-	return []WireEvent{wireEvent("story."+status, ev.WorkspaceID, payload)}
+	out, ok := emitWireEvent("story."+status, ev.WorkspaceID, payload)
+	if !ok {
+		return nil
+	}
+	return []WireEvent{out}
 }
 
 func translateLedger(ev surreallive.Event, row map[string]any) []WireEvent {
@@ -165,7 +175,11 @@ func translateLedger(ev surreallive.Event, row map[string]any) []WireEvent {
 				"ledger_id":    ledgerID,
 				"reason":       pickString(row, "reason"),
 			}
-			return []WireEvent{wireEvent("ledger.dereference", ev.WorkspaceID, payload)}
+			out, ok := emitWireEvent("ledger.dereference", ev.WorkspaceID, payload)
+			if !ok {
+				return nil
+			}
+			return []WireEvent{out}
 		}
 		// Non-dereference UPDATEs on ledger don't surface in the
 		// legacy hub flow — drop.
@@ -184,7 +198,11 @@ func translateLedger(ev surreallive.Event, row map[string]any) []WireEvent {
 	if hasStory {
 		payload["story_id"] = storyID
 	}
-	out := []WireEvent{wireEvent("ledger.append", ev.WorkspaceID, payload)}
+	appendEvt, ok := emitWireEvent("ledger.append", ev.WorkspaceID, payload)
+	if !ok {
+		return nil
+	}
+	out := []WireEvent{appendEvt}
 	if !hasStory {
 		return out
 	}
@@ -207,7 +225,9 @@ func translateLedger(ev surreallive.Event, row map[string]any) []WireEvent {
 		"story_id":     storyID,
 		"created_at":   createdAt,
 	}
-	out = append(out, wireEvent("story.activity.append", ev.WorkspaceID, activity))
+	if activityEvt, ok := emitWireEvent("story.activity.append", ev.WorkspaceID, activity); ok {
+		out = append(out, activityEvt)
+	}
 	return out
 }
 
@@ -238,7 +258,11 @@ func translateDocument(ev surreallive.Event, row map[string]any) []WireEvent {
 	if v, ok := row["updated_at"]; ok {
 		payload["updated_at"] = v
 	}
-	out := []WireEvent{wireEvent("document."+status, ev.WorkspaceID, payload)}
+	docEvt, ok := emitWireEvent("document."+status, ev.WorkspaceID, payload)
+	if !ok {
+		return nil
+	}
+	out := []WireEvent{docEvt}
 	if docType == "contract" {
 		contractPayload := map[string]any{
 			"workspace_id": ev.WorkspaceID,
@@ -248,7 +272,9 @@ func translateDocument(ev surreallive.Event, row map[string]any) []WireEvent {
 			"scope":        pickString(row, "scope"),
 			"status":       status,
 		}
-		out = append(out, wireEvent("contract."+status, ev.WorkspaceID, contractPayload))
+		if contractEvt, ok := emitWireEvent("contract."+status, ev.WorkspaceID, contractPayload); ok {
+			out = append(out, contractEvt)
+		}
 	}
 	return out
 }
@@ -271,7 +297,11 @@ func translateRepo(ev surreallive.Event, row map[string]any) []WireEvent {
 			"git_remote":   pickString(row, "git_remote"),
 			"status":       status,
 		}
-		return []WireEvent{wireEvent("repo.created", ev.WorkspaceID, payload)}
+		out, ok := emitWireEvent("repo.created", ev.WorkspaceID, payload)
+		if !ok {
+			return nil
+		}
+		return []WireEvent{out}
 	case surreallive.ActionUpdate:
 		payload := map[string]any{
 			"workspace_id": ev.WorkspaceID,
@@ -289,7 +319,11 @@ func translateRepo(ev surreallive.Event, row map[string]any) []WireEvent {
 		if status == "archived" {
 			kind = "repo.archived"
 		}
-		return []WireEvent{wireEvent(kind, ev.WorkspaceID, payload)}
+		out, ok := emitWireEvent(kind, ev.WorkspaceID, payload)
+		if !ok {
+			return nil
+		}
+		return []WireEvent{out}
 	}
 	return nil
 }
@@ -312,7 +346,11 @@ func translateCommit(ev surreallive.Event, row map[string]any) []WireEvent {
 	if v, ok := row["committed_at"]; ok {
 		payload["committed_at"] = v
 	}
-	return []WireEvent{wireEvent("repo.commit_appended", ev.WorkspaceID, payload)}
+	out, ok := emitWireEvent("repo.commit_appended", ev.WorkspaceID, payload)
+	if !ok {
+		return nil
+	}
+	return []WireEvent{out}
 }
 
 // translateProject emits project.updated on UPDATE and
@@ -337,15 +375,37 @@ func translateProject(ev surreallive.Event, row map[string]any) []WireEvent {
 		if v, ok := row["updated_at"]; ok {
 			payload["updated_at"] = v
 		}
-		return []WireEvent{wireEvent("project.updated", ev.WorkspaceID, payload)}
+		out, ok := emitWireEvent("project.updated", ev.WorkspaceID, payload)
+		if !ok {
+			return nil
+		}
+		return []WireEvent{out}
 	case surreallive.ActionDelete:
 		payload := map[string]any{
 			"workspace_id": ev.WorkspaceID,
 			"project_id":   projectID,
 		}
-		return []WireEvent{wireEvent("project.deleted", ev.WorkspaceID, payload)}
+		out, ok := emitWireEvent("project.deleted", ev.WorkspaceID, payload)
+		if !ok {
+			return nil
+		}
+		return []WireEvent{out}
 	}
 	return nil
+}
+
+// emitWireEvent guards every emit through the wsbus registry
+// (sty_08fc8d20). An unregistered Kind drops with a log line — the
+// configseed boot lint catches the offending literal source on next
+// boot so the registry edit lands alongside the new emit. The plain
+// wireEvent constructor remains so test helpers can still synthesise
+// arbitrary frames without going through the registry.
+func emitWireEvent(kind, workspaceID string, payload map[string]any) (WireEvent, bool) {
+	if _, err := wsbus.LookupOrError(kind); err != nil {
+		log.Printf("wshandler: drop emit for unregistered kind %q (%v)", kind, err)
+		return WireEvent{}, false
+	}
+	return wireEvent(kind, workspaceID, payload), true
 }
 
 func wireEvent(kind, workspaceID string, payload map[string]any) WireEvent {

@@ -99,6 +99,16 @@ func Run(ctx context.Context, docs document.Store, seedDir, workspaceID, actor s
 	// LoadDir+Upsert path carries the work. story_ac3dc4d0.
 	prSummary := runPrinciplePhase(ctx, docs, seedDir, workspaceID, actor, now)
 	summary.Add(prSummary)
+	// sty_08fc8d20 — WS event-kind registry lint. Walks
+	// internal/wshandler/translate.go and asserts every emit literal
+	// participates in internal/wsbus's registry. Runs at the end of
+	// the system-tier pass; the lint depends on no seed contents (it
+	// reads the source tree, not the document store), so its position
+	// in the runner is governed only by the principle "fail boot
+	// before substrate emits a frame a panel cannot route".
+	if lintErrs := lintEventKinds(); len(lintErrs) > 0 {
+		summary.Errors = append(summary.Errors, lintErrs...)
+	}
 	return summary, nil
 }
 

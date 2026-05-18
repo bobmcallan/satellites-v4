@@ -2348,10 +2348,22 @@ code {
 .panel-table tbody tr.story-row.is-expanded { background: #f0f0f0; }
 .panel-table tbody tr.story-detail > td { background: #fafafa; padding: 0.75rem 1rem; }
 
+/* sty_08fc8d20 — visual grouping. data-row-group on tr.story-row and
+   its paired tr.story-detail (same group id) lets us draw a hairline
+   between adjacent story groups so the operator can tell where one
+   row's tags/detail ends and the next row begins. The selector
+   targets a story-row immediately followed by another story-row
+   (collapsed groups) and a story-detail immediately followed by a
+   story-row (expanded → next group) for the same visual effect. */
+.panel-table tbody tr.story-row + tr.story-row > td { border-top: 1px solid #e2e2e2; }
+.panel-table tbody tr.story-detail + tr.story-row > td { border-top: 1px solid #e2e2e2; }
+
 [data-theme="dark"] .panel-table thead th { border-color: #333; }
 [data-theme="dark"] .panel-table tbody tr.story-row:hover { background: #1a1a1a; }
 [data-theme="dark"] .panel-table tbody tr.story-row.is-expanded { background: #1f1f1f; }
 [data-theme="dark"] .panel-table tbody tr.story-detail > td { background: #0f0f0f; }
+[data-theme="dark"] .panel-table tbody tr.story-row + tr.story-row > td { border-top-color: #262626; }
+[data-theme="dark"] .panel-table tbody tr.story-detail + tr.story-row > td { border-top-color: #262626; }
 
 /* sty_f4b87ea3 — expanded story row is full-width single-column.
    The block sequence (description, acceptance criteria, contracts)

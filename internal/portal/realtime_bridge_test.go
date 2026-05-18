@@ -88,9 +88,10 @@ func TestProjectDetail_RealtimeBridgeWiring(t *testing.T) {
 // moved the dispatch into the shared bridge; the storyPanel now sees
 // task events as `satellites:realtime:task` CustomEvents and the
 // _applyTaskEvent patcher still selects rows by data-task-id.
-// Assert the bridge source carries the CustomEvent listener, the
-// task-row patcher exists, and the legacy storyPanel WS plumbing is
-// gone.
+// sty_08fc8d20: _applyTaskEvent's prefix-strip guard
+// `indexOf('task.') !== 0` was replaced by a TASK_STATUS_KINDS
+// whitelist Set check (sibling of sty_ec83484f's STORY_STATUS_KINDS
+// fix at _applyStoryEvent).
 func TestRealtimeBridge_ConsumesTaskEvents(t *testing.T) {
 	t.Parallel()
 	source := readCommonJS(t)
@@ -100,6 +101,18 @@ func TestRealtimeBridge_ConsumesTaskEvents(t *testing.T) {
 	// _applyTaskEvent.
 	if !strings.Contains(source, `addEventListener('satellites:realtime:task'`) {
 		t.Errorf("storyPanel missing satellites:realtime:task listener; task transitions will not patch in place")
+	}
+	// sty_08fc8d20 — _applyTaskEvent must gate on the TASK_STATUS_KINDS
+	// whitelist, not a prefix-strip. Carries sty_ec83484f's discipline
+	// to the task arm.
+	if !strings.Contains(source, `TASK_STATUS_KINDS.has(ev.Kind)`) {
+		t.Errorf("_applyTaskEvent missing TASK_STATUS_KINDS whitelist check (sty_08fc8d20); a non-status task.* event would corrupt the status pill")
+	}
+	// The prior prefix-strip predicate inside _applyTaskEvent must be
+	// gone; the substring derivation that COMPUTES the status from the
+	// Kind stays (the whitelist already guarantees the prefix shape).
+	if strings.Contains(source, `ev.Kind.indexOf('task.') !== 0`) {
+		t.Errorf("_applyTaskEvent still uses ev.Kind.indexOf('task.') !== 0 guard; sty_08fc8d20 replaced this with TASK_STATUS_KINDS.has(ev.Kind)")
 	}
 	if !strings.Contains(source, `_applyTaskEvent`) {
 		t.Errorf("bridge missing _applyTaskEvent handler; task rows will not patch in place")
@@ -181,6 +194,37 @@ func TestProjectDetail_RealtimeRoutesEmbedded(t *testing.T) {
 	}
 }
 
+// TestRealtimeBridge_TaskStatusKindsWhitelist (sty_08fc8d20) locks
+// the membership of the TASK_STATUS_KINDS Set declared in
+// pages/static/common.js. Mirrors the precedent test for
+// STORY_STATUS_KINDS — every status value participating in the
+// whitelist must be a status enum the substrate actually emits,
+// and the count must equal internal/task/task.go Status* consts.
+func TestRealtimeBridge_TaskStatusKindsWhitelist(t *testing.T) {
+	t.Parallel()
+	source := readCommonJS(t)
+
+	// Assert the Set declaration is present.
+	if !strings.Contains(source, `const TASK_STATUS_KINDS = new Set([`) {
+		t.Fatalf("pages/static/common.js missing `const TASK_STATUS_KINDS = new Set([` declaration (sty_08fc8d20)")
+	}
+
+	// Membership — sourced from internal/task/task.go Status* consts.
+	for _, kind := range []string{
+		"'task.planned'",
+		"'task.published'",
+		"'task.enqueued'",
+		"'task.claimed'",
+		"'task.in_flight'",
+		"'task.closed'",
+		"'task.archived'",
+	} {
+		if !strings.Contains(source, kind) {
+			t.Errorf("TASK_STATUS_KINDS missing member %s (sourced from internal/task/task.go)", kind)
+		}
+	}
+}
+
 // sty_7667c9bc — the project_ledger page must also expose
 // data-project-id so the shared bridge can scope its events the same
 // way it does on /projects/{id}. Without it, the bridge would dispatch
@@ -208,5 +252,36 @@ func TestProjectLedger_DataProjectIDHostAttribute(t *testing.T) {
 
 	if !strings.Contains(body, `data-project-id="`+proj.ID+`"`) {
 		t.Errorf("ledger page missing data-project-id host attribute (bridge cannot scope without it)")
+	}
+}
+
+// TestRealtimeBridge_TaskActivityEventDropsAtDispatcher (sty_08fc8d20)
+// asserts the dispatcher source itself drops a non-status task.*
+// event. Static-source assertion (cheaper than driving a chromedp
+// run): post-sty_7667c9bc the per-entity dispatcher lives inside
+// `_applyTaskEvent`'s opening guard (not a central `_applyEvent`
+// switch); that guard must whitelist on TASK_STATUS_KINDS and must
+// not carry the prior prefix-strip predicate.
+func TestRealtimeBridge_TaskActivityEventDropsAtDispatcher(t *testing.T) {
+	t.Parallel()
+	source := readCommonJS(t)
+
+	// Locate the _applyTaskEvent function body — the post-sty_7667c9bc
+	// dispatch point for task.* CustomEvents.
+	taskBody := extractJSFunctionBody(t, source, "_applyTaskEvent(")
+	if !strings.Contains(taskBody, `TASK_STATUS_KINDS.has(ev.Kind)`) {
+		t.Errorf("_applyTaskEvent guard not gated on TASK_STATUS_KINDS (sty_08fc8d20)")
+	}
+	// The prior prefix-strip guard inside _applyTaskEvent must be
+	// fully removed (defence-in-depth assertion — the whitelist is
+	// the only allowed predicate).
+	if strings.Contains(taskBody, `ev.Kind.indexOf('task.') !== 0`) {
+		t.Errorf("_applyTaskEvent still references the indexOf('task.') !== 0 prefix-strip guard; sty_08fc8d20 replaced it with TASK_STATUS_KINDS.has(ev.Kind)")
+	}
+	// The substring derivation that computes the status from the Kind
+	// stays — the whitelist guarantees this path is only reached for
+	// task.<status> kinds, so the substring is safe.
+	if !strings.Contains(taskBody, `ev.Kind.substring('task.'.length)`) {
+		t.Errorf("_applyTaskEvent missing the substring derivation; whitelist guarantees this path is only reached for task.<status> kinds (sty_08fc8d20)")
 	}
 }

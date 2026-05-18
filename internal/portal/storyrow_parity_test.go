@@ -203,6 +203,59 @@ func readCommonJS(t *testing.T) string {
 	return string(raw)
 }
 
+// TestStoryRow_HasRowGroupMarkers (sty_08fc8d20) — both the
+// tr.story-row and its paired tr.story-detail carry
+// data-row-group="{{.ID}}". The marker is what the per-group
+// separator CSS rule keys on so adjacent story groups render with a
+// visible boundary.
+func TestStoryRow_HasRowGroupMarkers(t *testing.T) {
+	t.Parallel()
+	tmpl, err := pages.Templates()
+	if err != nil {
+		t.Fatalf("pages.Templates: %v", err)
+	}
+	composite := projectWorkspaceComposite{
+		Stories: []storyCard{{
+			ID:        "sty_rowgroup",
+			ProjectID: "proj_rowgroup",
+			Title:     "row-group probe",
+			Status:    "backlog",
+			Priority:  "high",
+			Category:  "feature",
+			Tags:      []string{"area:visual"},
+			CreatedAt: "2026-01-01T00:00:00Z",
+			UpdatedAt: "2026-01-01T00:00:00Z",
+		}},
+	}
+	data := map[string]any{"Composite": composite}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "_panel_stories.html", data); err != nil {
+		t.Fatalf("execute _panel_stories.html: %v", err)
+	}
+	rendered := buf.String()
+
+	// Locate the story-row tr opener and assert data-row-group on it.
+	if !strings.Contains(rendered, `<tr class="story-row"`) {
+		t.Fatalf("rendered template has no <tr class=\"story-row\">")
+	}
+	rowOpen := strings.Index(rendered, `<tr class="story-row"`)
+	rowClose := strings.Index(rendered[rowOpen:], `>`)
+	rowOpener := rendered[rowOpen : rowOpen+rowClose]
+	if !strings.Contains(rowOpener, `data-row-group="sty_rowgroup"`) {
+		t.Errorf("tr.story-row missing data-row-group=\"sty_rowgroup\" (sty_08fc8d20):\n%s", rowOpener)
+	}
+
+	if !strings.Contains(rendered, `<tr class="story-detail"`) {
+		t.Fatalf("rendered template has no <tr class=\"story-detail\">")
+	}
+	detailOpen := strings.Index(rendered, `<tr class="story-detail"`)
+	detailClose := strings.Index(rendered[detailOpen:], `>`)
+	detailOpener := rendered[detailOpen : detailOpen+detailClose]
+	if !strings.Contains(detailOpener, `data-row-group="sty_rowgroup"`) {
+		t.Errorf("tr.story-detail missing data-row-group=\"sty_rowgroup\" (sty_08fc8d20):\n%s", detailOpener)
+	}
+}
+
 // equalStringSlices compares two slices treating nil and empty as
 // equal. Order-insensitive (callers pass already-sorted slices).
 func equalStringSlices(a, b []string) bool {

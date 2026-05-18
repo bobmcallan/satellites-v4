@@ -71,6 +71,7 @@
       {{range .Composite.Stories}}
         <tr class="story-row"
             data-id="{{.ID}}"
+            data-row-group="{{.ID}}"
             data-status="{{.Status}}"
             data-priority="{{.Priority}}"
             data-category="{{.Category}}"
@@ -104,6 +105,7 @@
         </tr>
         <tr class="story-detail"
             data-detail-for="{{.ID}}"
+            data-row-group="{{.ID}}"
             x-show="isExpanded($el)"
             data-testid="story-detail-{{.ID}}">
           <td colspan="6">

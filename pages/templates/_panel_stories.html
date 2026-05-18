@@ -172,9 +172,10 @@
                           data-status="{{.Status}}"
                           data-kind="{{.Kind}}"
                           {{if .PriorTaskID}}data-prior-task-id="{{.PriorTaskID}}"{{end}}
+                          :class="taskRowClass($el)"
                           @click.stop="toggleTask"
                           data-testid="story-task-row-{{.ID}}">
-                        <td class="col-id"><code>{{.ID}}</code></td>
+                        <td class="col-id"><span class="row-chevron" aria-hidden="true"></span><code>{{.ID}}</code></td>
                         <td class="col-title">
                           <div class="task-row-tags" data-testid="story-task-tags-{{.ID}}">
                             {{range .Tags}}<button type="button" class="tag-chip is-clickable" data-tag="{{.}}" @click.stop="addTagToQuery" title="Click to filter by this tag">{{.}}</button>{{end}}
@@ -189,10 +190,11 @@
                           x-show="isTaskExpanded($el)"
                           data-testid="story-task-detail-{{.ID}}">
                         <td colspan="5">
-                          <dl class="story-task-detail-dl">
+                          <dl class="kv-list story-task-detail-kv">
                             <dt>created</dt><dd>{{.CreatedAt}}</dd>
                             {{if .ClaimedAt}}<dt>claimed</dt><dd>{{.ClaimedAt}}</dd>{{end}}
                             {{if .CompletedAt}}<dt>completed</dt><dd>{{.CompletedAt}}</dd>{{end}}
+                            {{if .Duration}}<dt>duration</dt><dd>{{.Duration}}</dd>{{end}}
                             {{if .ClaimedBy}}<dt>claimed by</dt><dd><code class="claimed-by" data-testid="story-task-claimed-{{.ID}}">{{.ClaimedBy}}</code></dd>{{end}}
                             {{if .PriorTaskID}}<dt>retry of</dt><dd><code class="prior-task-id">{{.PriorTaskID}}</code></dd>{{end}}
                             {{if .VerdictExcerpt}}<dt>verdict</dt><dd><pre class="verdict-excerpt-pre" data-testid="story-task-verdict-{{.ID}}">{{.VerdictExcerpt}}</pre></dd>{{end}}

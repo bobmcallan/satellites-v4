@@ -2433,6 +2433,41 @@ button.tag-chip.is-clickable:focus-visible { outline: 2px solid #6a9fb5; outline
 [data-theme="dark"] button.tag-chip.is-clickable { background: rgba(106, 159, 181, 0.2); color: #8ab4c9; }
 [data-theme="dark"] button.tag-chip.is-clickable:hover { background: rgba(106, 159, 181, 0.35); }
 
+/* Tag chip color-coding by data-tag value. Greenish for success-shaped
+   outcomes, reddish for failure, amber for timeout. Kind chips pick up
+   a subtle hue to distinguish work vs review at a glance. */
+button.tag-chip[data-tag="outcome:success"] { background: rgba(94, 162, 110, 0.18); color: #5ea26e; }
+button.tag-chip[data-tag="outcome:success"]:hover { background: rgba(94, 162, 110, 0.3); }
+button.tag-chip[data-tag="outcome:failure"] { background: rgba(204, 99, 91, 0.18); color: #cc635b; }
+button.tag-chip[data-tag="outcome:failure"]:hover { background: rgba(204, 99, 91, 0.3); }
+button.tag-chip[data-tag="outcome:timeout"] { background: rgba(214, 168, 71, 0.18); color: #d6a847; }
+button.tag-chip[data-tag="outcome:timeout"]:hover { background: rgba(214, 168, 71, 0.3); }
+button.tag-chip[data-tag="kind:review"] { background: rgba(166, 130, 199, 0.18); color: #a682c7; }
+button.tag-chip[data-tag="kind:review"]:hover { background: rgba(166, 130, 199, 0.3); }
+button.tag-chip[data-tag^="iter:"] { background: rgba(214, 168, 71, 0.18); color: #d6a847; }
+button.tag-chip[data-tag^="iter:"]:hover { background: rgba(214, 168, 71, 0.3); }
+
+/* Row chevron — collapsed ▶, expanded ▼. The is-expanded class is
+   stamped on the row by storyPanel.taskRowClass when the task's
+   detail sub-row is open. */
+.story-task-row { cursor: pointer; }
+.story-task-row .row-chevron {
+    display: inline-block;
+    width: 1em;
+    margin-right: 0.4rem;
+    color: var(--color-muted);
+    transition: transform 0.1s ease-out;
+    font-size: 0.7rem;
+}
+.story-task-row .row-chevron::before { content: '▶'; }
+.story-task-row.is-expanded .row-chevron::before { content: '▼'; }
+
+/* Detail sub-row payload sits in a `.kv-list` grid; nudge inset so
+   the label column doesn't crowd the parent table's first column. */
+.story-task-detail-kv {
+    margin: 0.5rem 0 0.5rem 1.5rem;
+}
+
 /* sty_0495f550 — .kv-list grid layout. Used across the project meta
    panel, story detail, document detail, repo, tasks, admin pages.
    Pairs of <dt>/<dd> render side-by-side; the <dt> column is fixed

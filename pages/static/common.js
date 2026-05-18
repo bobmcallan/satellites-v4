@@ -241,6 +241,12 @@ function storyPanel() {
             const id = (el && el.dataset && el.dataset.detailFor) || '';
             return !!id && !!this.expandedTasks[id];
         },
+        // taskRowClass adds `is-expanded` to the task row when its
+        // detail sub-row is open so the CSS chevron flips to ▼.
+        taskRowClass(el) {
+            const id = (el && el.dataset && el.dataset.taskId) || '';
+            return id && this.expandedTasks[id] ? 'is-expanded' : '';
+        },
         // sty_a34cd88f + sty_43d72112 — mirror this.expanded into the
         // URL via history.replaceState so reloads + bookmarks keep the
         // expansion. The `?expand=` slot is shared with the panels
@@ -673,7 +679,7 @@ function storyPanel() {
                 chipsHTML += '<button type="button" class="tag-chip is-clickable" data-tag="' + safe + '" @click.stop="addTagToQuery" title="Click to filter by this tag">' + safe + '</button>';
             }
             tr.innerHTML =
-                '<td class="col-id"><code>' + this._escape(taskID) + '</code></td>' +
+                '<td class="col-id"><span class="row-chevron" aria-hidden="true"></span><code>' + this._escape(taskID) + '</code></td>' +
                 '<td class="col-title"><div class="task-row-tags" data-testid="story-task-tags-' + this._escape(taskID) + '">' + chipsHTML + '</div></td>' +
                 '<td class="col-duration"><span class="muted">—</span></td>' +
                 '<td class="col-status"><code class="status-pill status-' + this._escape(status) + '" data-testid="story-task-status-' + this._escape(taskID) + '">' + this._escape(status) + '</code></td>' +

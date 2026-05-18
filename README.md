@@ -1,14 +1,26 @@
-# satellites-v4
+# satellites
 
-Developer-in-the-loop agentic engineering platform. A server (state + MCP + cron) and a separate worker (satellites-agent) coordinate story implementation against external repos, with humans reviewing every change.
+Developer-in-the-loop agentic engineering platform. Three binaries cooperate: `satellites-server` (state + MCP + cron) holds the substrate; `satellites-agent` runs as an autonomous worker against external repos; `satellites-client` is the per-task dispatch CLI that runs team-member subprocesses in a per-task worktree on a `client-{task_id}-…` branch. Two surfaces sit in front: MCP is the authoring surface (write verbs author primitives, read verbs orient), and `satellites-client task run` is the execution surface (file edits, builds, tests, commits all happen behind it). The split is load-bearing — see `pr_substrate_model`.
 
 Module path: `github.com/bobmcallan/satellites`.
 
 ## Positioning
 
-satellites-v4 is the substrate Claude (and other narrow MCP-driven agents) plug into for trustworthy software work. The platform exists so a small autonomous agent surface earns audit-grade evidence per step — every plan, decision, file change, and review verdict lives on an append-only ledger. Trust comes from the work, not the agent. See [docs/architecture.md](docs/architecture.md) for the design rationale and the five-primitive data model (workspace, project, document, story, task, ledger, repo).
+satellites is the substrate Claude (and other narrow MCP-driven agents) plug into for trustworthy software work. The platform exists so a small autonomous agent surface earns audit-grade evidence per step — every plan, decision, file change, and review verdict lives on an append-only ledger. Trust comes from the work, not the agent. See [docs/architecture.md](docs/architecture.md) for the design rationale and the seven-primitive data model (workspace, project, document, story, task, ledger, repo).
 
-## Quickstart (local dev)
+## Substrate model
+
+Behaviour lives in markdown rows, not Go code. **Agents**, **contracts**, **principles**, and **workflows** are configseed-booted primitives — changing what an agent does means writing prose and re-seeding, not editing source. This configuration-over-code mandate is what makes the substrate auditable: every behaviour the system enforces is reviewable text on a ledger, not a compiled-in policy.
+
+Two surfaces sit on top of that substrate. **MCP** is the authoring surface — write verbs (`story_create`, `task_create`, `ledger_append`, …) author primitives; read verbs (`story_get`, `task_walk`, `ledger_search`) carry orientation. The **`satellites-client task run`** CLI is the execution surface — file edits, builds, tests, and commits live behind it, in a per-task worktree on a `client-{task_id}-…` branch. The orchestrator never edits files directly; it dispatches work through the CLI. Cite `pr_substrate_model`.
+
+Each story flows through a fixed lifecycle pipeline: `plan → develop → review → iterate → commit → merge_to_main → story_close`. Reviewer rejection mints a successor `kind=work` task on the same chain rather than mutating the prior verdict; verdicts accumulate as ledger rows so the chain stays append-only.
+
+Contracts live in a two-tier scope model. Lifecycle contracts (`plan`, `story_close`) sit at `scope=system` — they are the orchestrator's own shell. Work contracts (`develop`, `commit`, `push`, `merge_to_main`, …) sit at `scope=project` — they are the substrate the dispatched agents operate inside. The two tiers never mix. Cite `pr_contract_separation`.
+
+## Quickstart
+
+### Quickstart — boot the server
 
 ```
 cp scripts/satellites.example.toml scripts/satellites.toml   # canonical config carrier (gitignored)
@@ -17,6 +29,16 @@ $EDITOR .env                                                 # optional runtime 
 ./scripts/deploy.sh up                                       # boot satellites + SurrealDB via docker compose
 open http://localhost:8080
 ```
+
+### Quickstart — consume from a project
+
+A consumer project bootstraps the execution surface via the `satellites_init` MCP verb. Open a project-bound MCP session against a running `satellites-server`, then call `satellites_init` with the consumer project root as the working directory. The verb returns one of three install-payload states:
+
+- `install_required` — no `satellites-client` binary present under `./.satellites/`; fetch the embedded payload, sha256-verify, `chmod +x`, and write it to `./.satellites/satellites-client`.
+- `update_available` — a binary is installed but its version lags the server; replace it via the same fetch / verify / write path.
+- `up_to_date` — the colocated binary is current; no fetch needed.
+
+Alongside the install payload, `satellites_init` returns an `auth_bootstrap.kind="ready"` block carrying a project-scoped agent API key (minted on first call for a project-bound session). Write the bearer into `./.satellites/satellites-client.toml` so the colocated CLI authenticates against the same server without re-prompting. From that point on, `./.satellites/satellites-client task run …` is the execution surface for every dispatched work task in that project.
 
 ## pprod
 
@@ -35,8 +57,10 @@ Use `scripts/build.sh` for everyday build, lint, and maintenance tasks. It's a p
 
 ```
 ./scripts/build.sh build     # stamps each binary from its own .version section (default)
-./scripts/build.sh server    # builds satellites only  (reads [satellites])
-./scripts/build.sh agent     # builds satellites-agent only  (reads [satellites-agent])
+./scripts/build.sh server    # builds satellites-server only  (reads [satellites-server])
+./scripts/build.sh agent     # builds satellites-agent only   (reads [satellites-agent])
+./scripts/build.sh client    # builds satellites-client only  (reads [satellites-client])
+./scripts/build.sh docker    # builds the satellites docker image (reads [satellites-server])
 ./scripts/build.sh fmt       # gofmt -s -w .
 ./scripts/build.sh vet       # go vet ./...
 ./scripts/build.sh lint      # golangci-lint run (skipped if not installed)
@@ -68,8 +92,9 @@ Config is layered: TOML is the canonical source, env vars are overrides, and eve
 ## Run
 
 ```
-./satellites         # satellites-server <version> (build: <build>, commit: <commit>)
-./satellites-agent   # satellites-agent <version> (build: <build>, commit: <commit>)
+./satellites-server  # satellites-server <version> (build: <build>, commit: <commit>)  — state + MCP + cron
+./satellites-agent   # satellites-agent <version> (build: <build>, commit: <commit>)   — autonomous worker against external repos
+./satellites-client  # satellites-client <version> (build: <build>, commit: <commit>)  — per-task dispatch CLI; `task run` runs a team-member subprocess in a per-task worktree
 ```
 
 Each binary prints one boot line with its name and the full version metadata.
@@ -79,10 +104,13 @@ Each binary prints one boot line with its name and the full version metadata.
 The `.version` file at the repo root carries the semantic version for each binary in its own section. Only `version` is stored — the build timestamp and git commit are generated at build time so they always reflect the actual build moment, not a stale file edit.
 
 ```
-[satellites]
+[satellites-server]
 version = 0.0.1
 
 [satellites-agent]
+version = 0.0.1
+
+[satellites-client]
 version = 0.0.1
 ```
 
@@ -106,7 +134,7 @@ var GitCommit = "unknown" // overridden by ldflags from git rev-parse --short HE
 func GetFullVersion() string  // "<version> (build: <build>, commit: <commit>)"
 ```
 
-Both `cmd/satellites-server/main.go` and `cmd/satellites-agent/main.go` call `config.GetFullVersion()` in their boot line. A plain `go build ./...` produces a runnable binary stamped with the three defaults above.
+`cmd/satellites-server/main.go`, `cmd/satellites-agent/main.go`, and `cmd/satellites-client/main.go` all call `config.GetFullVersion()` in their boot line. A plain `go build ./...` produces runnable binaries stamped with the three defaults above.
 
 ## Server configuration
 

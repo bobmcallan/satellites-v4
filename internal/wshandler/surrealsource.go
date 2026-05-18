@@ -32,6 +32,7 @@ type subEntry struct {
 	topic       string
 	workspaceID string
 	userID      string
+	projectID   string
 	ch          chan WireEvent
 }
 
@@ -86,7 +87,9 @@ func (s *SurrealLiveSource) Run(ctx context.Context) {
 // Subscribe implements EventSource. Validates membership, allocates a
 // buffered channel, registers it under (topic, subscriberID).
 // Re-registering an existing subscriberID drops the prior channel.
-func (s *SurrealLiveSource) Subscribe(ctx context.Context, topic, subscriberID, userID string) (<-chan WireEvent, error) {
+// projectID, when non-empty, narrows fanout to events whose payload
+// carries a matching `project_id` key (sty_fbcde932).
+func (s *SurrealLiveSource) Subscribe(ctx context.Context, topic, subscriberID, userID, projectID string) (<-chan WireEvent, error) {
 	wsID, err := ParseTopicWorkspace(topic)
 	if err != nil {
 		return nil, err
@@ -102,6 +105,7 @@ func (s *SurrealLiveSource) Subscribe(ctx context.Context, topic, subscriberID, 
 		topic:       topic,
 		workspaceID: wsID,
 		userID:      userID,
+		projectID:   projectID,
 		ch:          ch,
 	}
 	s.subs[subscriberID] = entry
@@ -152,6 +156,12 @@ func (s *SurrealLiveSource) fanout(events []WireEvent) {
 			continue
 		}
 		for _, entry := range subs {
+			if entry.projectID != "" {
+				pid, _ := ev.Data["project_id"].(string)
+				if pid != entry.projectID {
+					continue
+				}
+			}
 			select {
 			case entry.ch <- ev:
 			default:

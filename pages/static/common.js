@@ -483,6 +483,7 @@ function storyPanel() {
             const self = this;
             this._ws = new window.SatellitesWS({
                 workspaceId: window.SATELLITES_WS.workspaceId,
+                projectId: projectID,
                 debug: !!window.SATELLITES_WS.debug,
                 onEvent: function (ev) { self._applyEvent(ev, projectID); },
             });
@@ -531,7 +532,6 @@ function storyPanel() {
         // no-op.
         _applyLedgerEvent(ev, projectID) {
             const data = ev.Data || ev.data || {};
-            if (data.project_id && projectID && data.project_id !== projectID) { return; }
             const tags = Array.isArray(data.tags) ? data.tags : [];
             let isContextFetch = false;
             let eventStoryID = data.story_id || '';
@@ -587,7 +587,6 @@ function storyPanel() {
         },
         _applyStoryEvent(ev, projectID) {
             const data = ev.Data || ev.data || {};
-            if (data.project_id && data.project_id !== projectID) { return; }
             const storyID = data.story_id;
             if (!storyID) { return; }
             const newStatus = ev.Kind.substring('story.'.length);
@@ -713,7 +712,6 @@ function storyPanel() {
             const storyID = data.story_id;
             const taskID = data.task_id;
             if (!storyID || !taskID) { return; }
-            if (data.project_id && projectID && data.project_id !== projectID) { return; }
             const host = this.$el.querySelector('section[data-story-tasks="' + storyID + '"]');
             if (!host) { return; }
             const newStatus = ev.Kind.substring('task.'.length);

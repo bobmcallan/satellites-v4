@@ -238,10 +238,18 @@ func humaniseTaskDuration(now time.Time, t task.Task) string {
 		}
 		d = now.Sub(*t.ClaimedAt)
 	case task.StatusClosed:
-		if t.ClaimedAt == nil || t.CompletedAt == nil {
+		if t.CompletedAt == nil {
 			return ""
 		}
-		d = t.CompletedAt.Sub(*t.ClaimedAt)
+		// Prefer claim → complete (actual work time). Tasks that close
+		// without being claimed (substrate-driven auto-close on review /
+		// story_review contracts) fall back to created → complete so
+		// every closed row reports a number.
+		start := t.CreatedAt
+		if t.ClaimedAt != nil {
+			start = *t.ClaimedAt
+		}
+		d = t.CompletedAt.Sub(start)
 	default:
 		return ""
 	}

@@ -185,7 +185,28 @@ type DocumentListArgs struct {
 
 // DocumentListByArgs is the wire-friendly equivalent of DocumentList.
 // Caps Limit at 500. Mirrors the prior wire-layer opts construction.
-func (c *Client) DocumentListByArgs(ctx context.Context, caller Caller, in DocumentListArgs) ([]document.Document, error) {
+//
+// Audit-emits the same kind:context-fetch row as DocumentList so the
+// six wrapperList kinds (principle_list, contract_list, agent_list,
+// skill_list, reviewer_list, role_list) routed through this entry
+// point are not silently un-instrumented (pr_mcp_cli_shared_path).
+func (c *Client) DocumentListByArgs(ctx context.Context, caller Caller, in DocumentListArgs) (rows []document.Document, err error) {
+	defer func() {
+		if err != nil {
+			return
+		}
+		verb := OriginVerbFromContext(ctx)
+		if verb == "" {
+			return
+		}
+		c.dispatchContextAudit(ctx, fetchAuditDispatchInput{
+			Verb:        verb,
+			ProjectID:   in.ProjectID,
+			WorkspaceID: in.WorkspaceID,
+			ArgsMap:     map[string]any{"type": in.Type, "scope": in.Scope, "project_id": in.ProjectID, "tags": in.Tags, "limit": in.Limit},
+			Caller:      caller,
+		}, sectionsForDocumentList(rows))
+	}()
 	if c.deps.Documents == nil {
 		return nil, ErrDocumentStoreNotConfigured
 	}

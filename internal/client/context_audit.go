@@ -118,10 +118,19 @@ func OriginVerbFromContext(ctx context.Context) string {
 // contextAuditWorker runs the bounded-queue drain. Single goroutine
 // per Client; lazily started by ensureContextAuditWorker on the first
 // emit call.
+//
+// inflight tracks rows currently in the pipeline — incremented on a
+// successful enqueue and decremented after the worker's Ledger.Append
+// returns. FlushContextAudit waits on inflight (not on queue length),
+// because the worker reads a job — and thus drops queue length — before
+// Append completes; iter-1's len(queue)==0 proxy was racy under -race
+// (4/10 iterations dropped). wg tracks the worker goroutine's lifetime
+// only and gates StopContextAudit. Cf pr_root_cause, pr_local_iteration.
 type contextAuditWorker struct {
-	queue chan contextAuditJob
-	wg    sync.WaitGroup
-	once  sync.Once
+	queue    chan contextAuditJob
+	wg       sync.WaitGroup
+	inflight sync.WaitGroup
+	once     sync.Once
 }
 
 type contextAuditJob struct {
@@ -131,7 +140,7 @@ type contextAuditJob struct {
 
 // ensureContextAuditWorker lazily starts the audit worker. The worker
 // drains c.audit.queue and calls c.deps.Ledger.Append. Tests call
-// FlushContextAudit to wait for the queue to drain.
+// FlushContextAudit to wait for in-flight Append calls to complete.
 func (c *Client) ensureContextAuditWorker() {
 	c.auditInit.Do(func() {
 		c.audit = &contextAuditWorker{
@@ -141,39 +150,41 @@ func (c *Client) ensureContextAuditWorker() {
 		go func() {
 			defer c.audit.wg.Done()
 			for job := range c.audit.queue {
-				if c.deps.Ledger == nil {
-					continue
+				if c.deps.Ledger != nil {
+					_, _ = c.deps.Ledger.Append(context.Background(), job.entry, job.now)
 				}
-				_, _ = c.deps.Ledger.Append(context.Background(), job.entry, job.now)
+				c.audit.inflight.Done()
 			}
 		}()
 	})
 }
 
-// FlushContextAudit drains the in-flight context-audit queue and waits
-// for the worker to ack every queued row. Tests call this before
-// asserting against ledger_list output. Blocks until the queue is
-// empty or ctx is cancelled.
+// FlushContextAudit waits for every enqueued context-audit row to be
+// appended to the ledger. Tests call this before asserting against
+// ledger_list output. Gating on the in-flight WaitGroup (not on the
+// queue length) makes the wait deterministic under -race — the worker
+// reads a job, drops queue length, and only then calls Ledger.Append;
+// the earlier len(queue)==0 proxy raced with the Append.
 func (c *Client) FlushContextAudit(ctx context.Context) error {
 	if c.audit == nil {
 		return nil
 	}
-	// Drain by waiting for queue length to reach zero.
+	done := make(chan struct{})
+	go func() {
+		c.audit.inflight.Wait()
+		close(done)
+	}()
 	deadline := time.After(5 * time.Second)
 	if dl, ok := ctx.Deadline(); ok {
 		deadline = time.After(time.Until(dl))
 	}
-	for {
-		if len(c.audit.queue) == 0 {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline:
-			return fmt.Errorf("context audit flush timed out (queue=%d)", len(c.audit.queue))
-		case <-time.After(5 * time.Millisecond):
-		}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-deadline:
+		return fmt.Errorf("context audit flush timed out")
 	}
 }
 
@@ -316,9 +327,15 @@ func (c *Client) emitContextFetch(ctx context.Context, in ContextFetchInput) {
 		CreatedBy:   in.CallerID,
 	}
 
+	// inflight.Add must happen before the send so a Flush that runs
+	// between Add and a successful send still observes the in-flight
+	// row. On a drop (queue full) the Add is reversed so the WaitGroup
+	// counter stays accurate.
+	c.audit.inflight.Add(1)
 	select {
 	case c.audit.queue <- contextAuditJob{entry: entry, now: now}:
 	default:
+		c.audit.inflight.Done()
 		if c.deps.Logger != nil {
 			c.deps.Logger.Warn().
 				Str("verb", in.Verb).

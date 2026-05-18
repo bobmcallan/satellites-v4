@@ -386,7 +386,19 @@ function storyPanel() {
             this.$watch('query', () => { applyStoryOrder(this.$el, this.tokens.order); });
             // Apply once on mount so any initial query (e.g. via #hash) takes effect.
             this.$nextTick(() => { applyStoryOrder(this.$el, this.tokens.order); });
-            this._attachRealtimeBridge();
+            // sty_7667c9bc — the shared realtime_bridge owns the WS
+            // connection and dispatches CustomEvents per entity. The
+            // panel just listens and patches its own DOM.
+            const self = this;
+            document.addEventListener('satellites:realtime:story', function (ev) {
+                self._applyStoryEvent({ Kind: ev.detail.kind, Data: ev.detail.payload });
+            });
+            document.addEventListener('satellites:realtime:task', function (ev) {
+                self._applyTaskEvent({ Kind: ev.detail.kind, Data: ev.detail.payload });
+            });
+            document.addEventListener('satellites:realtime:ledger', function (ev) {
+                self._applyLedgerEvent({ Kind: ev.detail.kind, Data: ev.detail.payload });
+            });
         },
         // sty_a34cd88f + sty_43d72112 — seed this.expanded from the
         // first sty_ token in the comma-separated `?expand=` list so
@@ -407,7 +419,10 @@ function storyPanel() {
             } catch (err) { /* best effort */ }
         },
         destroy() {
-            if (this._ws && typeof this._ws.close === 'function') { this._ws.close(); }
+            // sty_7667c9bc — the realtime_bridge owns the WS lifecycle.
+            // Panel teardown is a no-op for connection state; the
+            // bridge-dispatched CustomEvent listeners attached in init()
+            // are GC'd when the page unloads.
         },
         // sty_1d6751e9 — operator status override (per-row + bulk). The
         // POST endpoint /api/stories/{id}/status takes {status, reason}
@@ -469,68 +484,20 @@ function storyPanel() {
                 return { ok: false, status: 0, body: String(err) };
             }
         },
-        // sty_af303c26 (focused slice) — open a workspace-scoped WebSocket
-        // and apply `story.<status>` events to the matching story row in
-        // place. Existing `internal/story/emit.go` already publishes the
-        // event on every UpdateStatus; we just patch the DOM in
-        // < 500 ms. Document/contract/ledger panels are not yet wired —
-        // they ship in the realtime epic.
-        _attachRealtimeBridge() {
-            if (!window.SATELLITES_WS || !window.SATELLITES_WS.workspaceId) { return; }
-            if (!window.SatellitesWS) { return; }
-            const projectID = this._readProjectID();
-            if (!projectID) { return; }
-            const self = this;
-            this._ws = new window.SatellitesWS({
-                workspaceId: window.SATELLITES_WS.workspaceId,
-                projectId: projectID,
-                debug: !!window.SATELLITES_WS.debug,
-                onEvent: function (ev) { self._applyEvent(ev, projectID); },
-            });
-            this._ws.connect();
-        },
-        _readProjectID() {
-            const host = document.querySelector('[data-project-id]');
-            return host ? (host.dataset.projectId || '') : '';
-        },
-        // sty_f4b87ea3 — single dispatch for the workspace WS frame.
-        // sty_a03449d1 retired contract_instance.* events (the rows
-        // are gone) and consumes task.<status> events instead — the
-        // task chain IS the workflow, so each task transition patches
-        // the matching <tr> in place. Successor tasks minted with
-        // prior_task_id (the retry chain) are appended in created_at
-        // order.
-        _applyEvent(ev, projectID) {
-            if (!ev || !ev.Kind) { return; }
-            // sty_ec83484f: route only known story.<status> kinds into
-            // _applyStoryEvent. The previous indexOf('story.') predicate
-            // let story.activity.append (sty_e55f335e) corrupt the
-            // status pill via the prefix-strip in _applyStoryEvent.
-            if (STORY_STATUS_KINDS.has(ev.Kind)) {
-                this._applyStoryEvent(ev, projectID);
-                return;
-            }
-            // task.* branch untouched here — sibling sty_08fc8d20 owns
-            // the task-side discipline sweep.
-            if (ev.Kind.indexOf('task.') === 0) {
-                this._applyTaskEvent(ev, projectID);
-                return;
-            }
-            // sty_9f658001 slice 3: explicit-kind matching only — no
-            // substring/startsWith derivation. Cf sty_ec83484f's lesson
-            // (the prefix-strip antipattern at _applyStoryEvent).
-            if (ev.Kind === 'ledger.append') {
-                this._applyLedgerEvent(ev, projectID);
-                return;
-            }
-        },
+        // sty_7667c9bc — the per-entity listeners installed in init()
+        // route inbound CustomEvents to the patcher fns below. Kind
+        // filtering inside each patcher remains the panel's
+        // responsibility (story-status-only via STORY_STATUS_KINDS,
+        // ledger.append-only for context-audit). The workspace-scoped
+        // WS connection is owned by realtime_bridge.js.
         // _applyLedgerEvent surfaces a fresh kind:context-fetch row on
         // the Context audit panel (sty_9f658001 slice 3). Reads the
         // event's tag set; when the row carries kind:context-fetch AND
         // matches the currently-rendered story, appends a summary row
         // and bumps the counters. Off-page or off-story events are
         // no-op.
-        _applyLedgerEvent(ev, projectID) {
+        _applyLedgerEvent(ev) {
+            if (!ev || ev.Kind !== 'ledger.append') { return; }
             const data = ev.Data || ev.data || {};
             const tags = Array.isArray(data.tags) ? data.tags : [];
             let isContextFetch = false;
@@ -585,7 +552,8 @@ function storyPanel() {
                 }
             }
         },
-        _applyStoryEvent(ev, projectID) {
+        _applyStoryEvent(ev) {
+            if (!ev || !STORY_STATUS_KINDS.has(ev.Kind)) { return; }
             const data = ev.Data || ev.data || {};
             const storyID = data.story_id;
             if (!storyID) { return; }
@@ -707,7 +675,8 @@ function storyPanel() {
         // keyed by data-task-id; new task ids append a skeleton row.
         // Events for unrendered stories (panel filtered out, story not
         // expanded) find no host and silently drop.
-        _applyTaskEvent(ev, projectID) {
+        _applyTaskEvent(ev) {
+            if (!ev || !ev.Kind || ev.Kind.indexOf('task.') !== 0) { return; }
             const data = ev.Data || ev.data || {};
             const storyID = data.story_id;
             const taskID = data.task_id;

@@ -38,6 +38,7 @@
     {{end}}
     <div class="nav-spacer"></div>
     {{if .WSConfig.WorkspaceID}}
+    <div x-data="realtimeBridge" data-testid="realtime-bridge" hidden></div>
     <div class="ws-indicator" x-data="wsIndicator" :class="indicatorClass">
       <button type="button" class="ws-indicator-btn" @click="toggleDebug" :title="statusText" :aria-label="statusText">
         <span class="ws-dot" aria-hidden="true"></span>

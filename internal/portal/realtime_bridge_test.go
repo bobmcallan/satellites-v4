@@ -1,15 +1,15 @@
 // Regression for sty_af303c26 (focused slice) — the project page must
-// expose the data-project-id host attribute that the storyPanel Alpine
-// factory reads to scope incoming WS events, plus the WSConfig
-// bootstrap that head.html turns into window.SATELLITES_WS. Without
-// either, the realtime bridge degrades silently and panels stay stale.
+// expose the data-project-id host attribute that the realtime bridge
+// reads to scope incoming WS events, plus the WSConfig bootstrap that
+// head.html turns into window.SATELLITES_WS. Without either, the
+// realtime bridge degrades silently and panels stay stale.
 //
-// sty_a03449d1 added WS-driven task-row patching: the bridge listens
-// for task.<status> events scoped to a visible story, patches the
-// matching <tr data-task-id=…> in place, and appends a skeleton row
-// for fresh tasks minted with prior_task_id (the retry chain). The JS
-// source is asserted alongside the SSR markup to keep both ends in
-// lockstep.
+// sty_a03449d1 added WS-driven task-row patching; sty_7667c9bc moved
+// the WS subscription out of storyPanel into the shared
+// pages/static/realtime_bridge.js module. The storyPanel now subscribes
+// to satellites:realtime:<entity> CustomEvents dispatched by the
+// bridge; the per-panel `new SatellitesWS(` site and the
+// `_attachRealtimeBridge` helper are gone.
 package portal
 
 import (
@@ -19,9 +19,41 @@ import (
 	"testing"
 	"time"
 
+	satarbor "github.com/bobmcallan/satellites/internal/arbor"
 	"github.com/bobmcallan/satellites/internal/auth"
+	"github.com/bobmcallan/satellites/internal/codeindex"
 	"github.com/bobmcallan/satellites/internal/config"
+	"github.com/bobmcallan/satellites/internal/document"
+	"github.com/bobmcallan/satellites/internal/ledger"
+	"github.com/bobmcallan/satellites/internal/project"
+	"github.com/bobmcallan/satellites/internal/repo"
+	"github.com/bobmcallan/satellites/internal/story"
+	"github.com/bobmcallan/satellites/internal/task"
+	"github.com/bobmcallan/satellites/internal/workspace"
 )
+
+// newPortalFullStack mints a Portal wired against the workspace store
+// (needed so buildWSConfig can resolve a non-empty WorkspaceID and the
+// {{if .WSConfig.WorkspaceID}} head.html guard opens to emit the
+// realtime bootstrap). Returns the dependencies the bridge tests need
+// to seed an authenticated request.
+func newPortalFullStack(t *testing.T, cfg *config.Config) (*Portal, *auth.MemoryUserStore, *auth.MemorySessionStore, *project.MemoryStore, *workspace.MemoryStore) {
+	t.Helper()
+	users := auth.NewMemoryUserStore()
+	sessions := auth.NewMemorySessionStore()
+	projects := project.NewMemoryStore()
+	ledgerStore := ledger.NewMemoryStore()
+	stories := story.NewMemoryStore(ledgerStore)
+	docs := document.NewMemoryStore()
+	tasks := task.NewMemoryStore()
+	repos := repo.NewMemoryStore()
+	ws := workspace.NewMemoryStore()
+	p, err := New(cfg, satarbor.New("info"), sessions, users, projects, ledgerStore, stories, tasks, docs, repos, codeindex.NewStub(), ws, time.Now())
+	if err != nil {
+		t.Fatalf("portal.New: %v", err)
+	}
+	return p, users, sessions, projects, ws
+}
 
 func TestProjectDetail_RealtimeBridgeWiring(t *testing.T) {
 	t.Parallel()
@@ -46,23 +78,28 @@ func TestProjectDetail_RealtimeBridgeWiring(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
 
-	// data-project-id is what the storyPanel factory reads to scope events.
+	// data-project-id is what the realtime bridge reads to scope events.
 	if !strings.Contains(body, `data-project-id="`+proj.ID+`"`) {
 		t.Errorf("project page missing data-project-id host attribute (sty_af303c26 bridge cannot scope without it)")
 	}
 }
 
-// sty_a03449d1: the realtime bridge consumes task.<status> events
-// (not contract_instance.* — those are gone). Assert the bridge
-// source carries the new dispatch arm, the patcher selector keys on
-// data-task-id, and the contract_instance arm is removed.
+// sty_a03449d1: task-row patching keeps using data-task-id. sty_7667c9bc
+// moved the dispatch into the shared bridge; the storyPanel now sees
+// task events as `satellites:realtime:task` CustomEvents and the
+// _applyTaskEvent patcher still selects rows by data-task-id.
+// Assert the bridge source carries the CustomEvent listener, the
+// task-row patcher exists, and the legacy storyPanel WS plumbing is
+// gone.
 func TestRealtimeBridge_ConsumesTaskEvents(t *testing.T) {
 	t.Parallel()
 	source := readCommonJS(t)
 
-	// The dispatch must route task.* events to a dedicated handler.
-	if !strings.Contains(source, `ev.Kind.indexOf('task.') === 0`) {
-		t.Errorf("bridge dispatch missing task.* prefix check; portal will drop task transitions")
+	// sty_7667c9bc — the shared realtime_bridge dispatches CustomEvents.
+	// The panel listens for `satellites:realtime:task` and routes into
+	// _applyTaskEvent.
+	if !strings.Contains(source, `addEventListener('satellites:realtime:task'`) {
+		t.Errorf("storyPanel missing satellites:realtime:task listener; task transitions will not patch in place")
 	}
 	if !strings.Contains(source, `_applyTaskEvent`) {
 		t.Errorf("bridge missing _applyTaskEvent handler; task rows will not patch in place")
@@ -71,15 +108,105 @@ func TestRealtimeBridge_ConsumesTaskEvents(t *testing.T) {
 		t.Errorf("task patcher must select rows by data-task-id; ci_id is retired")
 	}
 
+	// sty_7667c9bc — the storyPanel-owned WS connection is gone. The
+	// realtime_bridge owns the single SatellitesWS per page.
+	if strings.Contains(source, `_attachRealtimeBridge`) {
+		t.Errorf("storyPanel still defines _attachRealtimeBridge; sty_7667c9bc moves the bridge to realtime_bridge.js")
+	}
+	if strings.Contains(source, `new window.SatellitesWS(`) || strings.Contains(source, `new SatellitesWS(`) {
+		t.Errorf("storyPanel still constructs SatellitesWS directly; sty_7667c9bc moves the WS owner to realtime_bridge.js")
+	}
+
 	// The retired contract_instance arm must NOT be reachable —
 	// otherwise stale events would still patch nothing useful.
-	if strings.Contains(source, `ev.Kind.indexOf('contract_instance.')`) {
-		t.Errorf("bridge still dispatches contract_instance.* events; should be removed in sty_a03449d1")
-	}
 	if strings.Contains(source, `_applyContractEvent`) {
 		t.Errorf("bridge still defines _applyContractEvent; the handler is replaced by _applyTaskEvent")
 	}
 	if strings.Contains(source, `_appendContractRow`) {
 		t.Errorf("bridge still defines _appendContractRow; replaced by _appendTaskRow")
+	}
+}
+
+// sty_7667c9bc — head.html must emit the realtime route table inside
+// the existing WSConfig guard so the shared bridge can resolve
+// kind → entity without a runtime fetch. The route table has seven
+// entries today (story, task, ledger, document, contract, repo,
+// project); the test asserts the prefix + entity pairs are present.
+func TestProjectDetail_RealtimeRoutesEmbedded(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Env: "dev", DevMode: true}
+	p, users, sessions, projects, workspaces := newPortalFullStack(t, cfg)
+	mux := http.NewServeMux()
+	p.Register(mux)
+
+	user := auth.User{ID: "u_alice", Email: "alice@local"}
+	users.Add(user)
+	now := time.Now().UTC()
+	ws, _ := workspaces.Create(t.Context(), user.ID, "alpha", now)
+	proj, _ := projects.Create(t.Context(), user.ID, ws.ID, "alpha-1", now)
+	sess, _ := sessions.Create(user.ID, auth.DefaultSessionTTL)
+
+	req := httptest.NewRequest(http.MethodGet, "/projects/"+proj.ID, nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: sess.ID})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+
+	if !strings.Contains(body, `window.SATELLITES_REALTIME_ROUTES`) {
+		t.Fatalf("project page missing window.SATELLITES_REALTIME_ROUTES bootstrap; the bridge cannot route events")
+	}
+	if !strings.Contains(body, `<script src="/static/realtime_bridge.js`) {
+		t.Errorf("project page does not load realtime_bridge.js")
+	}
+	// The realtime mount point is in nav.html — every authenticated
+	// page gets it.
+	if !strings.Contains(body, `x-data="realtimeBridge"`) {
+		t.Errorf("project page missing the realtime bridge Alpine mount point")
+	}
+	// Each kind_prefix / entity pair must appear in the embedded JSON.
+	wantPairs := []struct{ prefix, entity string }{
+		{"story.", "story"},
+		{"task.", "task"},
+		{"ledger.", "ledger"},
+		{"document.", "document"},
+		{"contract.", "contract"},
+		{"repo.", "repo"},
+		{"project.", "project"},
+	}
+	for _, w := range wantPairs {
+		needle := `"kind_prefix":"` + w.prefix + `","entity":"` + w.entity + `"`
+		if !strings.Contains(body, needle) {
+			t.Errorf("project page missing realtime route entry %q in embedded JSON", needle)
+		}
+	}
+}
+
+// sty_7667c9bc — the project_ledger page must also expose
+// data-project-id so the shared bridge can scope its events the same
+// way it does on /projects/{id}. Without it, the bridge would dispatch
+// every workspace event the user is authorised to see and the ledger
+// panel would patch foreign-project rows.
+func TestProjectLedger_DataProjectIDHostAttribute(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{Env: "dev", DevMode: true}
+	p, users, sessions, projects, workspaces := newPortalFullStack(t, cfg)
+	mux := http.NewServeMux()
+	p.Register(mux)
+
+	user := auth.User{ID: "u_alice", Email: "alice@local"}
+	users.Add(user)
+	now := time.Now().UTC()
+	ws, _ := workspaces.Create(t.Context(), user.ID, "alpha", now)
+	proj, _ := projects.Create(t.Context(), user.ID, ws.ID, "alpha-1", now)
+	sess, _ := sessions.Create(user.ID, auth.DefaultSessionTTL)
+
+	req := httptest.NewRequest(http.MethodGet, "/projects/"+proj.ID+"/ledger", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: sess.ID})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+
+	if !strings.Contains(body, `data-project-id="`+proj.ID+`"`) {
+		t.Errorf("ledger page missing data-project-id host attribute (bridge cannot scope without it)")
 	}
 }

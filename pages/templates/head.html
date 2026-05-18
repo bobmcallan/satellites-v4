@@ -52,6 +52,7 @@
     workspaceId: {{.WSConfig.WorkspaceID}},
     debug: {{.WSConfig.Debug}}
   };
+  window.SATELLITES_REALTIME_ROUTES = {{.WSConfig.RealtimeRoutes}};
 </script>
 {{end}}
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -62,6 +63,7 @@
 <script src="/static/portal_alpine.js?v={{.Version}}"></script>
 {{if .WSConfig.WorkspaceID}}
 <script src="/static/ws.js?v={{.Version}}"></script>
+<script src="/static/realtime_bridge.js?v={{.Version}}"></script>
 {{end}}
 <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/csp@3.15.11/dist/cdn.min.js"></script>
 {{end}}

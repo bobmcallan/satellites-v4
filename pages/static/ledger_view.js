@@ -78,7 +78,13 @@
                 this.filters.tags = fromURL.tags;
                 this.tagInput = fromURL.tags.join(',');
                 this.hydrateFromSSR();
-                this.attachWS();
+                // sty_7667c9bc — the shared realtime_bridge owns the WS
+                // connection. Listen for ledger CustomEvents dispatched
+                // by the bridge and patch our own rows.
+                const self = this;
+                document.addEventListener('satellites:realtime:ledger', function (e) {
+                    self.applyEvent({ Kind: e.detail.kind, Data: e.detail.payload });
+                });
                 // Persist tailing across page loads.
                 try {
                     const stored = window.localStorage.getItem('ledger.tailing');
@@ -148,20 +154,6 @@
                         break;
                     }
                 }
-            },
-
-            attachWS() {
-                if (!window.SATELLITES_WS || !window.SATELLITES_WS.workspaceId) { return; }
-                if (!window.SatellitesWS) { return; }
-                const cfg = window.SATELLITES_WS;
-                const self = this;
-                this._ws = new window.SatellitesWS({
-                    workspaceId: cfg.workspaceId,
-                    debug: cfg.debug,
-                    onStatusChange: function (next) { self.wsStatus = next; },
-                    onEvent: function (ev) { self.applyEvent(ev); }
-                });
-                this._ws.connect();
             },
 
             applyEvent(ev) {

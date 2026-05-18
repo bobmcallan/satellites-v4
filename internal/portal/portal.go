@@ -163,17 +163,24 @@ func buildPageTitle(active wsChip, projectName, pageName string) string {
 // WorkspaceID is empty on unauthenticated pages (login), causing the
 // script bootstrap + connection-indicator widget to render as no-ops.
 // Debug flips the debug panel behind `?debug=true`.
+//
+// RealtimeRoutes (sty_7667c9bc) is the JSON-encoded kind → entity table
+// rendered into window.SATELLITES_REALTIME_ROUTES so the shared
+// realtime bridge can dispatch satellites:realtime:<entity> events
+// without a runtime fetch.
 type WSConfig struct {
-	WorkspaceID string
-	Debug       bool
+	WorkspaceID    string
+	Debug          bool
+	RealtimeRoutes template.JS
 }
 
 // buildWSConfig resolves the websocket bootstrap payload from the
 // active workspace and the `?debug=true` query param.
 func buildWSConfig(active wsChip, r *http.Request) WSConfig {
 	return WSConfig{
-		WorkspaceID: active.ID,
-		Debug:       r.URL.Query().Get("debug") == "true",
+		WorkspaceID:    active.ID,
+		Debug:          r.URL.Query().Get("debug") == "true",
+		RealtimeRoutes: realtimeRoutesJSON(),
 	}
 }
 

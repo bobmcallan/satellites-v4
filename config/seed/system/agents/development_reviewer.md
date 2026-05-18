@@ -196,6 +196,19 @@ corresponding `.version` section bump in the same diff, return
 > list: `<list>`); `git diff HEAD~1..HEAD -- .version` shows no
 > bump for the section.
 
+### 10. Workflow shape
+
+Cite **pr_lifecycle_shape**. `task_walk(story_id).lifecycle_status`
+returns `on_shape` or a `drifted:<reason>` value computed against
+`default_lifecycle`. A drifted chain is NOT an automatic reject —
+the signal is advisory. Reject only when the drift blocks judgment
+(e.g. `drifted:review_skipped` on a develop slice that touched a
+substrate primitive, where the missing review prevents the
+reviewer from verifying the rubric-updates checklist named by
+gate §8). Treat `drifted:phase_unknown:<action>` as a prompt to
+ask the orchestrator whether the unknown action belongs in
+`default_lifecycle`.
+
 ## Verdict format
 
 Same as `story_reviewer`:

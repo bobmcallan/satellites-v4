@@ -3,8 +3,9 @@
 This package is the browser-driven follow-up coverage for the portal
 connection indicator widget shipped in story_ac3e4057 (10.4). It boots
 the satellites server in process using the production constructors
-(`portal.New`, `wshandler.New`, `hub.NewAuthHub`) wired against the
-package-internal memory stores, then drives a headless Chromium via
+(`portal.New`, `wshandler.New`) wired against the package-internal
+memory stores plus a harness-local `wshandler.EventSource` stub
+(`harness_source.go`), then drives a headless Chromium via
 `github.com/chromedp/chromedp` to assert the widget's state machine
 end-to-end.
 
@@ -31,7 +32,7 @@ the underlying error. The two non-chromedp smokes (`TestHarness_Boots`,
 |---|---|
 | `TestHarness_Boots` | Harness wiring + indicator markup on the landing page |
 | `TestHarness_DisableEnableWS` | `/ws` kill-switch contract |
-| `TestIndicator_LiveOnConnect` | Sanity: client connects, AuthHub admits, dot turns green |
+| `TestIndicator_LiveOnConnect` | Sanity: client connects, EventSource admits, dot turns green |
 | `TestIndicator_DropToReconnecting_RecoverGreen` | AC4 — server outage → amber → green |
 | `TestIndicator_ProlongedOutage_TurnsRed` | AC5 — prolonged outage → red + retry button |
 | `TestIndicator_RetryButton_Recovers` | AC6 — click retry → reconnects |
@@ -82,5 +83,5 @@ follow-up infrastructure story should:
 3. Decide artifact-upload policy for failure screenshots / DOM dumps.
 
 Until that story lands, run the suite locally before merging changes
-that touch `pages/static/ws.js`, `pages/templates/nav.html`,
-`internal/wshandler/`, or `internal/hub/`.
+that touch `pages/static/ws.js`, `pages/templates/nav.html`, or
+`internal/wshandler/`.

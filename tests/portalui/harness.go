@@ -5,10 +5,11 @@
 // 10.4 widget shipped in story_ac3e4057).
 //
 // Tests in this package boot an in-process satellites server using the
-// production constructors (auth.Handlers, portal.New, wshandler.New,
-// hub.NewAuthHub) wired against the package-internal memory stores, then
-// drive a headless Chromium via github.com/chromedp/chromedp to assert
-// the widget's state transitions.
+// production constructors (auth.Handlers, portal.New, wshandler.New)
+// wired against the package-internal memory stores plus a harness-local
+// wshandler.EventSource stub (harness_source.go), then drive a headless
+// Chromium via github.com/chromedp/chromedp to assert the widget's
+// state transitions.
 //
 // The package is gated by the `portalui` build tag so the chromedp + ws
 // transitive deps stay out of the default `go test ./...` run. Invoke
@@ -38,12 +39,10 @@ import (
 	"github.com/bobmcallan/satellites/internal/config"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/httpserver"
-	"github.com/bobmcallan/satellites/internal/hub"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/portal"
 	"github.com/bobmcallan/satellites/internal/project"
 	"github.com/bobmcallan/satellites/internal/repo"
-	"github.com/bobmcallan/satellites/internal/rolegrant"
 	"github.com/bobmcallan/satellites/internal/story"
 	"github.com/bobmcallan/satellites/internal/task"
 	"github.com/bobmcallan/satellites/internal/workspace"
@@ -62,7 +61,11 @@ const HarnessProjectName = "harness-test"
 type Harness struct {
 	Server      *httptest.Server
 	BaseURL     string
-	AuthHub     *hub.AuthHub
+	// Source is the harness-local wshandler.EventSource — the test
+	// substitute for production SurrealLiveSource (sty_010a0543).
+	// Tests fan events out through Source.Publish (called via
+	// PublishEvent / UpdateStoryStatus).
+	Source      *harnessSource
 	UserID      string
 	WorkspaceID string
 
@@ -85,7 +88,6 @@ type Harness struct {
 	Tasks     *task.MemoryStore
 	Documents *document.MemoryStore
 	Repos     *repo.MemoryStore
-	Grants    *rolegrant.MemoryStore
 
 	// wsEnabled gates the /ws upgrade. When false, /ws returns 503 and any
 	// previously upgraded conns are closed (see DisableWS).
@@ -149,7 +151,6 @@ func StartHarness(t *testing.T) *Harness {
 	docStore := document.NewMemoryStore()
 	taskStore := task.NewMemoryStore()
 	repoStore := repo.NewMemoryStore()
-	grantStore := rolegrant.NewMemoryStore(docStore)
 
 	portalHandlers, err := portal.New(cfg, logger, sessions, users, projectStore, ledgerStore, storyStore, taskStore, docStore, repoStore, codeindex.NewStub(), wsStore, startedAt)
 	if err != nil {
@@ -164,11 +165,10 @@ func StartHarness(t *testing.T) *Harness {
 		States:   auth.NewStateStore(10 * time.Minute),
 	}
 
-	sharedHub := hub.New()
-	authHub := hub.NewAuthHub(sharedHub, wsStore, &noopMismatchAudit{})
+	source := newHarnessSource(wsStore)
 
 	wsHandlers := wshandler.New(wshandler.Deps{
-		AuthHub: authHub,
+		Source: source,
 		Sessions: wshandler.SessionResolverFunc(func(_ context.Context, sid string) (auth.User, error) {
 			sess, err := sessions.Get(sid)
 			if err != nil {
@@ -196,7 +196,7 @@ func StartHarness(t *testing.T) *Harness {
 	wrapped := httpserver.SecurityHeaders(false, mux)
 
 	h := &Harness{
-		AuthHub:      authHub,
+		Source:       source,
 		AuthHandlers: authHandlers,
 		UserID:       user.ID,
 		WorkspaceID:  ws.ID,
@@ -206,7 +206,6 @@ func StartHarness(t *testing.T) *Harness {
 		Tasks:        taskStore,
 		Documents:    docStore,
 		Repos:        repoStore,
-		Grants:       grantStore,
 		tracker:      newConnTracker(),
 	}
 	h.wsEnabled.Store(true)
@@ -274,15 +273,56 @@ func (h *Harness) EnableWS() {
 	h.wsEnabled.Store(true)
 }
 
-// PublishEvent fans an event onto the workspace's hub topic so debug-panel
-// tests can assert the indicator's recent-events buffer fills.
+// PublishEvent fans an event onto the workspace's wshandler topic so
+// debug-panel + bridge tests can assert the indicator's recent-events
+// buffer fills and page-side handlers observe the wire payload.
+//
+// The signature accepts `any` for source compatibility with the four
+// existing callsites — each already passes a map[string]any literal.
+// The harness source's project_id-narrowed subscribers honour
+// data["project_id"] (sty_fbcde932) so callers that carry it scope to
+// project-bridged subscribers; others fan to every workspace subscriber.
 func (h *Harness) PublishEvent(kind string, data any) {
-	topic := "ws:" + h.WorkspaceID
-	h.AuthHub.Publish(context.Background(), topic, hub.Event{
-		Kind:        kind,
-		WorkspaceID: h.WorkspaceID,
-		Data:        data,
-	})
+	payload, _ := data.(map[string]any)
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	projectID, _ := payload["project_id"].(string)
+	h.Source.Publish(h.WorkspaceID, projectID, kind, payload)
+}
+
+// UpdateStoryStatus performs the in-process status mutation and fans
+// out the wire-translated story.<target> event over the harness
+// EventSource so the chromedp bridge sees the same payload shape
+// internal/wshandler/translate.go::translateStory produces in
+// production. The MemoryStore does not couple to surreallive, so the
+// test goroutine must publish the wire event explicitly (sty_f52d540e,
+// helper rewired onto Source in sty_fa0cc6f3).
+func (h *Harness) UpdateStoryStatus(t *testing.T, storyID, target string) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	memberships := []string{h.WorkspaceID}
+	updated, err := h.Stories.UpdateStatus(ctx, storyID, target, h.UserID, now, memberships)
+	if err != nil {
+		t.Fatalf("UpdateStoryStatus(%s → %s): %v", storyID, target, err)
+	}
+	tags := updated.Tags
+	if tags == nil {
+		tags = []string{}
+	}
+	payload := map[string]any{
+		"workspace_id": updated.WorkspaceID,
+		"project_id":   updated.ProjectID,
+		"story_id":     updated.ID,
+		"title":        updated.Title,
+		"status":       updated.Status,
+		"priority":     updated.Priority,
+		"category":     updated.Category,
+		"tags":         tags,
+		"updated_at":   updated.UpdatedAt.Format(time.RFC3339),
+	}
+	h.Source.Publish(updated.WorkspaceID, updated.ProjectID, "story."+target, payload)
 }
 
 // gateWS wraps the wshandler with the kill-switch + tracker. The handler
@@ -339,12 +379,6 @@ func (t *connTracker) closeAll() {
 		_ = c.Close()
 	}
 }
-
-// noopMismatchAudit satisfies hub.MismatchAudit for tests that don't care
-// about workspace-mismatch evidence.
-type noopMismatchAudit struct{}
-
-func (noopMismatchAudit) HubMismatch(_ context.Context, _ hub.Event, _ string) {}
 
 // Logger returns the harness's arbor logger; helper for tests that want
 // to scope additional log output.

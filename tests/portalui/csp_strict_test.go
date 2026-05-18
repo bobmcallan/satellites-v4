@@ -13,7 +13,6 @@ import (
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
 	"github.com/bobmcallan/satellites/internal/repo"
-	"github.com/bobmcallan/satellites/internal/rolegrant"
 )
 
 // TestCSPStrict exercises one user gesture per Alpine page under the
@@ -307,54 +306,4 @@ func TestCSPStrict(t *testing.T) {
 		}
 	})
 
-	t.Run("grants_view_renders", func(t *testing.T) {
-		h := StartHarness(t)
-
-		now := time.Now().UTC()
-		ctx := context.Background()
-		role, err := h.Documents.Create(ctx, document.Document{
-			WorkspaceID: h.WorkspaceID, Type: "role", Scope: "system",
-			Name: "csp-role", Status: "active", Body: "role body",
-		}, now)
-		if err != nil {
-			t.Fatalf("seed role: %v", err)
-		}
-		agent, err := h.Documents.Create(ctx, document.Document{
-			WorkspaceID: h.WorkspaceID, Type: "agent", Scope: "system",
-			Name: "csp-agent", Status: "active", Body: "agent body",
-		}, now)
-		if err != nil {
-			t.Fatalf("seed agent: %v", err)
-		}
-		g, err := h.Grants.Create(ctx, rolegrant.RoleGrant{
-			WorkspaceID: h.WorkspaceID,
-			RoleID:      role.ID, AgentID: agent.ID,
-			GranteeKind: "session", GranteeID: "sess_csp_strict",
-		}, now)
-		if err != nil {
-			t.Fatalf("seed grant: %v", err)
-		}
-
-		parent, cancel := withTimeout(context.Background(), browserDeadline)
-		defer cancel()
-		browserCtx, cancelBrowser := newChromedpContext(t, parent)
-		defer cancelBrowser()
-
-		if err := installSessionCookie(browserCtx, h); err != nil {
-			t.Fatalf("install session cookie: %v", err)
-		}
-
-		var bodyHTML string
-		if err := chromedp.Run(browserCtx,
-			chromedp.Navigate(h.BaseURL+"/grants"),
-			chromedp.WaitVisible(`[data-testid="grants-page"]`, chromedp.ByQuery),
-			chromedp.Sleep(400*time.Millisecond),
-			chromedp.OuterHTML("html", &bodyHTML, chromedp.ByQuery),
-		); err != nil {
-			t.Fatalf("grants view: %v", err)
-		}
-		if !strings.Contains(bodyHTML, g.ID) {
-			t.Errorf("grants body missing seeded grant id %s", g.ID)
-		}
-	})
 }

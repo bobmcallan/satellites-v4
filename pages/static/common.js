@@ -142,6 +142,12 @@ function storyPanel() {
     return {
         query: '',
         expanded: '',
+        // expandedTasks holds the set of expanded task ids within the
+        // currently-expanded story-detail row. Per-task expansion is
+        // independent of story expansion; collapsing the story does not
+        // discard this map so re-expanding the story preserves the
+        // task-row open state.
+        expandedTasks: {},
         // Reactive bump counter for realtime row patches. Read from
         // matchesRow so x-show re-runs when bumped.
         _filterTick: 0,
@@ -216,6 +222,24 @@ function storyPanel() {
             if (!id) { return; }
             this.expanded = this.expanded === id ? '' : id;
             this._syncExpandToURL();
+        },
+        // toggleTask flips a task-row's detail visibility within the
+        // currently-expanded story panel. `.stop` on the @click in the
+        // template prevents the click from bubbling to the parent
+        // story-row's toggleRow.
+        toggleTask(ev) {
+            const target = ev && ev.currentTarget;
+            const taskID = (target && target.dataset && target.dataset.taskId) || '';
+            if (!taskID) { return; }
+            const next = Object.assign({}, this.expandedTasks);
+            if (next[taskID]) { delete next[taskID]; } else { next[taskID] = true; }
+            this.expandedTasks = next;
+        },
+        // isTaskExpanded reads the detail-row's data-detail-for slot
+        // and returns whether its task id is in the expanded set.
+        isTaskExpanded(el) {
+            const id = (el && el.dataset && el.dataset.detailFor) || '';
+            return !!id && !!this.expandedTasks[id];
         },
         // sty_a34cd88f + sty_43d72112 — mirror this.expanded into the
         // URL via history.replaceState so reloads + bookmarks keep the
@@ -623,15 +647,18 @@ function storyPanel() {
                 table = document.createElement('table');
                 table.className = 'panel-table panel-table-tasks';
                 table.setAttribute('data-testid', 'story-tasks-' + storyID);
-                table.innerHTML = '<thead><tr><th class="col-seq">#</th><th class="col-kind">kind</th><th class="col-name">action</th><th class="col-status">status</th><th class="col-iter">iter</th><th class="col-outcome">outcome</th><th class="col-claimed">claimed by</th><th class="col-verdict">verdict</th></tr></thead><tbody></tbody>';
+                table.innerHTML = '<thead><tr><th class="col-id">id</th><th class="col-title">title</th><th class="col-duration">duration</th><th class="col-status">status</th><th class="col-updated">updated</th></tr></thead><tbody></tbody>';
                 host.appendChild(table);
             }
             const tbody = table.querySelector('tbody');
             if (!tbody) { return; }
-            const seq = tbody.querySelectorAll('tr.story-task-row').length + 1;
             const kind = (data && data.kind) ? String(data.kind) : 'work';
             const action = (data && data.action) ? String(data.action) : '';
             const contractName = action.indexOf('contract:') === 0 ? action.substring('contract:'.length) : action;
+            const tags = [];
+            if (kind) { tags.push('kind:' + kind); }
+            if (contractName) { tags.push('action:' + contractName); }
+            const updatedAt = new Date().toISOString();
             const tr = document.createElement('tr');
             tr.className = 'story-task-row' + (status === 'planned' ? ' status-planned' : '');
             tr.dataset.taskId = taskID;
@@ -639,15 +666,18 @@ function storyPanel() {
             tr.dataset.kind = kind;
             tr.setAttribute('data-testid', 'story-task-row-' + taskID);
             tr.setAttribute('data-realtime-updated-at', String(Date.now()));
+            tr.setAttribute('@click.stop', 'toggleTask');
+            let chipsHTML = '';
+            for (let i = 0; i < tags.length; i++) {
+                const safe = this._escape(tags[i]);
+                chipsHTML += '<button type="button" class="tag-chip is-clickable" data-tag="' + safe + '" @click.stop="addTagToQuery" title="Click to filter by this tag">' + safe + '</button>';
+            }
             tr.innerHTML =
-                '<td class="col-seq"><code>#' + seq + '</code></td>' +
-                '<td class="col-kind"><code class="task-kind-' + this._escape(kind) + '">' + this._escape(kind) + '</code></td>' +
-                '<td class="col-name"><code class="ci-name">' + this._escape(contractName) + '</code></td>' +
+                '<td class="col-id"><code>' + this._escape(taskID) + '</code></td>' +
+                '<td class="col-title"><div class="task-row-tags" data-testid="story-task-tags-' + this._escape(taskID) + '">' + chipsHTML + '</div></td>' +
+                '<td class="col-duration"><span class="muted">—</span></td>' +
                 '<td class="col-status"><code class="status-pill status-' + this._escape(status) + '" data-testid="story-task-status-' + this._escape(taskID) + '">' + this._escape(status) + '</code></td>' +
-                '<td class="col-iter"><span class="muted">—</span></td>' +
-                '<td class="col-outcome"><span class="muted">—</span></td>' +
-                '<td class="col-claimed"><span class="muted">—</span></td>' +
-                '<td class="col-verdict"><span class="muted">—</span></td>';
+                '<td class="col-updated muted">' + this._escape(updatedAt) + '</td>';
             tbody.appendChild(tr);
         },
         _escape(s) {
@@ -661,83 +691,6 @@ function storyPanel() {
     };
 }
 
-// taskPanel — Alpine scope for /projects/{id}/tasks. SSR-rendered
-// panes are filtered server-side via the form's ?q= submit; the panel
-// only owns click-to-expand row state and tag-chip clicks that append
-// `key:value` to the filter input and resubmit.
-function taskPanel() {
-    return {
-        query: '',
-        expanded: '',
-        init() {
-            const input = this.$el.querySelector('[data-testid="project-tasks-filter-input"]');
-            if (input) { this.query = input.value || ''; }
-            this._readExpandFromURL();
-        },
-        isExpanded(el) {
-            const id = (el && el.dataset && el.dataset.detailFor) || '';
-            return !!id && this.expanded === id;
-        },
-        rowClass(el) {
-            const id = (el && el.dataset && el.dataset.id) || '';
-            return id && this.expanded === id ? 'is-expanded' : '';
-        },
-        toggleRow(ev) {
-            const target = ev && ev.currentTarget;
-            const id = (target && target.dataset && target.dataset.id) || '';
-            if (!id) { return; }
-            this.expanded = this.expanded === id ? '' : id;
-            this._syncExpandToURL();
-        },
-        addTagToQuery(ev) {
-            const target = ev && ev.currentTarget;
-            const tag = (target && target.dataset && target.dataset.tag) || '';
-            if (!tag) { return; }
-            const q = (this.query || '').trim();
-            const parts = q.length ? q.split(/\s+/) : [];
-            if (parts.indexOf(tag) !== -1) { return; }
-            parts.push(tag);
-            this.query = parts.join(' ');
-            // Direct navigation instead of form.submit(): @alpinejs/csp
-            // wraps handlers in a way that swallows the navigation that
-            // form.submit() initiates synchronously. Building the URL
-            // ourselves matches the GET-form's submit semantics (replace
-            // the query string with the form's name=value pairs) and
-            // always navigates.
-            const url = new URL(window.location.href);
-            url.searchParams.set('q', this.query);
-            url.searchParams.delete('expand');
-            window.location.href = url.toString();
-        },
-        _syncExpandToURL() {
-            if (typeof window === 'undefined' || !window.history || typeof window.history.replaceState !== 'function') { return; }
-            try {
-                const url = new URL(window.location.href);
-                const current = (url.searchParams.get('expand') || '')
-                    .split(',').map(s => s.trim()).filter(Boolean);
-                const others = current.filter(t => t.indexOf('task_') !== 0);
-                const next = this.expanded ? others.concat([this.expanded]) : others;
-                if (next.length) { url.searchParams.set('expand', next.join(',')); }
-                else { url.searchParams.delete('expand'); }
-                window.history.replaceState(window.history.state, '', url.toString());
-            } catch (err) { /* best effort */ }
-        },
-        _readExpandFromURL() {
-            if (typeof window === 'undefined' || !window.location) { return; }
-            try {
-                const url = new URL(window.location.href);
-                const tokens = (url.searchParams.get('expand') || '')
-                    .split(',').map(s => s.trim()).filter(Boolean);
-                for (let i = 0; i < tokens.length; i++) {
-                    if (tokens[i].indexOf('task_') === 0) {
-                        this.expanded = tokens[i];
-                        return;
-                    }
-                }
-            } catch (err) { /* best effort */ }
-        },
-    };
-}
 
 // parseStoryQuery splits a story-panel query string into structured
 // tokens. V3 parity (sty_48198f3e):
@@ -984,6 +937,5 @@ document.addEventListener('alpine:init', () => {
     });
     Alpine.data('sectionToggle', sectionToggle);
     Alpine.data('storyPanel', storyPanel);
-    Alpine.data('taskPanel', taskPanel);
     Alpine.data('footerStatus', footerStatus);
 });

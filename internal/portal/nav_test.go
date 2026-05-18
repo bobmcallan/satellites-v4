@@ -75,7 +75,6 @@ func TestNav_DOMOrder(t *testing.T) {
 		`class="nav-brand"`,
 		`<nav class="nav-links">`,
 		`href="/projects"`,
-		`href="/tasks"`,
 		`class="nav-spacer"`,
 		`data-testid="dev-chip"`,
 		`data-testid="nav-hamburger"`,

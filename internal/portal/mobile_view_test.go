@@ -95,10 +95,9 @@ func TestMobileView_TaskFeedAndWalkDensity(t *testing.T) {
 }
 
 // TestMobileView_HamburgerSurfacesPrimaryNavLinks asserts the primary
-// nav links (projects / tasks / config / help) live inside the
-// hamburger dropdown so they're reachable at mobile width — the
-// top-bar .nav-links hide at ≤48rem and would otherwise leave the
-// operator unable to navigate.
+// nav links live inside the hamburger dropdown so they're reachable
+// at mobile width — the top-bar .nav-links hide at ≤48rem and would
+// otherwise leave the operator unable to navigate.
 func TestMobileView_HamburgerSurfacesPrimaryNavLinks(t *testing.T) {
 	t.Parallel()
 	src, err := os.ReadFile("../../pages/templates/nav.html")
@@ -109,7 +108,6 @@ func TestMobileView_HamburgerSurfacesPrimaryNavLinks(t *testing.T) {
 	for _, want := range []string{
 		`data-testid="nav-mobile-links"`,
 		`data-testid="nav-mobile-link-projects"`,
-		`data-testid="nav-mobile-link-tasks"`,
 		`data-testid="nav-mobile-link-documents"`,
 		`data-testid="nav-mobile-link-repo"`,
 		`data-testid="nav-mobile-link-ledger"`,

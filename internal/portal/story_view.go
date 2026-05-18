@@ -13,6 +13,7 @@ package portal
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -73,20 +74,24 @@ type sourceDocLink struct {
 // prior_task_id). VerdictExcerpt carries a short preview of the
 // verdict ledger row when one exists for the row's task_id.
 type taskChainCard struct {
-	ID             string `json:"id"`
-	Sequence       int    `json:"sequence"`
-	Kind           string `json:"kind"`
-	Action         string `json:"action,omitempty"`
-	ContractName   string `json:"contract_name,omitempty"`
-	Status         string `json:"status"`
-	Outcome        string `json:"outcome,omitempty"`
-	Iteration      int    `json:"iteration,omitempty"`
-	ClaimedBy      string `json:"claimed_by,omitempty"`
-	ParentTaskID   string `json:"parent_task_id,omitempty"`
-	PriorTaskID    string `json:"prior_task_id,omitempty"`
-	CreatedAt      string `json:"created_at"`
-	CompletedAt    string `json:"completed_at,omitempty"`
-	VerdictExcerpt string `json:"verdict_excerpt,omitempty"`
+	ID             string   `json:"id"`
+	Sequence       int      `json:"sequence"`
+	Kind           string   `json:"kind"`
+	Action         string   `json:"action,omitempty"`
+	ContractName   string   `json:"contract_name,omitempty"`
+	Tags           []string `json:"tags,omitempty"`
+	Status         string   `json:"status"`
+	Outcome        string   `json:"outcome,omitempty"`
+	Iteration      int      `json:"iteration,omitempty"`
+	ClaimedBy      string   `json:"claimed_by,omitempty"`
+	ParentTaskID   string   `json:"parent_task_id,omitempty"`
+	PriorTaskID    string   `json:"prior_task_id,omitempty"`
+	Duration       string   `json:"duration,omitempty"`
+	CreatedAt      string   `json:"created_at"`
+	ClaimedAt      string   `json:"claimed_at,omitempty"`
+	CompletedAt    string   `json:"completed_at,omitempty"`
+	UpdatedAt      string   `json:"updated_at"`
+	VerdictExcerpt string   `json:"verdict_excerpt,omitempty"`
 }
 
 // verdictCard is one reviewer-verdict row scoped to this story. The
@@ -187,6 +192,7 @@ func taskChainForStory(ctx context.Context, tasks task.Store, ledgerStore ledger
 		return rows[i].CreatedAt.Before(rows[j].CreatedAt)
 	})
 	verdicts := verdictExcerptsByTask(ctx, ledgerStore, projectID, memberships)
+	now := time.Now().UTC()
 	out := make([]taskChainCard, 0, len(rows))
 	for i, t := range rows {
 		card := taskChainCard{
@@ -204,12 +210,90 @@ func taskChainForStory(ctx context.Context, tasks task.Store, ledgerStore ledger
 			CreatedAt:      t.CreatedAt.UTC().Format(time.RFC3339),
 			VerdictExcerpt: verdicts[t.ID],
 		}
+		if t.ClaimedAt != nil {
+			card.ClaimedAt = t.ClaimedAt.UTC().Format(time.RFC3339)
+		}
 		if t.CompletedAt != nil {
 			card.CompletedAt = t.CompletedAt.UTC().Format(time.RFC3339)
 		}
+		card.Duration = humaniseTaskDuration(now, t)
+		card.UpdatedAt = taskUpdatedAt(t).UTC().Format(time.RFC3339)
+		card.Tags = buildTaskChainTags(card)
 		out = append(out, card)
 	}
 	return out
+}
+
+// humaniseTaskDuration formats a coarse wall-clock string sized by the
+// task's current lifecycle state: queue-wait for enqueued/published,
+// run-time-so-far for claimed/in_flight, total run time for closed.
+func humaniseTaskDuration(now time.Time, t task.Task) string {
+	var d time.Duration
+	switch t.Status {
+	case task.StatusEnqueued, task.StatusPublished:
+		d = now.Sub(t.CreatedAt)
+	case task.StatusClaimed, task.StatusInFlight:
+		if t.ClaimedAt == nil {
+			return ""
+		}
+		d = now.Sub(*t.ClaimedAt)
+	case task.StatusClosed:
+		if t.ClaimedAt == nil || t.CompletedAt == nil {
+			return ""
+		}
+		d = t.CompletedAt.Sub(*t.ClaimedAt)
+	default:
+		return ""
+	}
+	if d < 0 {
+		return ""
+	}
+	switch {
+	case d < time.Second:
+		return "<1s"
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
+}
+
+// taskUpdatedAt returns the most recent state-change timestamp:
+// CompletedAt > ClaimedAt > CreatedAt.
+func taskUpdatedAt(t task.Task) time.Time {
+	if t.CompletedAt != nil {
+		return *t.CompletedAt
+	}
+	if t.ClaimedAt != nil {
+		return *t.ClaimedAt
+	}
+	return t.CreatedAt
+}
+
+// buildTaskChainTags returns the key:value chip list rendered inside
+// the task-row's title cell. Tasks have no native title field —
+// the chip row IS the title.
+func buildTaskChainTags(c taskChainCard) []string {
+	tags := make([]string, 0, 4)
+	if c.Kind != "" {
+		tags = append(tags, "kind:"+c.Kind)
+	}
+	if c.ContractName != "" {
+		tags = append(tags, "action:"+c.ContractName)
+	} else if c.Action != "" {
+		tags = append(tags, "action:"+c.Action)
+	}
+	if c.Iteration > 1 {
+		tags = append(tags, fmt.Sprintf("iter:%d", c.Iteration))
+	}
+	if c.Outcome != "" {
+		tags = append(tags, "outcome:"+c.Outcome)
+	}
+	return tags
 }
 
 // verdictExcerptsByTask scans kind:verdict ledger rows and indexes

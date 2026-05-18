@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bobmcallan/satellites/internal/changelog"
 	"github.com/bobmcallan/satellites/internal/document"
@@ -371,6 +372,7 @@ func taskChainCardsForStory(ctx context.Context, tasks task.Store, verdicts map[
 		return nil
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].CreatedAt.Before(rows[j].CreatedAt) })
+	now := time.Now().UTC()
 	out := make([]taskChainCard, 0, len(rows))
 	for i, t := range rows {
 		excerpt := ""
@@ -392,9 +394,15 @@ func taskChainCardsForStory(ctx context.Context, tasks task.Store, verdicts map[
 			CreatedAt:      t.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 			VerdictExcerpt: excerpt,
 		}
+		if t.ClaimedAt != nil {
+			card.ClaimedAt = t.ClaimedAt.UTC().Format("2006-01-02T15:04:05Z07:00")
+		}
 		if t.CompletedAt != nil {
 			card.CompletedAt = t.CompletedAt.UTC().Format("2006-01-02T15:04:05Z07:00")
 		}
+		card.Duration = humaniseTaskDuration(now, t)
+		card.UpdatedAt = taskUpdatedAt(t).UTC().Format("2006-01-02T15:04:05Z07:00")
+		card.Tags = buildTaskChainTags(card)
 		out = append(out, card)
 	}
 	return out

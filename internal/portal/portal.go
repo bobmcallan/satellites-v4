@@ -254,12 +254,9 @@ func (p *Portal) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /projects/{id}/configuration", p.handleProjectConfiguration)
 	mux.HandleFunc("GET /projects/{id}/ledger", p.handleProjectLedger)
 	mux.HandleFunc("GET /projects/{id}/stories/{story_id}", p.handleStoryDetail)
-	mux.HandleFunc("GET /projects/{id}/tasks", p.handleProjectTasks)
 	mux.HandleFunc("GET /stories/{story_id}/walk", p.handleStoryWalk)
 	mux.HandleFunc("GET /api/stories/{story_id}/composite", p.handleStoryComposite)
 	mux.HandleFunc("GET /api/stories/{story_id}/activity", p.handleStoryActivity)
-	mux.HandleFunc("GET /tasks", p.handleTasks)
-	mux.HandleFunc("GET /api/tasks/{task_id}", p.handleTaskDrawer)
 	mux.HandleFunc("GET /ledger", p.handleLedgerRedirect)
 	mux.HandleFunc("GET /mcp", p.handleMCPCatalogue)
 	mux.HandleFunc("GET /projects/{id}/api/ledger", p.handleProjectLedgerJSON)
@@ -938,82 +935,6 @@ func (p *Portal) handleStoryActivity(w http.ResponseWriter, r *http.Request) {
 		Rows:    rows,
 	}); err != nil {
 		p.logger.Error().Str("error", err.Error()).Msg("story activity encode failed")
-	}
-}
-
-type tasksPageData struct {
-	Title           string
-	Version         string
-	Commit          string
-	User            auth.User
-	Composite       tasksComposite
-	Workspaces      []wsChip
-	ActiveWorkspace wsChip
-	DevMode         bool
-	GlobalAdminChip bool
-	IsGlobalAdmin   bool
-	ThemeMode       string
-	ThemePickerNext string
-	WSConfig        WSConfig
-}
-
-// handleTasks renders the workspace-scoped task queue per ui-design
-// §2.3 (story_f2d71c27). Three columns: in_flight / enqueued /
-// recently closed. Live updates come from the workspace websocket.
-// Unauth → /login. Empty memberships → empty composite (no leakage).
-func (p *Portal) handleTasks(w http.ResponseWriter, r *http.Request) {
-	user, ok := p.resolveUser(r)
-	if !ok {
-		p.redirectToLogin(w, r)
-		return
-	}
-	active, chips, memberships := p.activeWorkspace(r, user)
-	composite := buildTasksComposite(r.Context(), p.tasks, memberships)
-	data := tasksPageData{
-		Title:           buildPageTitle(active, "", "tasks"),
-		Version:         config.Version,
-		Commit:          config.GitCommit,
-		User:            user,
-		Composite:       composite,
-		Workspaces:      chips,
-		ActiveWorkspace: active,
-		DevMode:         p.cfg.Env != "prod" && p.cfg.DevMode,
-		GlobalAdminChip: p.globalAdminChip(user, active, memberships),
-		IsGlobalAdmin:   p.isGlobalAdmin(user),
-		ThemeMode:       themeFromRequest(r),
-		ThemePickerNext: r.URL.RequestURI(),
-		WSConfig:        buildWSConfig(active, r),
-	}
-	if err := p.tmpl.ExecuteTemplate(w, "tasks.html", data); err != nil {
-		p.logger.Error().Str("template", "tasks.html").Str("error", err.Error()).Msg("template render failed")
-		http.Error(w, "render failed", http.StatusInternalServerError)
-	}
-}
-
-// handleTaskDrawer serves the per-task drawer payload as JSON for the
-// click-to-open detail panel. Workspace-scoped via memberships;
-// missing task or cross-workspace request → 404.
-func (p *Portal) handleTaskDrawer(w http.ResponseWriter, r *http.Request) {
-	user, ok := p.resolveUser(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	if p.tasks == nil {
-		http.NotFound(w, r)
-		return
-	}
-	taskID := r.PathValue("task_id")
-	_, _, memberships := p.activeWorkspace(r, user)
-	d, err := buildTaskDrawer(r.Context(), p.tasks, p.ledger, "", taskID, memberships)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	if err := json.NewEncoder(w).Encode(d); err != nil {
-		p.logger.Error().Str("error", err.Error()).Msg("task drawer encode failed")
 	}
 }
 

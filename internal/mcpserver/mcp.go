@@ -714,6 +714,24 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		)
 		s.addGatedTool(taskWalkTool, s.handleTaskWalk)
 
+		// sty_72e36256: task_render_prompt is the orchestrator-side
+		// inline prompt builder. Given a task + its action + its
+		// story, the substrate composes a self-contained markdown
+		// document carrying agent + contract + cited skills + cited
+		// principles + the prior chain. The orchestrator pipes the
+		// rendered markdown into task_add(prompt=...) so dispatched
+		// executors running under the restricted role envelope have
+		// every piece of context they need without any read verbs.
+		// Cite pr_substrate_model.
+		taskRenderPromptTool := mcpgo.NewTool("task_render_prompt",
+			mcpgo.WithDescription("Render a self-contained markdown prompt for a task: agent + contract + cited skills + cited principles + the prior chain. Returns {prompt: <markdown>}. The orchestrator pipes the prompt into task_add so dispatched executors carry their full context without invoking any read verb. Sty_72e36256."),
+			mcpgo.WithString("task_id", mcpgo.Required(), mcpgo.Description("Task whose context should be composed.")),
+			mcpgo.WithString("action", mcpgo.Required(), mcpgo.Description("Action of the form contract:<name>.")),
+			mcpgo.WithString("story_id", mcpgo.Required(), mcpgo.Description("Owning story id.")),
+			mcpgo.WithString("work", mcpgo.Description("Optional task-specific work body threaded under the Your work section.")),
+		)
+		s.addGatedTool(taskRenderPromptTool, s.handleTaskRenderPrompt)
+
 		// sty_4fb2d985: chain_* router verbs. Substrate-side
 		// auto-router replacing the operator-side `route_epic.sh`
 		// bash helper. The MCP variant returns next_task_id only —

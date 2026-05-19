@@ -324,7 +324,21 @@ steps below are the per-phase orchestrator mechanics.
    capability — the agent's `delivers:` list must contain the
    chosen action when the action is `contract:<name>` shaped)
    and compose the prompt body.
-3. Call `task_add(agent_id, prompt, story_id, action?, kind?)`
+3. **Render the prompt.** Call
+   `satellites-client task render-prompt --task-id <id> --action
+   contract:<n> --story-id <sid> --stdin < work.md > prompt.md`.
+   The rendered markdown is a self-contained document carrying
+   the agent body, the contract body, the union of
+   `agent.skill_refs` and `contract.skills_required`, every
+   principle the contract or story cites, and the prior chain.
+   This is the executor's complete context — it lets the
+   dispatched subprocess run under its restricted execution
+   envelope (the task-scoped apikey verb allowlist) without
+   invoking `story_get` / `agent_get` / `contract_get` /
+   `principle_list`. Do not also inject context out-of-band.
+   Cite `pr_substrate_model`. Pipe `prompt.md` into the
+   `task_add` call below as the `--prompt` body.
+4. Call `task_add(agent_id, prompt, story_id, action?, kind?)`
    over MCP. The substrate validates the agent doc, mints
    exactly one task at `status=published`, and returns
    `{task_id, story_id, story_minted, status, agent_id}`.
@@ -333,17 +347,16 @@ steps below are the per-phase orchestrator mechanics.
    - `agent_cannot_deliver` / `agent_cannot_review` —
      capability mismatch when the action is `contract:<name>`
      shaped.
-4. Dispatch via
+5. Dispatch via
    `bash satellites-client task run <task_id>`. The CLI spawns
    the team-member subprocess in a per-task worktree with a
    cleansed HOME, streams its output live, and returns the
-   outcome. The dispatched subprocess fetches its own context
-   (agent doc, project intent, principles, story, contract)
-   via the satellites-client CLI surface. The orchestrator
-   does NOT pre-load context via prompt-stuffing and does NOT
-   dispatch the work through Claude Code's `Agent` tool —
-   cite `pr_substrate_model`.
-5. On dispatch result, read `task_walk` again. If the work
+   outcome. The dispatched subprocess reads its prompt — the
+   `task render-prompt` markdown from step 3 — and runs without
+   needing read-verb access. The orchestrator does NOT pre-load
+   context via prompt-stuffing and does NOT dispatch the work
+   through Claude Code's `Agent` tool — cite `pr_substrate_model`.
+6. On dispatch result, read `task_walk` again. If the work
    task closed via `task_update(status=closed)`, closure
    mutated only that row. Mint the next plan step (a reviewer
    dispatch where the contract requires one, or the next work

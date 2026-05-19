@@ -1,5 +1,6 @@
 ---
 name: story_reviewer
+role: review
 delivers:
   - "contract:story_review"
 reviews:

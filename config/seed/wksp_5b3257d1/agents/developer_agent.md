@@ -1,5 +1,6 @@
 ---
 name: developer_agent
+role: execution
 delivers:
   - "contract:plan"
   - "contract:develop"

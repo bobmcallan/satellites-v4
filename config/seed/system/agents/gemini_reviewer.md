@@ -1,5 +1,6 @@
 ---
 name: gemini_reviewer
+role: review
 tier: flash
 tool_ceiling:
   - "task_get"

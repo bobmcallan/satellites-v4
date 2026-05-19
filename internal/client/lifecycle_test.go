@@ -88,8 +88,36 @@ func TestComputeLifecycleStatus(t *testing.T) {
 				mk("contract:develop", task.KindWork, task.StatusClosed),
 				mk("contract:develop", task.KindReview, task.StatusClosed),
 				mk("contract:merge_to_main", task.KindWork, task.StatusClosed),
+				mk("contract:deploy", task.KindWork, task.StatusClosed),
 			},
 			want: LifecycleOnShape,
+		},
+		{
+			name:        "terminal story with closed merge_to_main but no deploy returns deploy_skipped",
+			storyStatus: story.StatusDone,
+			tasks: []task.Task{
+				mk("contract:plan", task.KindWork, task.StatusClosed),
+				mk("contract:develop", task.KindWork, task.StatusClosed),
+				mk("contract:develop", task.KindReview, task.StatusClosed),
+				mk("contract:merge_to_main", task.KindWork, task.StatusClosed),
+			},
+			want: LifecycleDeploySkipped,
+		},
+		{
+			name:        "terminal story with published-but-open deploy still drifts deploy_skipped",
+			storyStatus: story.StatusDone,
+			tasks: []task.Task{
+				mk("contract:plan", task.KindWork, task.StatusClosed),
+				mk("contract:develop", task.KindWork, task.StatusClosed),
+				mk("contract:develop", task.KindReview, task.StatusClosed),
+				mk("contract:merge_to_main", task.KindWork, task.StatusClosed),
+				mk("contract:deploy", task.KindWork, task.StatusPublished),
+			},
+			// Predicate is closed-task: deploy attests pprod state (the
+			// converge MATCH), so a published-but-never-closed deploy
+			// row is a chain that has not actually shipped — drift
+			// fires.
+			want: LifecycleDeploySkipped,
 		},
 		{
 			name:        "unknown action returns phase_unknown",

@@ -1,4 +1,5 @@
-// Package client — lifecycle_status helper (sty_e0c3d615).
+// Package client — lifecycle_status helper (sty_e0c3d615 +
+// sty_52d2c994 deploy extension).
 //
 // computeLifecycleStatus walks the closed-task chain newest-first
 // against the phase ordering enumerated by the workspace-scope
@@ -11,6 +12,10 @@
 //                                          but no closed paired review
 //   - `drifted:close_before_push`        — terminal story but no
 //                                          contract:merge_to_main work
+//   - `drifted:deploy_skipped`           — terminal story with a closed
+//                                          contract:merge_to_main work
+//                                          task but no contract:deploy
+//                                          work task on the chain
 //   - `drifted:phase_unknown:<action>`   — closed work task whose
 //                                          action this workflow does
 //                                          not enumerate
@@ -37,6 +42,7 @@ const (
 	LifecyclePlanAbsent      = "drifted:plan_absent"
 	LifecycleReviewSkipped   = "drifted:review_skipped"
 	LifecycleCloseBeforePush = "drifted:close_before_push"
+	LifecycleDeploySkipped   = "drifted:deploy_skipped"
 	LifecyclePhaseUnknownPfx = "drifted:phase_unknown:"
 )
 
@@ -61,6 +67,7 @@ var lifecyclePhases = []lifecyclePhase{
 	{Action: "contract:story_review", Kind: task.KindReview},
 	{Action: "contract:commit", Kind: task.KindWork},
 	{Action: "contract:merge_to_main", Kind: task.KindWork},
+	{Action: "contract:deploy", Kind: task.KindWork},
 }
 
 // terminalStoryStatus reports whether the story has reached a terminal
@@ -86,7 +93,16 @@ func terminalStoryStatus(s string) bool {
 //     review_skipped.
 //  4. Story status is terminal AND no contract:merge_to_main work task
 //     present → close_before_push.
-//  5. Otherwise → on_shape.
+//  5. Story status is terminal AND a closed contract:merge_to_main
+//     work task is present AND no CLOSED contract:deploy work task is
+//     on the chain → deploy_skipped. A published-but-never-closed
+//     contract:deploy task is structurally a chain that has not
+//     shipped (the deploy task is the converge attestation; a row
+//     that never closed never attested), so the drift still fires.
+//     Structurally similar to close_before_push but uses the
+//     closed-task predicate because deploy attests pprod state, not
+//     just task-row presence.
+//  6. Otherwise → on_shape.
 func computeLifecycleStatus(storyStatus string, tasks []task.Task) string {
 	closedByActionKind := map[string]map[string]int{}
 	for _, t := range tasks {
@@ -136,6 +152,15 @@ func computeLifecycleStatus(storyStatus string, tasks []task.Task) string {
 		}
 		if !hasTaskForAction(tasks, "contract:merge_to_main") {
 			return LifecycleCloseBeforePush
+		}
+		// merge_to_main closed but no CLOSED contract:deploy task is
+		// on the chain — pprod has not been attested. The predicate
+		// is closed-task because deploy attests pprod state (the
+		// converge MATCH); a published-but-never-closed deploy row
+		// is a chain that has not actually shipped.
+		if closedByActionKind["contract:merge_to_main"][task.KindWork] > 0 &&
+			closedByActionKind["contract:deploy"][task.KindWork] == 0 {
+			return LifecycleDeploySkipped
 		}
 	}
 

@@ -13,10 +13,10 @@ tags:
 
 The `default_lifecycle` workflow document enumerates the canonical
 chain shape `plan → (develop → review → iterate)+ → commit → push →
-close`. `task_walk(story_id)` returns a `lifecycle_status` field
-computed against that shape by `computeLifecycleStatus`
+deploy → close`. `task_walk(story_id)` returns a `lifecycle_status`
+field computed against that shape by `computeLifecycleStatus`
 (`internal/client/lifecycle.go`). When the chain diverges, the value
-is one of four `drifted:<reason>` tokens. Reviewers cite this
+is one of five `drifted:<reason>` tokens. Reviewers cite this
 principle when reading those tokens against an in-flight or
 just-closed chain.
 
@@ -32,6 +32,11 @@ any of the following:
   `contract:develop` review task.
 - `drifted:close_before_push` — the story status is terminal but
   no `contract:merge_to_main` work task is present on the chain.
+- `drifted:deploy_skipped` — the story status is terminal AND
+  a closed `contract:merge_to_main` work task is present, but
+  no `contract:deploy` work task is on the chain (regardless
+  of status). The chain pushed main without attesting that
+  pprod converged on the pushed SHA.
 - `drifted:phase_unknown:<action>` — a closed work task carries
   an action this workflow does not enumerate.
 
@@ -61,6 +66,21 @@ examples:
   pprod deploy that no `contract:merge_to_main` task can
   attest, accept when the story explicitly carries no deploy
   surface (docs-only change, internal tooling).
+- `drifted:deploy_skipped` — reject when the story body claims
+  a behaviour exercised against the pprod-deployed binary
+  (any AC requiring the dispatched agent to exercise the
+  running server, any dogfood AC against a real-world MCP
+  surface, any task render-prompt / chain run / task run
+  invocation that requires the just-merged code path) —
+  closing the story without `contract:deploy` means the
+  binary serving pprod requests does NOT yet carry the
+  merged change. Accept when the story scope is
+  configseed-only (markdown seeds, prose updates, principle
+  authoring) or otherwise carries no pprod surface — the
+  chain shipped intent but the deployed binary is unchanged,
+  which is fine. The discriminator is whether the AC body
+  references pprod behaviour (reject) or only on-disk seed
+  state (accept).
 
 ## Why advisory now (not gating)
 

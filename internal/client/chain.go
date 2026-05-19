@@ -139,6 +139,7 @@ var canonicalPhases = []chainPhaseSpec{
 	{Action: "contract:story_review", Kind: task.KindReview, Pred: &phaseRef{Action: "contract:develop", Kind: task.KindReview}},
 	{Action: "contract:commit", Kind: task.KindWork, Pred: &phaseRef{Action: "contract:story_review", Kind: ""}},
 	{Action: "contract:merge_to_main", Kind: task.KindWork, Pred: &phaseRef{Action: "contract:commit", Kind: task.KindWork}},
+	{Action: "contract:deploy", Kind: task.KindWork, Pred: &phaseRef{Action: "contract:merge_to_main", Kind: task.KindWork}},
 }
 
 // DefaultChainPollInterval is the cadence the chain run loop uses

@@ -1137,14 +1137,15 @@ func TestStoryClose_LifecycleDriftRowIdempotent(t *testing.T) {
 }
 
 // TestStoryClose_LifecycleOnShapeNoDriftRow — sty_e0c3d615 AC2 negative
-// case. A chain that satisfies the workflow shape (plan + develop work +
-// develop review + merge_to_main work, all closed) MUST NOT emit a
-// kind:lifecycle-drift row.
+// case (sty_52d2c994 extends to require contract:deploy on the
+// on-shape chain). A chain that satisfies the workflow shape (plan +
+// develop work + develop review + merge_to_main + deploy, all closed)
+// MUST NOT emit a kind:lifecycle-drift row.
 func TestStoryClose_LifecycleOnShapeNoDriftRow(t *testing.T) {
 	f := newStoryCloseFixture(t, "improvement", happyOpts())
 	ctx := context.Background()
 	// Seed the on-shape phases the happy fixture omits: plan + develop
-	// review + merge_to_main.
+	// review + merge_to_main + deploy.
 	for _, phase := range []struct {
 		action string
 		kind   string
@@ -1153,6 +1154,7 @@ func TestStoryClose_LifecycleOnShapeNoDriftRow(t *testing.T) {
 		{"contract:plan", task.KindWork, -2 * time.Minute},
 		{"contract:develop", task.KindReview, 1 * time.Minute},
 		{"contract:merge_to_main", task.KindWork, 4 * time.Minute},
+		{"contract:deploy", task.KindWork, 5 * time.Minute},
 	} {
 		seed, err := f.c.deps.Tasks.Enqueue(ctx, task.Task{
 			WorkspaceID: f.wsID,

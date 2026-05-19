@@ -95,7 +95,7 @@ CLI for `task run` dispatch. Both produce the same audit chain.
 |---|---|
 | Story description + acceptance criteria | `satellites_story_get(id)` |
 | User prompt / runtime intent | The current Claude session message stream (the `implement story_xxx` request and any clarifications) |
-| Default workflow document (prose context) | `type=workflow`, name=`default_lifecycle` (workspace) → fallback `default` (system) — read for context. The `default_lifecycle` workflow enumerates the canonical lifecycle `plan → (develop → review → iterate)+ → commit → push → close` and registers the `pr_lifecycle_shape` citation slot; `task_walk` returns a `lifecycle_status` field computed against this workflow (advisory only). |
+| Default workflow document (prose context) | `type=workflow`, name=`default_lifecycle` (workspace) → fallback `default` (system) — read for context. The `default_lifecycle` workflow enumerates the canonical lifecycle `plan → (develop → review → iterate)+ → commit → push → deploy → close` and registers the `pr_lifecycle_shape` citation slot; `task_walk` returns a `lifecycle_status` field computed against this workflow (advisory only). |
 | Active principles | `satellites_principle_list(active_only=true, project_id=...)`. |
 | Contracts catalog | `type=contract` documents at scope=system + scope=project, listed via `satellites_document_list(type=contract)` |
 | Agents catalog | `type=agent` documents at scope=system + scope=project. Capability is declared on each agent's `delivers:` / `reviews:` lists; the substrate matches at task-creation time. Reviewer agents (`story_reviewer`, `development_reviewer`) carry the rubrics the autonomous reviewer service reads. |
@@ -313,7 +313,7 @@ feedback to address, not friction to bypass. Citing
 The flow when a user says `implement story_xxx`. The full
 phase ordering — `plan → develop → develop_review →
 story_review → [iterate develop on FAIL] → commit →
-merge_to_main → story_close [verb]` —
+merge_to_main → deploy → story_close [verb]` —
 lives in the lifecycle workflow document (sibling
 to this orchestrator at scope=system, name=`default`); the
 steps below are the per-phase orchestrator mechanics.
@@ -361,7 +361,20 @@ steps below are the per-phase orchestrator mechanics.
    mutated only that row. Mint the next plan step (a reviewer
    dispatch where the contract requires one, or the next work
    task) via `task_add` over MCP, and dispatch it via another
-   `task run`. Continue until the chain is complete.
+   `task run`. After `contract:merge_to_main` closes
+   `outcome=success`, the next plan step is the post-merge
+   execution-shape phase: `task_add(action=contract:deploy,
+   agent_id=releaser_agent, story_id=…)` dispatched to the
+   releaser; the deploy task invokes `skill:wait_for_pprod_deploy`
+   to attest that pprod has converged on the merged SHA, emits
+   one `kind:deploy-evidence` ledger row, and closes
+   `outcome=success` on the MATCH or `outcome=failure` on the
+   bounded-wait TIMEOUT. Only after `contract:deploy` closes
+   `outcome=success` does the orchestrator advance to
+   `story_close`. There is NO `--skip-deploy` flag and NO fast-path
+   that closes the story before deploy lands (cite
+   `pr_no_unrequested_compat`). Continue until the chain is
+   complete.
 
 ### Story-review pre-ship gate (the iteration loop)
 
@@ -390,7 +403,7 @@ verdict:fail`.
 Review is a contract-policy decision. The `develop` contract
 dispatches `development_reviewer`; the `story_review`
 contract dispatches `story_reviewer`. The `commit`,
-`merge_to_main`, and `plan` contracts do not dispatch
+`merge_to_main`, `deploy`, and `plan` contracts do not dispatch
 reviewers (execution-shape or base-case). The mechanical
 `story_close` MCP verb replaces the legacy
 `contract:story_close` reviewer dispatch — close is

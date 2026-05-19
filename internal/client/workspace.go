@@ -333,6 +333,84 @@ func (c *Client) workspaceAdminCount(ctx context.Context, workspaceID string) (i
 	return n, nil
 }
 
+// ErrWorkspaceHasProjects is the typed error returned by WorkspaceDelete
+// when the target workspace still contains any project (active OR
+// archived). Wire-layer envelope: "workspace_has_projects". Callers
+// extract the blocking project ids via errors.As to *WorkspaceHasProjectsError.
+// Sty_d357b28d.
+var ErrWorkspaceHasProjects = errors.New("workspace has projects")
+
+// WorkspaceHasProjectsError carries the blocking project ids so the wire
+// envelope can render the list operator-readably.
+type WorkspaceHasProjectsError struct {
+	WorkspaceID string
+	ProjectIDs  []string
+}
+
+func (e *WorkspaceHasProjectsError) Error() string {
+	return ErrWorkspaceHasProjects.Error()
+}
+
+func (e *WorkspaceHasProjectsError) Unwrap() error { return ErrWorkspaceHasProjects }
+
+// ErrWorkspaceNotAdmin is returned by WorkspaceDelete when the caller
+// is not an admin on the workspace. Wire envelope: "not_admin".
+var ErrWorkspaceNotAdmin = errors.New("workspace: caller is not an admin")
+
+// WorkspaceDeleteInput names the workspace to hard-delete.
+type WorkspaceDeleteInput struct {
+	ID string
+}
+
+// WorkspaceDeleteOutput pairs the deleted-flag with the member-row count
+// removed so callers can surface what the destructive op touched.
+type WorkspaceDeleteOutput struct {
+	Deleted         bool `json:"deleted"`
+	MembersRemoved  int  `json:"members_removed"`
+}
+
+// WorkspaceDelete hard-removes the workspace row + every member row.
+// Sty_d357b28d. Refuses with *WorkspaceHasProjectsError when the
+// workspace still carries any project (active OR archived) — operator
+// must hard-delete or move every project first. Caller must be an admin
+// of the target workspace; non-member callers get ErrWorkspaceNotFound.
+func (c *Client) WorkspaceDelete(ctx context.Context, caller Caller, in WorkspaceDeleteInput) (WorkspaceDeleteOutput, error) {
+	if c.deps.Workspaces == nil {
+		return WorkspaceDeleteOutput{}, ErrWorkspaceStoreNotConfigured
+	}
+	if in.ID == "" {
+		return WorkspaceDeleteOutput{}, errors.New("workspace_id required")
+	}
+	if caller.UserID == "" {
+		return WorkspaceDeleteOutput{}, errors.New("no caller identity")
+	}
+	role, err := c.deps.Workspaces.GetRole(ctx, in.ID, caller.UserID)
+	if err != nil {
+		return WorkspaceDeleteOutput{}, errors.New("workspace not found")
+	}
+	if role != workspace.RoleAdmin {
+		return WorkspaceDeleteOutput{}, ErrWorkspaceNotAdmin
+	}
+	if c.deps.Projects != nil {
+		projects, err := c.deps.Projects.ListByWorkspaceID(ctx, in.ID)
+		if err != nil {
+			return WorkspaceDeleteOutput{}, err
+		}
+		if len(projects) > 0 {
+			ids := make([]string, 0, len(projects))
+			for _, p := range projects {
+				ids = append(ids, p.ID)
+			}
+			return WorkspaceDeleteOutput{}, &WorkspaceHasProjectsError{WorkspaceID: in.ID, ProjectIDs: ids}
+		}
+	}
+	removed, err := c.deps.Workspaces.Delete(ctx, in.ID)
+	if err != nil {
+		return WorkspaceDeleteOutput{}, err
+	}
+	return WorkspaceDeleteOutput{Deleted: true, MembersRemoved: removed}, nil
+}
+
 // appendMembershipAudit writes a ledger row recording a membership
 // mutation. Scoped to the system default project + the target
 // workspace. Safe to no-op when defaults aren't wired (tests).

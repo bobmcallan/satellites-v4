@@ -250,4 +250,27 @@ func (s *SurrealStore) RemoveMember(ctx context.Context, workspaceID, userID str
 	return nil
 }
 
+// Delete implements Store for SurrealStore. Removes the workspace row plus
+// every membership row attached to it. Counts the member rows by listing
+// before the delete so the caller can surface the cascade. Sty_d357b28d.
+func (s *SurrealStore) Delete(ctx context.Context, id string) (int, error) {
+	if _, err := s.GetByID(ctx, id); err != nil {
+		return 0, err
+	}
+	members, err := s.ListMembers(ctx, id)
+	if err != nil {
+		return 0, fmt.Errorf("workspace: list members for delete: %w", err)
+	}
+	memberSQL := "DELETE workspace_members WHERE workspace_id = $ws"
+	if _, err := surrealdb.Query[any](ctx, s.db, memberSQL, map[string]any{"ws": id}); err != nil {
+		return 0, fmt.Errorf("workspace: delete members: %w", err)
+	}
+	wsSQL := "DELETE $rid"
+	vars := map[string]any{"rid": surrealmodels.NewRecordID("workspaces", id)}
+	if _, err := surrealdb.Query[any](ctx, s.db, wsSQL, vars); err != nil {
+		return 0, fmt.Errorf("workspace: delete row: %w", err)
+	}
+	return len(members), nil
+}
+
 var _ Store = (*SurrealStore)(nil)

@@ -65,6 +65,12 @@ type Store interface {
 	// RemoveMember deletes a membership row. Returns ErrMemberNotFound when
 	// the user isn't a member.
 	RemoveMember(ctx context.Context, workspaceID, userID string) error
+
+	// Delete hard-removes the workspace row + every member row attached to
+	// it. Returns the number of member rows removed. ErrNotFound when the
+	// workspace id isn't present. Sty_d357b28d — no soft-archive path
+	// exists for workspaces; the row either exists or it doesn't.
+	Delete(ctx context.Context, id string) (int, error)
 }
 
 // MemoryStore is a concurrency-safe in-process Store used by unit tests.
@@ -244,6 +250,20 @@ func (m *MemoryStore) RemoveMember(ctx context.Context, workspaceID, userID stri
 	}
 	delete(members, userID)
 	return nil
+}
+
+// Delete implements Store for MemoryStore. Removes the workspace row plus
+// every member row attached to it. Sty_d357b28d.
+func (m *MemoryStore) Delete(ctx context.Context, id string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.rows[id]; !ok {
+		return 0, ErrNotFound
+	}
+	removed := len(m.members[id])
+	delete(m.members, id)
+	delete(m.rows, id)
+	return removed, nil
 }
 
 var _ Store = (*MemoryStore)(nil)

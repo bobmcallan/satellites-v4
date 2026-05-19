@@ -286,10 +286,22 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		s.addGatedTool(updateProjTool, s.handleProjectUpdate)
 
 		deleteProjTool := mcpgo.NewTool("project_delete",
-			mcpgo.WithDescription("Soft-delete a project. Cascades: stories → cancelled; API keys → archived; project_set no longer resolves the project. Rejected with project_has_open_work when any story has open tasks. Ledger rows survive — append-only for audit."),
+			mcpgo.WithDescription("Default (hard=false): soft-delete a project. Cascades: stories → cancelled; API keys → archived; project_set no longer resolves the project. Rejected with project_has_open_work when any story has open tasks. Ledger rows survive — append-only for audit. With hard=true (sty_d357b28d): hard-purge an already-archived project. Cascades hard-delete of every dependent (stories, tasks, ledger rows, api-keys, repo rows) before removing the project row itself. Rejected with project_not_archived when status != archived (operator must soft-delete first and inspect the cascade summary before committing to the destructive op)."),
 			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Project id (proj_<8hex>).")),
+			mcpgo.WithBoolean("hard", mcpgo.Description("When true, hard-purge an already-archived project plus every dependent row. Requires status=archived first. Default false preserves the soft-archive cascade. Sty_d357b28d.")),
 		)
 		s.addGatedTool(deleteProjTool, s.handleProjectDelete)
+
+		// sty_d357b28d: project_move_workspace cascades a project +
+		// every dependent row (stories, tasks, ledger, api-keys, repo)
+		// to a new workspace_id. Caller must be admin of BOTH source
+		// and target workspaces.
+		moveProjTool := mcpgo.NewTool("project_move_workspace",
+			mcpgo.WithDescription("Cascade-move a project from its current workspace to target_workspace_id. The project row + every dependent row (stories, tasks, ledger, api-keys, repo) has its workspace_id rewritten in one batch. Caller must be admin of both the source AND target workspaces (rejected with not_admin_source / not_admin_target). Idempotent when target == current workspace. Returns the updated project + per-table cascade counters. Sty_d357b28d."),
+			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Project id (proj_<8hex>).")),
+			mcpgo.WithString("target_workspace_id", mcpgo.Required(), mcpgo.Description("Destination workspace id (wksp_<8hex>).")),
+		)
+		s.addGatedTool(moveProjTool, s.handleProjectMoveWorkspace)
 
 		getProjTool := mcpgo.NewTool("project_get",
 			mcpgo.WithDescription("Return the orientation bundle for a project the caller owns: project row, mcp_url + mcp_config (paste-ready client snippets that scope an MCP client to this project via ?project_id=), intent_body, and active principles. Cross-owner access returns not-found."),
@@ -624,6 +636,15 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("role", mcpgo.Required(), mcpgo.Description("admin | member | reviewer | viewer")),
 		)
 		s.addGatedTool(addMemberTool, s.handleWorkspaceMemberAdd)
+
+		// sty_d357b28d: workspace_delete hard-removes a workspace +
+		// every member row. Refuses when the workspace still carries
+		// any project (active OR archived). Caller must be admin.
+		deleteWsTool := mcpgo.NewTool("workspace_delete",
+			mcpgo.WithDescription("Hard-delete a workspace plus every member row. Refuses with workspace_has_projects when the workspace still contains any project (active OR archived) — operator must hard-delete or move every project first. Caller must be an admin of the workspace (workspace_has_projects + not_admin are the two reject codes). Sty_d357b28d."),
+			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Workspace id (wksp_<8hex>).")),
+		)
+		s.addGatedTool(deleteWsTool, s.handleWorkspaceDelete)
 
 		listMemberTool := mcpgo.NewTool("workspace_member_list",
 			mcpgo.WithDescription("List members of a workspace. Caller must be a member (any role)."),
@@ -1587,8 +1608,12 @@ func (s *Server) handleProjectDelete(ctx context.Context, req mcpgo.CallToolRequ
 	if _, ok := enforceScopedProject(ctx, id); !ok {
 		return mcpgo.NewToolResultError("project id does not match the URL-scoped project_id"), nil
 	}
+	hard := false
+	if v, ok := req.GetArguments()["hard"].(bool); ok {
+		hard = v
+	}
 	body, out, err := s.cli().ProjectDeleteView(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email}, client.ProjectDeleteInput{
-		ID: id, Memberships: s.resolveCallerMemberships(ctx, caller), Now: s.nowUTC(),
+		ID: id, Hard: hard, Memberships: s.resolveCallerMemberships(ctx, caller), Now: s.nowUTC(),
 	})
 	if err != nil {
 		var hasOpen *client.ProjectHasOpenWorkError
@@ -1601,12 +1626,78 @@ func (s *Server) handleProjectDelete(ctx context.Context, req mcpgo.CallToolRequ
 			})
 			return mcpgo.NewToolResultError(string(payload)), nil
 		}
+		if errors.Is(err, client.ErrProjectNotArchived) {
+			payload, _ := json.Marshal(map[string]any{
+				"error":      "project_not_archived",
+				"project_id": id,
+				"detail":     "hard=true requires status=archived; soft-delete first (hard=false) to inspect the cascade, then re-invoke with hard=true",
+			})
+			return mcpgo.NewToolResultError(string(payload)), nil
+		}
 		return mcpgo.NewToolResultError(projectErrMessage(err)), nil
 	}
-	s.logger.Info().Str("method", "tools/call").Str("tool", "project_delete").
+	logEvent := s.logger.Info().Str("method", "tools/call").Str("tool", "project_delete").
+		Str("project_id", id).Bool("hard", out.Hard)
+	if out.Hard {
+		logEvent = logEvent.
+			Int("stories_purged", out.StoriesPurged).
+			Int("tasks_purged", out.TasksPurged).
+			Int("ledger_purged", out.LedgerPurged).
+			Int("apikeys_purged", out.APIKeysPurged).
+			Int("repos_purged", out.ReposPurged)
+	} else {
+		logEvent = logEvent.
+			Int("stories_cancelled", out.StoriesCancelled).
+			Int("apikeys_archived", out.APIKeysArchived)
+	}
+	logEvent.Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+// handleProjectMoveWorkspace cascades a project's workspace_id to a new
+// target workspace, rewriting the workspace_id on every dependent row.
+// Sty_d357b28d.
+func (s *Server) handleProjectMoveWorkspace(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	start := time.Now()
+	caller, _ := auth.UserFrom(ctx)
+	id, err := req.RequireString("id")
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	target, err := req.RequireString("target_workspace_id")
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	if _, ok := enforceScopedProject(ctx, id); !ok {
+		return mcpgo.NewToolResultError("project id does not match the URL-scoped project_id"), nil
+	}
+	out, err := s.cli().ProjectMoveWorkspace(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email}, client.ProjectMoveWorkspaceInput{
+		ID:                id,
+		TargetWorkspaceID: target,
+		Now:               s.nowUTC(),
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, client.ErrProjectMoveNotAdminSource):
+			payload, _ := json.Marshal(map[string]any{"error": "not_admin_source", "project_id": id})
+			return mcpgo.NewToolResultError(string(payload)), nil
+		case errors.Is(err, client.ErrProjectMoveNotAdminTarget):
+			payload, _ := json.Marshal(map[string]any{"error": "not_admin_target", "project_id": id, "target_workspace_id": target})
+			return mcpgo.NewToolResultError(string(payload)), nil
+		default:
+			return mcpgo.NewToolResultError(projectErrMessage(err)), nil
+		}
+	}
+	body, _ := json.Marshal(out)
+	s.logger.Info().Str("method", "tools/call").Str("tool", "project_move_workspace").
 		Str("project_id", id).
-		Int("stories_cancelled", out.StoriesCancelled).
-		Int("apikeys_archived", out.APIKeysArchived).
+		Str("source_workspace_id", out.SourceWorkspaceID).
+		Str("target_workspace_id", out.TargetWorkspaceID).
+		Int("stories_moved", out.StoriesMoved).
+		Int("tasks_moved", out.TasksMoved).
+		Int("ledger_moved", out.LedgerMoved).
+		Int("apikeys_moved", out.APIKeysMoved).
+		Int("repos_moved", out.ReposMoved).
 		Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
@@ -2145,6 +2236,40 @@ func (s *Server) handleWorkspaceList(ctx context.Context, req mcpgo.CallToolRequ
 	}
 	body, _ := json.Marshal(list)
 	s.logger.Info().Str("method", "tools/call").Str("tool", "workspace_list").Str("user_id", caller.UserID).Int("count", len(list)).Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
+	return mcpgo.NewToolResultText(string(body)), nil
+}
+
+// handleWorkspaceDelete hard-removes a workspace + its member rows.
+// Refuses when the workspace still holds any project. Sty_d357b28d.
+func (s *Server) handleWorkspaceDelete(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	start := time.Now()
+	caller, _ := auth.UserFrom(ctx)
+	id, err := req.RequireString("id")
+	if err != nil {
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	out, err := s.cli().WorkspaceDelete(ctx, toClientCaller(caller), client.WorkspaceDeleteInput{ID: id})
+	if err != nil {
+		var hasProjects *client.WorkspaceHasProjectsError
+		if errors.As(err, &hasProjects) {
+			payload, _ := json.Marshal(map[string]any{
+				"error":        "workspace_has_projects",
+				"workspace_id": hasProjects.WorkspaceID,
+				"project_ids":  hasProjects.ProjectIDs,
+			})
+			return mcpgo.NewToolResultError(string(payload)), nil
+		}
+		if errors.Is(err, client.ErrWorkspaceNotAdmin) {
+			payload, _ := json.Marshal(map[string]any{"error": "not_admin", "workspace_id": id})
+			return mcpgo.NewToolResultError(string(payload)), nil
+		}
+		return mcpgo.NewToolResultError(err.Error()), nil
+	}
+	body, _ := json.Marshal(out)
+	s.logger.Info().Str("method", "tools/call").Str("tool", "workspace_delete").
+		Str("workspace_id", id).
+		Int("members_removed", out.MembersRemoved).
+		Int64("duration_ms", time.Since(start).Milliseconds()).Msg("mcp tool call")
 	return mcpgo.NewToolResultText(string(body)), nil
 }
 

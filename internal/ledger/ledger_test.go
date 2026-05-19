@@ -20,18 +20,23 @@ func TestNewID_Format(t *testing.T) {
 }
 
 // TestStoreInterface_Surface pins the Store surface so a future addition
-// (e.g. a hard-delete verb) is forced to update this test and the
-// compile-time `var _ Store = ...` assertions in store.go / surreal.go.
+// is forced to update this test and the compile-time `var _ Store = ...`
+// assertions in store.go / surreal.go.
 //
-// Append is the sole creation path; Dereference is the sole status
-// mutation (writes a new audit row + flips the target's Status). No
-// hard-delete or arbitrary-update verb exists.
+// Append is the sole creation path. Dereference flips a row to
+// StatusDereferenced without removing it. DeleteByProjectID +
+// SetWorkspaceIDByProjectID are the two destructive cascade helpers
+// added by sty_d357b28d for the operator-driven project_delete hard-purge
+// and project_move_workspace cascades; both are NOT part of the
+// orchestrator-facing read/write API surface.
 func TestStoreInterface_Surface(t *testing.T) {
 	t.Parallel()
 	want := map[string]bool{
 		"Append": true, "GetByID": true, "List": true, "Search": true,
 		"SearchSemantic": true,
 		"Recall":         true, "Dereference": true, "BackfillWorkspaceID": true,
+		"DeleteByProjectID":         true,
+		"SetWorkspaceIDByProjectID": true,
 	}
 	typ := reflect.TypeOf((*Store)(nil)).Elem()
 	if typ.NumMethod() != len(want) {

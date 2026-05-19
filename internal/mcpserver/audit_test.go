@@ -382,3 +382,11 @@ func (f *auditFailingLedger) Recall(ctx context.Context, rootID string, membersh
 func (f *auditFailingLedger) Dereference(ctx context.Context, id, reason, actor string, now time.Time, memberships []string) (ledger.LedgerEntry, error) {
 	return ledger.LedgerEntry{}, ledger.ErrNotFound
 }
+
+func (f *auditFailingLedger) DeleteByProjectID(ctx context.Context, projectID string) (int, error) {
+	return 0, nil
+}
+
+func (f *auditFailingLedger) SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string) (int, error) {
+	return 0, nil
+}

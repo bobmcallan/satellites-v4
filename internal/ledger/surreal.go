@@ -464,6 +464,47 @@ func (s *SurrealStore) BackfillWorkspaceID(ctx context.Context, projectID, works
 	return len((*results)[0].Result), nil
 }
 
+// DeleteByProjectID implements Store for SurrealStore. Sty_d357b28d.
+func (s *SurrealStore) DeleteByProjectID(ctx context.Context, projectID string) (int, error) {
+	type idRow struct {
+		ID string `json:"id"`
+	}
+	idSQL := "SELECT meta::id(id) AS id FROM ledger WHERE project_id = $project"
+	idResults, err := surrealdb.Query[[]idRow](ctx, s.db, idSQL, map[string]any{"project": projectID})
+	if err != nil {
+		return 0, fmt.Errorf("ledger: list ids by project: %w", err)
+	}
+	ids := []string{}
+	if idResults != nil && len(*idResults) > 0 {
+		for _, r := range (*idResults)[0].Result {
+			ids = append(ids, r.ID)
+		}
+	}
+	if _, err := surrealdb.Query[any](ctx, s.db, "DELETE ledger WHERE project_id = $project", map[string]any{"project": projectID}); err != nil {
+		return 0, fmt.Errorf("ledger: delete by project: %w", err)
+	}
+	if s.chunks != nil {
+		for _, id := range ids {
+			_ = s.chunks.DeleteByLedgerID(ctx, id)
+		}
+	}
+	return len(ids), nil
+}
+
+// SetWorkspaceIDByProjectID implements Store for SurrealStore. Sty_d357b28d.
+func (s *SurrealStore) SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string) (int, error) {
+	sql := "UPDATE ledger SET workspace_id = $ws WHERE project_id = $project AND workspace_id != $ws RETURN AFTER"
+	vars := map[string]any{"ws": newWorkspaceID, "project": projectID}
+	results, err := surrealdb.Query[[]LedgerEntry](ctx, s.db, sql, vars)
+	if err != nil {
+		return 0, fmt.Errorf("ledger: set workspace_id by project: %w", err)
+	}
+	if results == nil || len(*results) == 0 {
+		return 0, nil
+	}
+	return len((*results)[0].Result), nil
+}
+
 // MigrateLegacyRows stamps the v4 enum + naming on rows that pre-date the
 // schema reshape (story_368cd70f). Idempotent on every boot. Once every
 // row has a non-empty `created_by`, the legacy `actor` field is dropped.

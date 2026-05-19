@@ -483,5 +483,60 @@ func (s *SurrealStore) write(ctx context.Context, t Task) error {
 	return nil
 }
 
+// DeleteByProjectID implements Store for SurrealStore. Sty_d357b28d.
+func (s *SurrealStore) DeleteByProjectID(ctx context.Context, projectID string) (int, error) {
+	n, err := countTable(ctx, s.db, "tasks", "project_id = $project", map[string]any{"project": projectID})
+	if err != nil {
+		return 0, fmt.Errorf("task: count by project: %w", err)
+	}
+	if _, err := surrealdb.Query[any](ctx, s.db, "DELETE tasks WHERE project_id = $project", map[string]any{"project": projectID}); err != nil {
+		return 0, fmt.Errorf("task: delete by project: %w", err)
+	}
+	return n, nil
+}
+
+// SetWorkspaceIDByProjectID implements Store for SurrealStore. Sty_d357b28d.
+func (s *SurrealStore) SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string, now time.Time) (int, error) {
+	sql := "UPDATE tasks SET workspace_id = $ws WHERE project_id = $project AND workspace_id != $ws RETURN AFTER"
+	vars := map[string]any{"ws": newWorkspaceID, "project": projectID}
+	results, err := surrealdb.Query[[]Task](ctx, s.db, sql, vars)
+	if err != nil {
+		return 0, fmt.Errorf("task: set workspace_id by project: %w", err)
+	}
+	if results == nil || len(*results) == 0 {
+		return 0, nil
+	}
+	return len((*results)[0].Result), nil
+}
+
+// countTable runs SELECT count() FROM <table> WHERE <where>. Used by the
+// hard-delete cascade paths so the verb can surface a row count without
+// asking the caller to List + len first. Sty_d357b28d.
+func countTable(ctx context.Context, db *surrealdb.DB, table, where string, vars map[string]any) (int, error) {
+	sql := fmt.Sprintf("SELECT count() FROM %s WHERE %s GROUP ALL", table, where)
+	results, err := surrealdb.Query[[]map[string]any](ctx, db, sql, vars)
+	if err != nil {
+		return 0, err
+	}
+	if results == nil || len(*results) == 0 || len((*results)[0].Result) == 0 {
+		return 0, nil
+	}
+	v, ok := (*results)[0].Result[0]["count"]
+	if !ok {
+		return 0, nil
+	}
+	switch c := v.(type) {
+	case int:
+		return c, nil
+	case int64:
+		return int(c), nil
+	case float64:
+		return int(c), nil
+	case uint64:
+		return int(c), nil
+	}
+	return 0, nil
+}
+
 // Compile-time assertion.
 var _ Store = (*SurrealStore)(nil)

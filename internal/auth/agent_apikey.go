@@ -107,6 +107,16 @@ type APIKeyStore interface {
 	// archived. sty_056b68f6: invoked from task_update(status=closed)
 	// so a task-scoped key cannot outlive its task.
 	RevokeByTaskID(ctx context.Context, taskID string) (int, error)
+
+	// DeleteByProjectID hard-removes every api-key row whose ProjectID
+	// matches. Returns the count removed. Sty_d357b28d — used by the
+	// project_delete hard-purge cascade.
+	DeleteByProjectID(ctx context.Context, projectID string) (int, error)
+
+	// SetWorkspaceIDByProjectID stamps newWorkspaceID on every api-key
+	// row whose ProjectID matches. Returns the count touched. Used by
+	// the project_move_workspace cascade. Sty_d357b28d.
+	SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string) (int, error)
 }
 
 // NewAPIKeyID returns a fresh `apk_<8hex>` id. Mirrors the rest of
@@ -317,6 +327,48 @@ func (m *MemoryAgentAPIKeyStore) RevokeByTaskID(ctx context.Context, taskID stri
 			continue
 		}
 		k.Status = APIKeyStatusArchived
+		m.rows[id] = k
+		count++
+	}
+	return count, nil
+}
+
+// DeleteByProjectID implements APIKeyStore for MemoryAgentAPIKeyStore.
+// Sty_d357b28d.
+func (m *MemoryAgentAPIKeyStore) DeleteByProjectID(ctx context.Context, projectID string) (int, error) {
+	if projectID == "" {
+		return 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	count := 0
+	for id, k := range m.rows {
+		if k.ProjectID != projectID {
+			continue
+		}
+		delete(m.rows, id)
+		count++
+	}
+	return count, nil
+}
+
+// SetWorkspaceIDByProjectID implements APIKeyStore for
+// MemoryAgentAPIKeyStore. Sty_d357b28d.
+func (m *MemoryAgentAPIKeyStore) SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string) (int, error) {
+	if projectID == "" {
+		return 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	count := 0
+	for id, k := range m.rows {
+		if k.ProjectID != projectID {
+			continue
+		}
+		if k.WorkspaceID == newWorkspaceID {
+			continue
+		}
+		k.WorkspaceID = newWorkspaceID
 		m.rows[id] = k
 		count++
 	}

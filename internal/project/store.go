@@ -62,6 +62,18 @@ type Store interface {
 	// ListMissingWorkspaceID returns rows whose workspace_id is empty.
 	// Backfill uses this to find work to do.
 	ListMissingWorkspaceID(ctx context.Context) ([]Project, error)
+
+	// Delete hard-removes the project row. ErrNotFound when the id isn't
+	// present. Sty_d357b28d — used by the project_delete hard-purge path;
+	// the caller is responsible for cascading hard-deletes on dependent
+	// rows (stories, tasks, ledger, api-keys, repo) BEFORE invoking this.
+	Delete(ctx context.Context, id string) error
+
+	// ListByWorkspaceID returns every project (active + archived,
+	// regardless of owner) bound to the given workspace_id. Used by
+	// `workspace_delete` to enumerate blocking projects before refusing
+	// the destructive op. Sty_d357b28d.
+	ListByWorkspaceID(ctx context.Context, workspaceID string) ([]Project, error)
 }
 
 // MemoryStore is a concurrency-safe in-process Store used by unit tests.
@@ -234,6 +246,35 @@ func (m *MemoryStore) ListMissingWorkspaceID(ctx context.Context) ([]Project, er
 			out = append(out, p)
 		}
 	}
+	return out, nil
+}
+
+// Delete implements Store for MemoryStore. Hard-removes the project row.
+// Sty_d357b28d.
+func (m *MemoryStore) Delete(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.rows[id]; !ok {
+		return ErrNotFound
+	}
+	delete(m.rows, id)
+	return nil
+}
+
+// ListByWorkspaceID implements Store for MemoryStore. Sty_d357b28d.
+func (m *MemoryStore) ListByWorkspaceID(ctx context.Context, workspaceID string) ([]Project, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Project, 0)
+	for _, p := range m.rows {
+		if p.WorkspaceID != workspaceID {
+			continue
+		}
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
 	return out, nil
 }
 

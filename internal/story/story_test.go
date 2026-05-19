@@ -82,6 +82,20 @@ func (e *erroringLedger) Dereference(ctx context.Context, id, reason, actor stri
 	return e.backing.Dereference(ctx, id, reason, actor, now, memberships)
 }
 
+func (e *erroringLedger) DeleteByProjectID(ctx context.Context, projectID string) (int, error) {
+	if e.backing == nil {
+		return 0, nil
+	}
+	return e.backing.DeleteByProjectID(ctx, projectID)
+}
+
+func (e *erroringLedger) SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string) (int, error) {
+	if e.backing == nil {
+		return 0, nil
+	}
+	return e.backing.SetWorkspaceIDByProjectID(ctx, projectID, newWorkspaceID)
+}
+
 func TestNewID_Format(t *testing.T) {
 	t.Parallel()
 	id := NewID()

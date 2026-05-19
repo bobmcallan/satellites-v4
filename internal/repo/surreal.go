@@ -312,5 +312,48 @@ func (s *SurrealStore) Diff(ctx context.Context, repoID, fromRef, toRef string, 
 	return out, nil
 }
 
+// DeleteByProjectID implements Store for SurrealStore. Sty_d357b28d.
+func (s *SurrealStore) DeleteByProjectID(ctx context.Context, projectID string) (int, error) {
+	type idRow struct {
+		ID string `json:"id"`
+	}
+	idResults, err := surrealdb.Query[[]idRow](ctx, s.db, "SELECT meta::id(id) AS id FROM repos WHERE project_id = $project", map[string]any{"project": projectID})
+	if err != nil {
+		return 0, fmt.Errorf("repo: list ids by project: %w", err)
+	}
+	ids := []string{}
+	if idResults != nil && len(*idResults) > 0 {
+		for _, r := range (*idResults)[0].Result {
+			ids = append(ids, r.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	for _, id := range ids {
+		if _, err := surrealdb.Query[any](ctx, s.db, "DELETE repo_commits WHERE repo_id = $repo", map[string]any{"repo": id}); err != nil {
+			return 0, fmt.Errorf("repo: delete commits: %w", err)
+		}
+	}
+	if _, err := surrealdb.Query[any](ctx, s.db, "DELETE repos WHERE project_id = $project", map[string]any{"project": projectID}); err != nil {
+		return 0, fmt.Errorf("repo: delete by project: %w", err)
+	}
+	return len(ids), nil
+}
+
+// SetWorkspaceIDByProjectID implements Store for SurrealStore. Sty_d357b28d.
+func (s *SurrealStore) SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string, now time.Time) (int, error) {
+	sql := "UPDATE repos SET workspace_id = $ws, updated_at = $now WHERE project_id = $project AND workspace_id != $ws RETURN AFTER"
+	vars := map[string]any{"ws": newWorkspaceID, "project": projectID, "now": now}
+	results, err := surrealdb.Query[[]Repo](ctx, s.db, sql, vars)
+	if err != nil {
+		return 0, fmt.Errorf("repo: set workspace_id by project: %w", err)
+	}
+	if results == nil || len(*results) == 0 {
+		return 0, nil
+	}
+	return len((*results)[0].Result), nil
+}
+
 // Compile-time assertion.
 var _ Store = (*SurrealStore)(nil)

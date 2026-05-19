@@ -203,5 +203,32 @@ func (s *SurrealStore) ListMissingWorkspaceID(ctx context.Context) ([]Project, e
 	return (*results)[0].Result, nil
 }
 
+// Delete implements Store for SurrealStore. Hard-removes the project row.
+// Sty_d357b28d.
+func (s *SurrealStore) Delete(ctx context.Context, id string) error {
+	if _, err := s.GetByID(ctx, id, nil); err != nil {
+		return err
+	}
+	sql := "DELETE $rid"
+	vars := map[string]any{"rid": surrealmodels.NewRecordID("projects", id)}
+	if _, err := surrealdb.Query[any](ctx, s.db, sql, vars); err != nil {
+		return fmt.Errorf("project: delete row: %w", err)
+	}
+	return nil
+}
+
+// ListByWorkspaceID implements Store for SurrealStore. Sty_d357b28d.
+func (s *SurrealStore) ListByWorkspaceID(ctx context.Context, workspaceID string) ([]Project, error) {
+	sql := fmt.Sprintf("SELECT %s FROM projects WHERE workspace_id = $ws ORDER BY created_at DESC", selectCols)
+	results, err := surrealdb.Query[[]Project](ctx, s.db, sql, map[string]any{"ws": workspaceID})
+	if err != nil {
+		return nil, fmt.Errorf("project: list by workspace_id: %w", err)
+	}
+	if results == nil || len(*results) == 0 {
+		return []Project{}, nil
+	}
+	return (*results)[0].Result, nil
+}
+
 // Compile-time assertion that SurrealStore satisfies Store.
 var _ Store = (*SurrealStore)(nil)

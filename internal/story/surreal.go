@@ -297,5 +297,48 @@ func (s *SurrealStore) BackfillWorkspaceID(ctx context.Context, projectID, works
 	return len((*results)[0].Result), nil
 }
 
+// DeleteByProjectID implements Store for SurrealStore. Sty_d357b28d.
+func (s *SurrealStore) DeleteByProjectID(ctx context.Context, projectID string) (int, error) {
+	countSQL := "SELECT count() FROM stories WHERE project_id = $project GROUP ALL"
+	countResults, err := surrealdb.Query[[]map[string]any](ctx, s.db, countSQL, map[string]any{"project": projectID})
+	if err != nil {
+		return 0, fmt.Errorf("story: count by project: %w", err)
+	}
+	n := 0
+	if countResults != nil && len(*countResults) > 0 && len((*countResults)[0].Result) > 0 {
+		if v, ok := (*countResults)[0].Result[0]["count"]; ok {
+			switch c := v.(type) {
+			case int:
+				n = c
+			case int64:
+				n = int(c)
+			case float64:
+				n = int(c)
+			case uint64:
+				n = int(c)
+			}
+		}
+	}
+	deleteSQL := "DELETE stories WHERE project_id = $project"
+	if _, err := surrealdb.Query[any](ctx, s.db, deleteSQL, map[string]any{"project": projectID}); err != nil {
+		return 0, fmt.Errorf("story: delete by project: %w", err)
+	}
+	return n, nil
+}
+
+// SetWorkspaceIDByProjectID implements Store for SurrealStore. Sty_d357b28d.
+func (s *SurrealStore) SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string, now time.Time) (int, error) {
+	sql := "UPDATE stories SET workspace_id = $ws, updated_at = $now WHERE project_id = $project AND workspace_id != $ws RETURN AFTER"
+	vars := map[string]any{"ws": newWorkspaceID, "project": projectID, "now": now}
+	results, err := surrealdb.Query[[]Story](ctx, s.db, sql, vars)
+	if err != nil {
+		return 0, fmt.Errorf("story: set workspace_id by project: %w", err)
+	}
+	if results == nil || len(*results) == 0 {
+		return 0, nil
+	}
+	return len((*results)[0].Result), nil
+}
+
 // Compile-time assertion.
 var _ Store = (*SurrealStore)(nil)

@@ -164,6 +164,20 @@ type Store interface {
 	// projectID whose workspace_id is empty. Returns the number of rows
 	// touched. Boot-time backfill for feature-order:2.
 	BackfillWorkspaceID(ctx context.Context, projectID, workspaceID string, now time.Time) (int, error)
+
+	// DeleteByProjectID hard-removes every story whose ProjectID matches.
+	// Returns the count of rows removed. Sty_d357b28d — wired by the
+	// project_delete hard-purge cascade. Memberships scoping is NOT
+	// applied here; the caller is responsible for authorising the
+	// destructive operation before invoking this method.
+	DeleteByProjectID(ctx context.Context, projectID string) (int, error)
+
+	// SetWorkspaceIDByProjectID stamps newWorkspaceID on every row whose
+	// ProjectID matches, regardless of the current workspace_id value
+	// (unlike BackfillWorkspaceID, which only touches empties). Returns
+	// the count of rows touched. Sty_d357b28d — wired by
+	// project_move_workspace cascade.
+	SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string, now time.Time) (int, error)
 }
 
 // transitionPayload is the JSON shape written into the ledger `content`
@@ -491,6 +505,41 @@ func (m *MemoryStore) BackfillWorkspaceID(ctx context.Context, projectID, worksp
 			continue
 		}
 		s.WorkspaceID = workspaceID
+		s.UpdatedAt = now
+		m.rows[id] = s
+		n++
+	}
+	return n, nil
+}
+
+// DeleteByProjectID implements Store for MemoryStore. Sty_d357b28d.
+func (m *MemoryStore) DeleteByProjectID(ctx context.Context, projectID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, s := range m.rows {
+		if s.ProjectID != projectID {
+			continue
+		}
+		delete(m.rows, id)
+		n++
+	}
+	return n, nil
+}
+
+// SetWorkspaceIDByProjectID implements Store for MemoryStore. Sty_d357b28d.
+func (m *MemoryStore) SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string, now time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, s := range m.rows {
+		if s.ProjectID != projectID {
+			continue
+		}
+		if s.WorkspaceID == newWorkspaceID {
+			continue
+		}
+		s.WorkspaceID = newWorkspaceID
 		s.UpdatedAt = now
 		m.rows[id] = s
 		n++

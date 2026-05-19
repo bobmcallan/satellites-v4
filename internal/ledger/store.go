@@ -81,6 +81,19 @@ type Store interface {
 	Recall(ctx context.Context, rootID string, memberships []string) ([]LedgerEntry, error)
 	Dereference(ctx context.Context, id, reason, actor string, now time.Time, memberships []string) (LedgerEntry, error)
 	BackfillWorkspaceID(ctx context.Context, projectID, workspaceID string) (int, error)
+
+	// DeleteByProjectID hard-removes every ledger row whose ProjectID
+	// matches. Returns the count removed. Memberships scoping is NOT
+	// applied; the caller (project_delete hard-purge cascade) is
+	// responsible for authorising the destructive op. Append-only is
+	// the substrate's default posture; this method is the explicit
+	// operator-driven escape valve. Sty_d357b28d.
+	DeleteByProjectID(ctx context.Context, projectID string) (int, error)
+
+	// SetWorkspaceIDByProjectID stamps newWorkspaceID on every ledger
+	// row whose ProjectID matches. Returns the count touched. Used by
+	// the project_move_workspace cascade. Sty_d357b28d.
+	SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string) (int, error)
 }
 
 // MemoryStore is a concurrency-safe in-process Store used by unit tests.
@@ -452,6 +465,48 @@ func (m *MemoryStore) BackfillWorkspaceID(ctx context.Context, projectID, worksp
 			continue
 		}
 		e.WorkspaceID = workspaceID
+		m.rows[i] = e
+		n++
+	}
+	return n, nil
+}
+
+// DeleteByProjectID implements Store for MemoryStore. Sty_d357b28d.
+func (m *MemoryStore) DeleteByProjectID(ctx context.Context, projectID string) (int, error) {
+	m.mu.Lock()
+	keep := make([]LedgerEntry, 0, len(m.rows))
+	removed := make([]string, 0)
+	for _, e := range m.rows {
+		if e.ProjectID == projectID {
+			removed = append(removed, e.ID)
+			continue
+		}
+		keep = append(keep, e)
+	}
+	m.rows = keep
+	chunks := m.chunks
+	m.mu.Unlock()
+	if chunks != nil {
+		for _, id := range removed {
+			_ = chunks.DeleteByLedgerID(ctx, id)
+		}
+	}
+	return len(removed), nil
+}
+
+// SetWorkspaceIDByProjectID implements Store for MemoryStore. Sty_d357b28d.
+func (m *MemoryStore) SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for i, e := range m.rows {
+		if e.ProjectID != projectID {
+			continue
+		}
+		if e.WorkspaceID == newWorkspaceID {
+			continue
+		}
+		e.WorkspaceID = newWorkspaceID
 		m.rows[i] = e
 		n++
 	}

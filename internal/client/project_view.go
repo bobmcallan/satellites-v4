@@ -155,26 +155,38 @@ func (c *Client) ProjectUpdateView(ctx context.Context, caller Caller, in Projec
 	return c.BuildProjectView(p, baseURL), p, nil
 }
 
-// ProjectDeleteViewOutput pairs the archived project row with the
-// cascade counts the verb's wire envelope surfaces.
+// ProjectDeleteViewOutput pairs the project row with the cascade counts
+// the verb's wire envelope surfaces. Hard-delete (sty_d357b28d) populates
+// the *_purged counters on CascadeSummary and sets Hard=true.
 type ProjectDeleteViewOutput struct {
 	project.Project
+	Hard           bool           `json:"hard,omitempty"`
 	CascadeSummary CascadeSummary `json:"cascade_summary"`
 }
 
 // CascadeSummary is the typed wire shape ProjectDelete returns to the
-// orchestrator so the side-effect counts of the soft-delete are
-// auditable from the verb's response alone.
+// orchestrator so the side-effect counts of the soft- or hard-delete are
+// auditable from the verb's response alone. Sty_d357b28d added the
+// *_purged fields populated under hard=true. The soft-archive counters
+// stay non-omitempty so the wire shape on the default path is
+// byte-identical to the pre-sty_d357b28d response (regression guard:
+// internal/mcpserver/project_delete_handler_test.go).
 type CascadeSummary struct {
 	StoriesCancelled int `json:"stories_cancelled"`
 	APIKeysArchived  int `json:"apikeys_archived"`
+	StoriesPurged    int `json:"stories_purged,omitempty"`
+	TasksPurged      int `json:"tasks_purged,omitempty"`
+	LedgerPurged     int `json:"ledger_purged,omitempty"`
+	APIKeysPurged    int `json:"apikeys_purged,omitempty"`
+	ReposPurged      int `json:"repos_purged,omitempty"`
 }
 
-// ProjectDeleteView archives a project, runs the cascade, and returns
-// the JSON-encoded {project, cascade_summary} envelope alongside the
-// post-archive project row for log fields. The cascade side-effects
-// are not visible without this wrapper; pr_evidence_audit and AC3
-// both depend on the orchestrator seeing the counts.
+// ProjectDeleteView archives (or hard-deletes when in.Hard=true) a
+// project, runs the cascade, and returns the JSON-encoded
+// {project, hard, cascade_summary} envelope alongside the post-mutation
+// project row for log fields. The cascade side-effects are not visible
+// without this wrapper; pr_evidence_audit and AC3 both depend on the
+// orchestrator seeing the counts.
 func (c *Client) ProjectDeleteView(ctx context.Context, caller Caller, in ProjectDeleteInput) ([]byte, ProjectDeleteOutput, error) {
 	out, err := c.ProjectDelete(ctx, caller, in)
 	if err != nil {
@@ -182,9 +194,15 @@ func (c *Client) ProjectDeleteView(ctx context.Context, caller Caller, in Projec
 	}
 	body, err := json.Marshal(ProjectDeleteViewOutput{
 		Project: out.Project,
+		Hard:    out.Hard,
 		CascadeSummary: CascadeSummary{
 			StoriesCancelled: out.StoriesCancelled,
 			APIKeysArchived:  out.APIKeysArchived,
+			StoriesPurged:    out.StoriesPurged,
+			TasksPurged:      out.TasksPurged,
+			LedgerPurged:     out.LedgerPurged,
+			APIKeysPurged:    out.APIKeysPurged,
+			ReposPurged:      out.ReposPurged,
 		},
 	})
 	if err != nil {

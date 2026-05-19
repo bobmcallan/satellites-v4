@@ -128,6 +128,17 @@ type Store interface {
 	// already match the persisted values. Memberships-scoped.
 	// sty_27516920.
 	SetLinkage(ctx context.Context, id string, priorID, parentID *string, now time.Time, memberships []string) (Task, error)
+
+	// DeleteByProjectID hard-removes every task whose ProjectID matches.
+	// Returns the count removed. Memberships scoping is NOT applied —
+	// the caller (project_delete hard-purge cascade) is responsible for
+	// authorising the destructive op. Sty_d357b28d.
+	DeleteByProjectID(ctx context.Context, projectID string) (int, error)
+
+	// SetWorkspaceIDByProjectID stamps newWorkspaceID on every task whose
+	// ProjectID matches. Returns the count touched. Used by the
+	// project_move_workspace cascade. Sty_d357b28d.
+	SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string, now time.Time) (int, error)
 }
 
 // MemoryStore is a concurrency-safe in-process Store used by unit tests.
@@ -560,6 +571,40 @@ func workspaceVisible(workspaceID string, memberships []string) bool {
 		}
 	}
 	return false
+}
+
+// DeleteByProjectID implements Store for MemoryStore. Sty_d357b28d.
+func (m *MemoryStore) DeleteByProjectID(ctx context.Context, projectID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, t := range m.rows {
+		if t.ProjectID != projectID {
+			continue
+		}
+		delete(m.rows, id)
+		n++
+	}
+	return n, nil
+}
+
+// SetWorkspaceIDByProjectID implements Store for MemoryStore. Sty_d357b28d.
+func (m *MemoryStore) SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string, now time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, t := range m.rows {
+		if t.ProjectID != projectID {
+			continue
+		}
+		if t.WorkspaceID == newWorkspaceID {
+			continue
+		}
+		t.WorkspaceID = newWorkspaceID
+		m.rows[id] = t
+		n++
+	}
+	return n, nil
 }
 
 // Compile-time assertion.

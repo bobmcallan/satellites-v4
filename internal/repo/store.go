@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -69,6 +70,15 @@ type Store interface {
 	// (or until the chain ends) and returns the Diff shape. Unified +
 	// SymbolChanges remain empty in v1 — see Diff.DiffSource.
 	Diff(ctx context.Context, repoID, fromRef, toRef string, memberships []string) (Diff, error)
+
+	// DeleteByProjectID hard-removes every repo row whose ProjectID
+	// matches plus the commit rows attached to them. Returns the count
+	// of repo rows removed. Sty_d357b28d.
+	DeleteByProjectID(ctx context.Context, projectID string) (int, error)
+
+	// SetWorkspaceIDByProjectID stamps newWorkspaceID on every repo row
+	// whose ProjectID matches. Returns the count touched. Sty_d357b28d.
+	SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string, now time.Time) (int, error)
 }
 
 // validateStatus rejects writes that supply a status outside the
@@ -344,6 +354,52 @@ func (m *MemoryStore) Diff(ctx context.Context, repoID, fromRef, toRef string, m
 		cur = c.ParentSHA
 	}
 	return out, nil
+}
+
+// DeleteByProjectID implements Store for MemoryStore. Removes every repo
+// row whose ProjectID matches plus all commit rows for those repos.
+// Sty_d357b28d.
+func (m *MemoryStore) DeleteByProjectID(ctx context.Context, projectID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	repoIDs := make(map[string]struct{})
+	for id, r := range m.rows {
+		if r.ProjectID != projectID {
+			continue
+		}
+		repoIDs[id] = struct{}{}
+		delete(m.rows, id)
+	}
+	for key := range m.commits {
+		repoID := key
+		if i := strings.IndexByte(key, '|'); i >= 0 {
+			repoID = key[:i]
+		}
+		if _, ok := repoIDs[repoID]; ok {
+			delete(m.commits, key)
+		}
+	}
+	return len(repoIDs), nil
+}
+
+// SetWorkspaceIDByProjectID implements Store for MemoryStore. Sty_d357b28d.
+func (m *MemoryStore) SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string, now time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, r := range m.rows {
+		if r.ProjectID != projectID {
+			continue
+		}
+		if r.WorkspaceID == newWorkspaceID {
+			continue
+		}
+		r.WorkspaceID = newWorkspaceID
+		r.UpdatedAt = now
+		m.rows[id] = r
+		n++
+	}
+	return n, nil
 }
 
 // Compile-time assertion.

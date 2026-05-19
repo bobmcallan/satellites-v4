@@ -289,6 +289,47 @@ func rowToKey(r agentAPIKeyRow) APIKey {
 	}
 }
 
+// DeleteByProjectID implements APIKeyStore for SurrealAgentAPIKeyStore.
+// Sty_d357b28d.
+func (s *SurrealAgentAPIKeyStore) DeleteByProjectID(ctx context.Context, projectID string) (int, error) {
+	if projectID == "" {
+		return 0, nil
+	}
+	type idRow struct {
+		ID string `json:"id"`
+	}
+	idResults, err := surrealdb.Query[[]idRow](ctx, s.db, "SELECT meta::id(id) AS id FROM agent_apikeys WHERE project_id = $project", map[string]any{"project": projectID})
+	if err != nil {
+		return 0, fmt.Errorf("auth: agent_apikey list by project: %w", err)
+	}
+	n := 0
+	if idResults != nil && len(*idResults) > 0 {
+		n = len((*idResults)[0].Result)
+	}
+	if _, err := surrealdb.Query[any](ctx, s.db, "DELETE agent_apikeys WHERE project_id = $project", map[string]any{"project": projectID}); err != nil {
+		return 0, fmt.Errorf("auth: agent_apikey delete by project: %w", err)
+	}
+	return n, nil
+}
+
+// SetWorkspaceIDByProjectID implements APIKeyStore for
+// SurrealAgentAPIKeyStore. Sty_d357b28d.
+func (s *SurrealAgentAPIKeyStore) SetWorkspaceIDByProjectID(ctx context.Context, projectID, newWorkspaceID string) (int, error) {
+	if projectID == "" {
+		return 0, nil
+	}
+	sql := "UPDATE agent_apikeys SET workspace_id = $ws WHERE project_id = $project AND workspace_id != $ws RETURN AFTER"
+	vars := map[string]any{"ws": newWorkspaceID, "project": projectID}
+	results, err := surrealdb.Query[[]agentAPIKeyRow](ctx, s.db, sql, vars)
+	if err != nil {
+		return 0, fmt.Errorf("auth: agent_apikey set workspace_id by project: %w", err)
+	}
+	if results == nil || len(*results) == 0 {
+		return 0, nil
+	}
+	return len((*results)[0].Result), nil
+}
+
 // Compile-time assertion that SurrealAgentAPIKeyStore implements
 // APIKeyStore.
 var _ APIKeyStore = (*SurrealAgentAPIKeyStore)(nil)

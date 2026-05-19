@@ -11,6 +11,7 @@ import (
 	"github.com/bobmcallan/satellites/internal/session"
 	"github.com/bobmcallan/satellites/internal/story"
 	"github.com/bobmcallan/satellites/internal/task"
+	"github.com/bobmcallan/satellites/internal/workspace"
 )
 
 // ErrRepoURLRequired is the typed-error sentinel for an empty / blank
@@ -341,21 +342,44 @@ func (c *Client) ProjectUpdate(ctx context.Context, caller Caller, in ProjectUpd
 }
 
 // ProjectDeleteInput captures the project_delete request shape.
-// Memberships is pre-resolved by the wire layer. Soft-delete only —
-// the substrate flips status to archived rather than removing rows.
+// Memberships is pre-resolved by the wire layer. Default behaviour is
+// soft-delete (status flip to archived); when Hard is true the substrate
+// hard-purges the project row plus every dependent (stories, tasks,
+// ledger, api-keys, repo rows) — operator-only path requiring the
+// project to be archived first (sty_d357b28d).
 type ProjectDeleteInput struct {
 	ID          string
+	Hard        bool
 	Memberships []string
 	Now         time.Time
 }
 
-// ProjectDeleteOutput pairs the archived project row with the cascade
-// counts so the wire layer can surface what the soft-delete touched.
+// ProjectDeleteOutput pairs the project row with the cascade counts.
+// Counters are populated according to the path taken:
+//   - Hard=false (default soft-archive): StoriesCancelled + APIKeysArchived
+//   - Hard=true (sty_d357b28d): StoriesPurged + TasksPurged + LedgerPurged +
+//     APIKeysPurged + ReposPurged
+//
+// Both paths return the project row reflecting the post-mutation state
+// (status=archived for soft; the row about to be deleted for hard — the
+// wire layer just echoes the id).
 type ProjectDeleteOutput struct {
 	Project          project.Project `json:"project"`
-	StoriesCancelled int             `json:"stories_cancelled"`
-	APIKeysArchived  int             `json:"apikeys_archived"`
+	Hard             bool            `json:"hard"`
+	StoriesCancelled int             `json:"stories_cancelled,omitempty"`
+	APIKeysArchived  int             `json:"apikeys_archived,omitempty"`
+	StoriesPurged    int             `json:"stories_purged,omitempty"`
+	TasksPurged      int             `json:"tasks_purged,omitempty"`
+	LedgerPurged     int             `json:"ledger_purged,omitempty"`
+	APIKeysPurged    int             `json:"apikeys_purged,omitempty"`
+	ReposPurged      int             `json:"repos_purged,omitempty"`
 }
+
+// ErrProjectNotArchived is returned by ProjectDelete when Hard=true is
+// requested against a project whose status != archived. Operator must
+// soft-delete first (see the cascade summary) before the hard purge.
+// Sty_d357b28d.
+var ErrProjectNotArchived = errors.New("project_not_archived")
 
 // ProjectDelete soft-deletes a project owned by caller.UserID. The
 // cascade follows the order documented in the plan's §3.3:
@@ -387,6 +411,9 @@ func (c *Client) ProjectDelete(ctx context.Context, caller Caller, in ProjectDel
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	if in.Hard {
+		return c.projectDeleteHard(ctx, caller, in, existing)
+	}
 	openTaskIDs, blockingStoryIDs, err := c.projectOpenWork(ctx, in.ID, in.Memberships)
 	if err != nil {
 		return ProjectDeleteOutput{}, err
@@ -415,6 +442,182 @@ func (c *Client) ProjectDelete(ctx context.Context, caller Caller, in ProjectDel
 		StoriesCancelled: storiesCancelled,
 		APIKeysArchived:  apikeysArchived,
 	}, nil
+}
+
+// projectDeleteHard hard-purges an archived project + every dependent
+// row across stories, tasks, ledger, api-keys, and repos, then removes
+// the project row itself. Sty_d357b28d. Refuses with
+// ErrProjectNotArchived when the project's status isn't already
+// archived — operator must soft-delete first to inspect the cascade
+// summary before committing to the destructive op.
+func (c *Client) projectDeleteHard(ctx context.Context, caller Caller, in ProjectDeleteInput, existing project.Project) (ProjectDeleteOutput, error) {
+	if existing.Status != project.StatusArchived {
+		return ProjectDeleteOutput{}, ErrProjectNotArchived
+	}
+	out := ProjectDeleteOutput{Project: existing, Hard: true}
+	if c.deps.Tasks != nil {
+		n, err := c.deps.Tasks.DeleteByProjectID(ctx, in.ID)
+		if err != nil {
+			return ProjectDeleteOutput{}, fmt.Errorf("project_delete hard: tasks purge: %w", err)
+		}
+		out.TasksPurged = n
+	}
+	if c.deps.Stories != nil {
+		n, err := c.deps.Stories.DeleteByProjectID(ctx, in.ID)
+		if err != nil {
+			return ProjectDeleteOutput{}, fmt.Errorf("project_delete hard: stories purge: %w", err)
+		}
+		out.StoriesPurged = n
+	}
+	if c.deps.Ledger != nil {
+		n, err := c.deps.Ledger.DeleteByProjectID(ctx, in.ID)
+		if err != nil {
+			return ProjectDeleteOutput{}, fmt.Errorf("project_delete hard: ledger purge: %w", err)
+		}
+		out.LedgerPurged = n
+	}
+	if c.deps.APIKeys != nil {
+		n, err := c.deps.APIKeys.DeleteByProjectID(ctx, in.ID)
+		if err != nil {
+			return ProjectDeleteOutput{}, fmt.Errorf("project_delete hard: apikeys purge: %w", err)
+		}
+		out.APIKeysPurged = n
+	}
+	if c.deps.Repos != nil {
+		n, err := c.deps.Repos.DeleteByProjectID(ctx, in.ID)
+		if err != nil {
+			return ProjectDeleteOutput{}, fmt.Errorf("project_delete hard: repos purge: %w", err)
+		}
+		out.ReposPurged = n
+	}
+	if err := c.deps.Projects.Delete(ctx, in.ID); err != nil {
+		return ProjectDeleteOutput{}, fmt.Errorf("project_delete hard: project row: %w", err)
+	}
+	return out, nil
+}
+
+// ErrProjectMoveNotAdminSource is returned by ProjectMoveWorkspace when
+// the caller is not an admin of the source workspace. Wire envelope:
+// "not_admin_source". Sty_d357b28d.
+var ErrProjectMoveNotAdminSource = errors.New("not_admin_source")
+
+// ErrProjectMoveNotAdminTarget is returned by ProjectMoveWorkspace when
+// the caller is not an admin of the target workspace. Wire envelope:
+// "not_admin_target". Sty_d357b28d.
+var ErrProjectMoveNotAdminTarget = errors.New("not_admin_target")
+
+// ProjectMoveWorkspaceInput captures the project_move_workspace request
+// shape. TargetWorkspaceID names the destination; the source is inferred
+// from the project's current workspace_id. Sty_d357b28d.
+type ProjectMoveWorkspaceInput struct {
+	ID                string
+	TargetWorkspaceID string
+	Now               time.Time
+}
+
+// ProjectMoveWorkspaceOutput pairs the updated project row with the
+// cascade counters so the wire layer can surface what the rewrite
+// touched. Sty_d357b28d.
+type ProjectMoveWorkspaceOutput struct {
+	Project        project.Project `json:"project"`
+	SourceWorkspaceID string `json:"source_workspace_id"`
+	TargetWorkspaceID string `json:"target_workspace_id"`
+	StoriesMoved   int             `json:"stories_moved"`
+	TasksMoved     int             `json:"tasks_moved"`
+	LedgerMoved    int             `json:"ledger_moved"`
+	APIKeysMoved   int             `json:"apikeys_moved"`
+	ReposMoved     int             `json:"repos_moved"`
+}
+
+// ProjectMoveWorkspace rewrites the project's workspace_id and cascades
+// the rewrite across every dependent row (stories, tasks, ledger,
+// api-keys, repo rows). Caller must be admin of BOTH the source and the
+// target workspaces. Idempotent when source==target (returns the project
+// unchanged with all counters at zero). Sty_d357b28d.
+func (c *Client) ProjectMoveWorkspace(ctx context.Context, caller Caller, in ProjectMoveWorkspaceInput) (ProjectMoveWorkspaceOutput, error) {
+	if c.deps.Projects == nil {
+		return ProjectMoveWorkspaceOutput{}, ErrProjectStoreNotConfigured
+	}
+	if c.deps.Workspaces == nil {
+		return ProjectMoveWorkspaceOutput{}, ErrWorkspaceStoreNotConfigured
+	}
+	if in.ID == "" {
+		return ProjectMoveWorkspaceOutput{}, ErrProjectIDRequired
+	}
+	if in.TargetWorkspaceID == "" {
+		return ProjectMoveWorkspaceOutput{}, errors.New("target_workspace_id required")
+	}
+	if caller.UserID == "" {
+		return ProjectMoveWorkspaceOutput{}, ErrNoCallerIdentity
+	}
+	existing, err := c.deps.Projects.GetByID(ctx, in.ID, nil)
+	if err != nil || existing.OwnerUserID != caller.UserID {
+		return ProjectMoveWorkspaceOutput{}, ErrProjectNotFound
+	}
+	source := existing.WorkspaceID
+	out := ProjectMoveWorkspaceOutput{
+		Project:           existing,
+		SourceWorkspaceID: source,
+		TargetWorkspaceID: in.TargetWorkspaceID,
+	}
+	if source == in.TargetWorkspaceID {
+		return out, nil
+	}
+	// Caller must be admin of BOTH workspaces (source for move-out
+	// authority, target for move-in authority).
+	sourceRole, err := c.deps.Workspaces.GetRole(ctx, source, caller.UserID)
+	if err != nil || sourceRole != workspace.RoleAdmin {
+		return ProjectMoveWorkspaceOutput{}, ErrProjectMoveNotAdminSource
+	}
+	targetRole, err := c.deps.Workspaces.GetRole(ctx, in.TargetWorkspaceID, caller.UserID)
+	if err != nil || targetRole != workspace.RoleAdmin {
+		return ProjectMoveWorkspaceOutput{}, ErrProjectMoveNotAdminTarget
+	}
+	now := in.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if c.deps.Stories != nil {
+		n, err := c.deps.Stories.SetWorkspaceIDByProjectID(ctx, in.ID, in.TargetWorkspaceID, now)
+		if err != nil {
+			return ProjectMoveWorkspaceOutput{}, fmt.Errorf("project_move_workspace: stories: %w", err)
+		}
+		out.StoriesMoved = n
+	}
+	if c.deps.Tasks != nil {
+		n, err := c.deps.Tasks.SetWorkspaceIDByProjectID(ctx, in.ID, in.TargetWorkspaceID, now)
+		if err != nil {
+			return ProjectMoveWorkspaceOutput{}, fmt.Errorf("project_move_workspace: tasks: %w", err)
+		}
+		out.TasksMoved = n
+	}
+	if c.deps.Ledger != nil {
+		n, err := c.deps.Ledger.SetWorkspaceIDByProjectID(ctx, in.ID, in.TargetWorkspaceID)
+		if err != nil {
+			return ProjectMoveWorkspaceOutput{}, fmt.Errorf("project_move_workspace: ledger: %w", err)
+		}
+		out.LedgerMoved = n
+	}
+	if c.deps.APIKeys != nil {
+		n, err := c.deps.APIKeys.SetWorkspaceIDByProjectID(ctx, in.ID, in.TargetWorkspaceID)
+		if err != nil {
+			return ProjectMoveWorkspaceOutput{}, fmt.Errorf("project_move_workspace: apikeys: %w", err)
+		}
+		out.APIKeysMoved = n
+	}
+	if c.deps.Repos != nil {
+		n, err := c.deps.Repos.SetWorkspaceIDByProjectID(ctx, in.ID, in.TargetWorkspaceID, now)
+		if err != nil {
+			return ProjectMoveWorkspaceOutput{}, fmt.Errorf("project_move_workspace: repos: %w", err)
+		}
+		out.ReposMoved = n
+	}
+	updated, err := c.deps.Projects.SetWorkspaceID(ctx, in.ID, in.TargetWorkspaceID, now)
+	if err != nil {
+		return ProjectMoveWorkspaceOutput{}, fmt.Errorf("project_move_workspace: project row: %w", err)
+	}
+	out.Project = updated
+	return out, nil
 }
 
 // projectOpenWork enumerates non-terminal stories on the project and

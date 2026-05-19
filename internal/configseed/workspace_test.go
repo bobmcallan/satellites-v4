@@ -35,6 +35,7 @@ agent body for workspace tier
 	const contractMD = `---
 name: shared_develop
 category: develop
+review_required: true
 tags: []
 ---
 contract body for workspace tier
@@ -103,6 +104,7 @@ name: develop
 category: develop
 validation_mode: llm
 required_role: role_orchestrator
+review_required: true
 tags: [v4, lifecycle, workspace]
 ---
 develop body

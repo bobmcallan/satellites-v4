@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -524,6 +525,107 @@ func main() {
 					}
 				}
 				return ids, nil
+			})
+		}
+
+		// sty_f49c378d: wire the review-required gate. For each closed
+		// work task on the chain whose contract declared
+		// `review_required: true`, require a paired closed-success
+		// kind=review sibling carrying a `kind:verdict` +
+		// `verdict:pass` ledger row. Missing pieces → the offending
+		// work task ids surface in the 422 envelope.
+		if g, ok := storyStore.(interface {
+			SetReviewRequiredFunc(story.ReviewRequiredFunc)
+		}); ok && taskStore != nil && docStore != nil && ledgerStore != nil {
+			ts := taskStore
+			ds := docStore
+			ls := ledgerStore
+			g.SetReviewRequiredFunc(func(ctx context.Context, storyID string, memberships []string) ([]string, error) {
+				rows, err := ts.List(ctx, task.ListOptions{StoryID: storyID, Limit: 500}, memberships)
+				if err != nil {
+					return nil, err
+				}
+				// Index review tasks by their parent_task_id for the
+				// sibling lookup below. We accept review rows from the
+				// same memberships scope as the work rows — same scope
+				// the operator's close attempt runs under.
+				reviewsByParent := make(map[string]task.Task, len(rows))
+				for _, r := range rows {
+					if r.Kind == task.KindReview && r.ParentTaskID != "" {
+						reviewsByParent[r.ParentTaskID] = r
+					}
+				}
+				missing := make([]string, 0)
+				for _, w := range rows {
+					if w.Kind != task.KindWork && w.Kind != "" {
+						continue
+					}
+					if w.Status != task.StatusClosed {
+						continue
+					}
+					contractName := task.ContractFromAction(w.Action)
+					if contractName == "" {
+						continue
+					}
+					// ResolveByName walks project → workspace → system;
+					// passing "" for the project keys the workspace +
+					// system tiers (the work-task store rows carry
+					// workspace_id but contract docs come from those
+					// tiers).
+					doc, derr := ds.ResolveByName(ctx, document.TypeContract, contractName, w.WorkspaceID, "", memberships)
+					if derr != nil {
+						// Drift signal — substrate_audit reports it; the
+						// gate skips so an unknown contract can't itself
+						// strand the close.
+						continue
+					}
+					var payload struct {
+						ReviewRequired bool `json:"review_required"`
+					}
+					_ = json.Unmarshal(doc.Structured, &payload)
+					if !payload.ReviewRequired {
+						continue
+					}
+					rev, ok := reviewsByParent[w.ID]
+					if !ok || rev.Status != task.StatusClosed || rev.Outcome != task.OutcomeSuccess {
+						missing = append(missing, w.ID)
+						continue
+					}
+					// Look for a verdict:pass ledger row tagged to the
+					// review task. ledger.ListOptions.Tags is OR-matched
+					// on each row's Tags, so we filter on the
+					// review-task anchor and AND-match the kind/verdict
+					// tags in Go.
+					verdictRows, lerr := ls.List(ctx, w.ProjectID, ledger.ListOptions{
+						StoryID: storyID,
+						Tags:    []string{"task_id:" + rev.ID},
+						Limit:   100,
+					}, memberships)
+					if lerr != nil {
+						missing = append(missing, w.ID)
+						continue
+					}
+					pass := false
+					for _, row := range verdictRows {
+						hasKind, hasPass := false, false
+						for _, tag := range row.Tags {
+							switch tag {
+							case "kind:verdict":
+								hasKind = true
+							case "verdict:pass":
+								hasPass = true
+							}
+						}
+						if hasKind && hasPass {
+							pass = true
+							break
+						}
+					}
+					if !pass {
+						missing = append(missing, w.ID)
+					}
+				}
+				return missing, nil
 			})
 		}
 	}

@@ -3,6 +3,7 @@ name: develop
 category: develop
 validation_mode: llm
 required_role: role_orchestrator
+review_required: true
 tags: [v4, lifecycle, workspace]
 ---
 # Develop Contract

@@ -12,6 +12,7 @@ evidence_required: |
   contracts (develop, story_close) carry a kind=review sibling on
   the chain; execution-shape contracts (push, merge_to_main) do
   not. plan and review are base cases (no recursion).
+review_required: false
 tags: [v4, lifecycle, system]
 ---
 # Plan Contract

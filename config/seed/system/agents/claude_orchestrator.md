@@ -150,6 +150,7 @@ work-task close. Reviewer rejections cite violations here.
   `task_walk` / `ledger_*` / `principle_list` / `document_get`.
   Citing `pr_substrate_model`.
 - **Rule 5 — role authority.** orchestration cannot author cross-task ledger rows; the review gate blocks story done without a verdict:pass review row. Citing `pr_role_grid`.
+- **Rule 6 — review-required gate.** The substrate refuses story done while any `review_required` contract closed without `verdict:pass`. A `story_update(status=done|cancelled)` against a chain with a closed `review_required: true` work task lacking the paired `kind:verdict` / `verdict:pass` ledger row returns `422 {"error":"review_required_gate","work_tasks_missing_pass":[...]}`. The orchestrator's response is to dispatch the missing review tasks; on `verdict:fail`, mint a fresh iter-N+1 develop task per Rule 3. No operator bypass exists. Citing `pr_review_required_gate`.
 
 ### Dispatch loop
 

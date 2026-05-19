@@ -67,6 +67,20 @@ func contractToInput(fm Frontmatter, body []byte, workspaceID, actor string) (do
 	if name == "" {
 		return document.UpsertInput{}, fmt.Errorf("contract: name required")
 	}
+	// sty_f49c378d: every contract MUST declare `review_required: bool`
+	// (drives the pr_review_required_gate close gate). Explicit-present
+	// check so an omitted key fails loudly at seed-load time; non-bool
+	// values are rejected the same way. The bool round-trips through the
+	// Structured payload — pruneEmpty leaves bools alone, so `false`
+	// survives the marshal step.
+	rawReviewRequired, present := fm["review_required"]
+	if !present {
+		return document.UpsertInput{}, fmt.Errorf("contract %q: review_required required (true|false)", name)
+	}
+	reviewRequired, ok := rawReviewRequired.(bool)
+	if !ok {
+		return document.UpsertInput{}, fmt.Errorf("contract %q: review_required required (true|false)", name)
+	}
 	payload := map[string]any{
 		"category":            fm.String("category"),
 		"required_categories": fm.StringSlice("required_categories"),
@@ -74,6 +88,7 @@ func contractToInput(fm Frontmatter, body []byte, workspaceID, actor string) (do
 		"validation_mode":     fm.String("validation_mode"),
 	}
 	pruneEmpty(payload)
+	payload["review_required"] = reviewRequired
 	structured, err := json.Marshal(payload)
 	if err != nil {
 		return document.UpsertInput{}, fmt.Errorf("contract %q: marshal: %w", name, err)

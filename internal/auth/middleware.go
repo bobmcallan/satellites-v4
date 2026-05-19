@@ -33,6 +33,11 @@ const userKey ctxKey = iota
 // identifier used by project/document ownership — sess.UserID for session
 // callers, the literal "apikey" for env-keyset api-key callers, the
 // substrate row's owner UserID for agent_apikey callers.
+//
+// sty_056b68f6: TaskID + AllowedVerbs are populated when the caller's
+// token is a task-scoped api-key row. AssertVerbAllowed(ctx, verb)
+// reads AllowedVerbs to gate verb invocations; project-scoped keys /
+// OAuth / session callers leave both fields zero and bypass the gate.
 type CallerIdentity struct {
 	Email  string
 	UserID string
@@ -40,6 +45,12 @@ type CallerIdentity struct {
 	// GlobalAdmin is set when the resolved user has the persisted flag
 	// or matches SATELLITES_GLOBAL_ADMIN_EMAILS. story_3548cde2.
 	GlobalAdmin bool
+	// TaskID is the task this caller's api-key is scoped to (empty for
+	// project-scoped keys / OAuth / session). sty_056b68f6.
+	TaskID string
+	// AllowedVerbs is the per-task verb allowlist (nil for un-narrowed
+	// callers — they bypass the verb gate). sty_056b68f6.
+	AllowedVerbs []string
 }
 
 // UserFrom returns the caller identity attached by AuthMiddleware /
@@ -106,6 +117,12 @@ func AuthMiddleware(deps AuthDeps) func(http.Handler) http.Handler {
 							Email:  owner.Email,
 							UserID: key.OwnerUserID,
 							Source: "apikey:" + key.ID,
+							// sty_056b68f6: stamp task-scoped fields so the
+							// AssertVerbAllowed gate can read them on this
+							// request's ctx. Project-scoped keys leave both
+							// zero (TaskID == "" → gate bypass).
+							TaskID:       key.TaskID,
+							AllowedVerbs: key.AllowedVerbs,
 						}
 						caller.GlobalAdmin = IsGlobalAdmin(owner, adminEmails)
 						ctx := context.WithValue(r.Context(), userKey, caller)

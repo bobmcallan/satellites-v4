@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -375,6 +376,32 @@ func (c *Client) TaskUpdate(ctx context.Context, caller Caller, in TaskUpdateInp
 		"outcome":             closed.Outcome,
 		"evidence_ledger_ids": in.EvidenceLedgerIDs,
 	})
+	// sty_056b68f6: task-scoped api-keys minted with task_id=closed.ID
+	// are revoked here so the dispatched subprocess's bearer cannot
+	// outlive its task. Idempotent — zero rows is a no-op. The audit
+	// row exists for chain reconstruction.
+	if c.deps.APIKeys != nil {
+		revoked, revErr := c.deps.APIKeys.RevokeByTaskID(ctx, closed.ID)
+		if revErr == nil && revoked > 0 && c.deps.Ledger != nil {
+			payload, _ := json.Marshal(map[string]any{
+				"task_id": closed.ID,
+				"count":   revoked,
+				"actor":   caller.UserID,
+			})
+			_, _ = c.deps.Ledger.Append(ctx, ledger.LedgerEntry{
+				WorkspaceID: closed.WorkspaceID,
+				ProjectID:   closed.ProjectID,
+				Type:        ledger.TypeDecision,
+				Tags: []string{
+					"kind:agent-apikey-revoked-on-task-close",
+					"task_id:" + closed.ID,
+				},
+				Content:    "task-scoped api-key(s) revoked on task close",
+				Structured: payload,
+				CreatedBy:  caller.UserID,
+			}, now)
+		}
+	}
 	return TaskUpdateOutput{
 		TaskID:            closed.ID,
 		Status:            closed.Status,

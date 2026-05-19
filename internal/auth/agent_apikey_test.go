@@ -249,6 +249,119 @@ func TestMemoryStore_Touch_BumpsLastUsedAt(t *testing.T) {
 	}
 }
 
+// TestMemoryStore_RevokeByTaskID_FlipsActiveRowsAndCounts asserts
+// the sty_056b68f6 lifecycle binding: closing a task revokes every
+// active task-scoped api-key whose TaskID == closed.ID. Archived
+// rows are not re-revoked; project-scoped rows (TaskID=="") are
+// untouched. Idempotent — re-call against the same id returns 0.
+func TestMemoryStore_RevokeByTaskID_FlipsActiveRowsAndCounts(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryAgentAPIKeyStore()
+	mk := func(taskID, status string) APIKey {
+		ct, salt, _ := GenerateAPIKey()
+		return APIKey{
+			ID:          NewAPIKeyID(),
+			OwnerUserID: "u_alice",
+			KeyHash:     HashAPIKey(salt, ct),
+			KeySalt:     salt,
+			TaskID:      taskID,
+			Status:      status,
+			CreatedAt:   time.Now().UTC(),
+		}
+	}
+	a := mk("tsk_close", APIKeyStatusActive)
+	b := mk("tsk_close", APIKeyStatusActive)
+	c := mk("tsk_close", APIKeyStatusArchived) // already archived
+	d := mk("tsk_other", APIKeyStatusActive)   // different task
+	e := mk("", APIKeyStatusActive)            // project-scoped (TaskID empty)
+	for _, r := range []APIKey{a, b, c, d, e} {
+		_ = store.Create(ctx, r)
+	}
+	got, err := store.RevokeByTaskID(ctx, "tsk_close")
+	if err != nil {
+		t.Fatalf("RevokeByTaskID: %v", err)
+	}
+	if got != 2 {
+		t.Errorf("revoked count = %d, want 2 (only the two active rows)", got)
+	}
+	// Idempotent: re-call returns 0.
+	got2, err := store.RevokeByTaskID(ctx, "tsk_close")
+	if err != nil || got2 != 0 {
+		t.Errorf("idempotent re-call: got (%d, %v), want (0, nil)", got2, err)
+	}
+	// Confirm individual rows. a, b flipped to archived.
+	if row, _ := store.Get(ctx, a.ID); row.Status != APIKeyStatusArchived {
+		t.Errorf("row a status = %q, want archived", row.Status)
+	}
+	if row, _ := store.Get(ctx, b.ID); row.Status != APIKeyStatusArchived {
+		t.Errorf("row b status = %q, want archived", row.Status)
+	}
+	// d (different task) stayed active.
+	if row, _ := store.Get(ctx, d.ID); row.Status != APIKeyStatusActive {
+		t.Errorf("row d status = %q, want active (different task_id)", row.Status)
+	}
+	// e (project-scoped) stayed active.
+	if row, _ := store.Get(ctx, e.ID); row.Status != APIKeyStatusActive {
+		t.Errorf("row e status = %q, want active (no task_id)", row.Status)
+	}
+}
+
+// TestMemoryStore_RevokeByTaskID_EmptyTaskIDIsNoop guards the
+// degenerate case: an empty task id revokes nothing.
+func TestMemoryStore_RevokeByTaskID_EmptyTaskIDIsNoop(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryAgentAPIKeyStore()
+	ct, salt, _ := GenerateAPIKey()
+	row := APIKey{
+		ID:          NewAPIKeyID(),
+		KeyHash:     HashAPIKey(salt, ct),
+		KeySalt:     salt,
+		OwnerUserID: "u_alice",
+		Status:      APIKeyStatusActive,
+		CreatedAt:   time.Now().UTC(),
+	}
+	_ = store.Create(ctx, row)
+	got, err := store.RevokeByTaskID(ctx, "")
+	if err != nil {
+		t.Fatalf("RevokeByTaskID(\"\"): %v", err)
+	}
+	if got != 0 {
+		t.Errorf("empty task id revoked %d rows, want 0", got)
+	}
+}
+
+// TestMemoryStore_LookupByToken_AfterTaskRevokeMisses pins the
+// dispatched-subprocess invariant: once the task closes, the
+// dispatched subprocess's bearer fails AuthMiddleware.
+func TestMemoryStore_LookupByToken_AfterTaskRevokeMisses(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemoryAgentAPIKeyStore()
+	cleartext, salt, _ := GenerateAPIKey()
+	row := APIKey{
+		ID:          NewAPIKeyID(),
+		KeyHash:     HashAPIKey(salt, cleartext),
+		KeySalt:     salt,
+		Prefix:      APIKeyCleartextPrefix(cleartext),
+		Status:      APIKeyStatusActive,
+		TaskID:      "tsk_close",
+		OwnerUserID: "u_alice",
+		CreatedAt:   time.Now().UTC(),
+	}
+	_ = store.Create(ctx, row)
+	if _, err := store.LookupByToken(ctx, cleartext); err != nil {
+		t.Fatalf("pre-revoke LookupByToken: %v", err)
+	}
+	if _, err := store.RevokeByTaskID(ctx, "tsk_close"); err != nil {
+		t.Fatalf("RevokeByTaskID: %v", err)
+	}
+	if _, err := store.LookupByToken(ctx, cleartext); !errors.Is(err, ErrAPIKeyNotFound) {
+		t.Errorf("post-revoke LookupByToken err = %v, want ErrAPIKeyNotFound", err)
+	}
+}
+
 // TestMemoryStore_List_FiltersByOwnerAndProject pins the AC2
 // filter behaviour: caller A's keys never leak to caller B; the
 // project_id filter narrows further.

@@ -87,6 +87,16 @@ type AgentConfig struct {
 	// caller; never read from TOML. sty_ef4eedaa.
 	ClientConfigPath string `toml:"-"`
 
+	// AllowedVerbs is the resolved per-task verb allowlist the
+	// dispatcher writes into the worktree `.mcp.json` server entry's
+	// `allowedTools` array. Empty/nil → field omitted (un-narrowed
+	// caller). Set by cmd/satellites-client/task_run.go after a
+	// successful `agent_apikey_create(task_id=…)`; never read from
+	// TOML. Defence-in-depth: server enforcement (AC2) is canonical,
+	// the client narrowing is the artefact a reviewer greps.
+	// sty_056b68f6.
+	AllowedVerbs []string `toml:"-"`
+
 	// loadedTOMLPath records the path that was actually read; "" when
 	// the loader fell back to defaults.
 	loadedTOMLPath string

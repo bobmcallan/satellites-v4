@@ -25,7 +25,7 @@ func (s *Server) registerPortalGetPage() {
 		mcpgo.WithDescription("Fetch a rendered portal page and return its HTML content. Use this to inspect the portal UI, debug layout issues, or verify page content. Returns the full HTML body + the HTTP status of the requested page. Read-only loopback GET; redirects are NOT followed (the 3xx status is returned as-is). Allowed paths must start with '/' and must not target the API/OAuth/MCP/static/well-known surfaces."),
 		mcpgo.WithString("path", mcpgo.Required(), mcpgo.Description("Portal page path to fetch (e.g. /home, /projects, /projects/{id}).")),
 	)
-	s.mcp.AddTool(tool, s.handlePortalGetPage)
+	s.addGatedTool(tool, s.handlePortalGetPage)
 }
 
 // handlePortalGetPage is the wire adapter: read the JSON arg, hand it

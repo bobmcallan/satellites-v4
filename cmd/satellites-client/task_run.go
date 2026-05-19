@@ -74,6 +74,7 @@ func runTaskCmd(cmd *cobra.Command, args []string) error {
 		ProjectID   string `json:"project_id"`
 		StoryID     string `json:"story_id"`
 		Origin      string `json:"origin"`
+		AgentID     string `json:"agent_id"`
 	}
 	if err := json.Unmarshal(raw, &t); err != nil {
 		return cliexit.Wrap(cliexit.Server, fmt.Errorf("task run %s: decode task_get: %w", taskID, err))
@@ -82,13 +83,40 @@ func runTaskCmd(cmd *cobra.Command, args []string) error {
 		return cliexit.Newf(cliexit.NotFound, "task run: task %s not found", taskID)
 	}
 
+	// sty_056b68f6: mint a task-scoped agent api-key for the
+	// dispatched subprocess. The server clamps allowed_verbs to the
+	// task agent's pr_role_grid default; the response carries the
+	// resolved list + cleartext key (returned ONCE). On any mint
+	// failure (e.g. the server is older than sty_056b68f6 and rejects
+	// `task_id`), fall back to the orchestrator's project-scoped
+	// bearer — server enforcement is still in place if the server is
+	// up-to-date, and the legacy path stays callable for older binaries
+	// until the substrate is universally upgraded.
+	taskToken := resolvedToken
+	var taskAllowedVerbs []string
+	if mintRaw, mintErr := callRemote(cmd, "agent_apikey_create", map[string]any{
+		"name":       "run:" + taskID,
+		"project_id": t.ProjectID,
+		"task_id":    taskID,
+	}); mintErr == nil {
+		var mintOut struct {
+			Key          string   `json:"key"`
+			AllowedVerbs []string `json:"allowed_verbs"`
+		}
+		if err := json.Unmarshal(mintRaw, &mintOut); err == nil && mintOut.Key != "" {
+			taskToken = mintOut.Key
+			taskAllowedVerbs = mintOut.AllowedVerbs
+		}
+	}
+
 	cfg := config.AgentConfig{
 		RepoPath:         resolvedClientConfig.RepoPath,
 		BranchTemplate:   resolvedClientConfig.BranchTemplate,
 		WorktreeRoot:     resolvedClientConfig.WorktreeRoot,
 		ClaudeBinaryPath: "claude",
 		SpawnMCPURL:      effectiveServer() + "/mcp",
-		AuthToken:        resolvedToken,
+		AuthToken:        taskToken,
+		AllowedVerbs:     taskAllowedVerbs,
 		ExecuteTimeout:   resolvedClientConfig.ExecuteTimeout,
 		LogLevel:         resolvedClientConfig.LogLevel,
 		ClientConfigPath: resolvedClientConfig.LoadedTOMLPath(),

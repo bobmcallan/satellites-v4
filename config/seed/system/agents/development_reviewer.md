@@ -1,5 +1,6 @@
 ---
 name: development_reviewer
+role: review
 reviews:
   - "contract:develop"
 instruction: |

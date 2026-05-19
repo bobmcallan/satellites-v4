@@ -1,5 +1,6 @@
 ---
 name: releaser_agent
+role: execution
 delivers:
   - "contract:commit"
   - "contract:merge_to_main"

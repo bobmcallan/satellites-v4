@@ -1,5 +1,6 @@
 ---
 name: substrate_auditor
+role: execution
 delivers:
   - "contract:substrate_audit"
 reviews: []

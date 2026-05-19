@@ -97,6 +97,9 @@ func daemoniseSelf(argv []string, logfile string, stderr io.Writer) (int, error)
 	cmd := exec.Command(self, argv...)
 	cmd.Stdin = nil
 	if logfile != "" {
+		if err := os.MkdirAll(filepath.Dir(logfile), 0o755); err != nil {
+			return 0, fmt.Errorf("client daemonise: mkdir logfile dir %q: %w", filepath.Dir(logfile), err)
+		}
 		f, err := os.OpenFile(logfile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
 			return 0, fmt.Errorf("client daemonise: open logfile %q: %w", logfile, err)

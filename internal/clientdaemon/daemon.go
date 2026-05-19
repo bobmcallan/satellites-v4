@@ -163,33 +163,33 @@ func New(opts Options) (*Daemon, error) {
 	return d, nil
 }
 
-// DefaultSocketPath returns ~/.satellites/daemon/satellites-client.sock.
+// DefaultSocketPath returns satellites-client.sock under the resolved
+// daemon home (see daemonHome).
 func DefaultSocketPath() string { return filepath.Join(daemonHome(), "satellites-client.sock") }
 
-// DefaultPidfilePath returns ~/.satellites/daemon/satellites-client.pid.
+// DefaultPidfilePath returns satellites-client.pid under the resolved
+// daemon home (see daemonHome).
 func DefaultPidfilePath() string { return filepath.Join(daemonHome(), "satellites-client.pid") }
 
-// DefaultStatePath returns ~/.satellites/daemon/state.json.
+// DefaultStatePath returns state.json under the resolved daemon home
+// (see daemonHome).
 func DefaultStatePath() string { return filepath.Join(daemonHome(), "state.json") }
 
-// DefaultLogfilePath returns ~/.satellites/daemon/daemon.log.
+// DefaultLogfilePath returns daemon.log under the resolved daemon home
+// (see daemonHome).
 func DefaultLogfilePath() string { return filepath.Join(daemonHome(), "daemon.log") }
 
-// DefaultLogsDir returns ~/.satellites/daemon/logs.
+// DefaultLogsDir returns the per-task subprocess log directory under
+// the resolved daemon home (see daemonHome).
 func DefaultLogsDir() string { return filepath.Join(daemonHome(), "logs") }
 
-// daemonHome returns ~/.satellites/daemon — the operator-side
-// per-machine directory holding the socket, pidfile, state.json,
-// daemon.log, and per-task subprocess logs.
+// daemonHome returns the directory holding the socket, pidfile,
+// state.json, daemon.log, and per-task subprocess logs. The home is
+// resolved per-project — see internal/clientdaemon/home.go for the
+// four-step resolution chain (SATELLITES_DAEMON_HOME → repo-relative →
+// ~/.satellites/daemon → $TMPDIR fallback).
 func daemonHome() string {
-	if v := os.Getenv("SATELLITES_DAEMON_HOME"); v != "" {
-		return v
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return filepath.Join(os.TempDir(), "satellites-daemon")
-	}
-	return filepath.Join(home, ".satellites", "daemon")
+	return defaultHomeResolver().resolve()
 }
 
 // Now returns the daemon's monotonic-ish UTC clock (test-injectable

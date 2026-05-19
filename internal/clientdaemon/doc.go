@@ -38,4 +38,33 @@
 // package does not import any substrate-domain package
 // (internal/document, internal/story, internal/task, …); a defensive
 // AST test in layering_test.go pins the layering closed.
+//
+// Per-project daemon model (sty_517a7db3)
+//
+// One daemon per project. The daemon home — socket, pidfile,
+// state.json, daemon.log, per-task logs/ — lives at
+// `<repo>/.satellites/daemon/` whenever the binary is invoked inside
+// a detectable project (either installed at `<repo>/.satellites/…`
+// per the cliconfig RepoPath convention, or invoked from inside a
+// git work-tree). Multi-project operators run one `serve start` per
+// project shell; each instance binds its own socket and never
+// collides with peers in other projects.
+//
+// The legacy `~/.satellites/daemon/` location is the *no-project*
+// fallback — reached only when no repo root can be detected (ad-hoc
+// invocations outside any git work-tree, with the binary not
+// installed under a `.satellites/` directory). It is NOT a compat
+// probe: the resolver does not stat the legacy path to "discover" a
+// daemon already running there (pr_no_unrequested_compat,
+// doc_8a677faf).
+//
+// Operators upgrading from the prior single-machine layout must stop
+// any pre-existing legacy daemon explicitly before relying on the
+// per-project home — e.g.
+//
+//	SATELLITES_DAEMON_HOME=$HOME/.satellites/daemon \
+//	    satellites-client serve stop
+//
+// then `serve start` afresh from inside their project. The home.go
+// resolver does not auto-detect or migrate the legacy state.
 package clientdaemon

@@ -3,6 +3,7 @@ name: commit
 category: commit
 validation_mode: llm
 required_role: role_orchestrator
+review_required: false
 tags: [v4, lifecycle, workspace]
 ---
 # Commit Contract

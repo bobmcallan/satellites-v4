@@ -3,6 +3,7 @@ name: merge_to_main
 category: merge_to_main
 validation_mode: llm
 required_role: role_orchestrator
+review_required: false
 tags: [v4, lifecycle, workspace]
 ---
 # Merge to Main Contract

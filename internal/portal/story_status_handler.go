@@ -82,6 +82,19 @@ func (p *Portal) handleStoryStatusUpdate(w http.ResponseWriter, r *http.Request)
 			})
 			return
 		}
+		// sty_f49c378d: review-required gate. Same envelope shape as
+		// the open-tasks branch — `error` plus the offending work task
+		// ids so the operator can dispatch the missing reviews.
+		var reviewErr *story.ReviewRequiredGateError
+		if errors.As(err, &reviewErr) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":                   "review_required_gate",
+				"work_tasks_missing_pass": reviewErr.WorkTaskIDsMissingPass,
+			})
+			return
+		}
 		// 422 keeps the operator's UI state intact while signalling that
 		// the substrate rejected the transition (illegal jump, terminal
 		// re-target, etc.).

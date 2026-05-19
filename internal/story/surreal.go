@@ -18,14 +18,19 @@ import (
 // transaction but satisfies the v4-baseline invariant: "failed ledger
 // emission must not leave the status advanced" (pr_20440c77).
 type SurrealStore struct {
-	db          *surrealdb.DB
-	ledger      ledger.Store
-	openTasksFn OpenTasksFunc
+	db               *surrealdb.DB
+	ledger           ledger.Store
+	openTasksFn      OpenTasksFunc
+	reviewRequiredFn ReviewRequiredFunc
 }
 
 // SetOpenTasksFunc wires the terminal-transition gate; see MemoryStore
 // for the contract. Sty_0233fabd.
 func (s *SurrealStore) SetOpenTasksFunc(fn OpenTasksFunc) { s.openTasksFn = fn }
+
+// SetReviewRequiredFunc wires the review-required terminal-transition
+// gate; see MemoryStore for the contract. Sty_f49c378d.
+func (s *SurrealStore) SetReviewRequiredFunc(fn ReviewRequiredFunc) { s.reviewRequiredFn = fn }
 
 // NewSurrealStore wraps db as a Store. Defines the `stories` table
 // schemaless and panics if led is nil.
@@ -131,6 +136,16 @@ func (s *SurrealStore) UpdateStatus(ctx context.Context, id, newStatus, actor st
 		}
 		if len(ids) > 0 {
 			return Story{}, &StoryHasOpenTasksError{StoryID: id, OpenTaskIDs: ids}
+		}
+	}
+	// sty_f49c378d: review-required gate. Mirrors the MemoryStore wiring.
+	if s.reviewRequiredFn != nil && isTerminalStatus(newStatus) {
+		missing, err := s.reviewRequiredFn(ctx, id, memberships)
+		if err != nil {
+			return Story{}, fmt.Errorf("story: review-required lookup: %w", err)
+		}
+		if len(missing) > 0 {
+			return Story{}, &ReviewRequiredGateError{StoryID: id, WorkTaskIDsMissingPass: missing}
 		}
 	}
 	current, err := s.GetByID(ctx, id, memberships)

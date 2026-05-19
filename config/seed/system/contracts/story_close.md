@@ -12,6 +12,7 @@ evidence_required: |
 
   Plus a story.status_change ledger row authored in the same call,
   walking the story to done via UpdateStatusDerived.
+review_required: false
 tags: [v4, lifecycle, system]
 ---
 # Story Close Contract

@@ -53,6 +53,41 @@ func (e *StoryHasOpenTasksError) Unwrap() error { return ErrStoryHasOpenTasks }
 // proceed as before. Sty_0233fabd.
 type OpenTasksFunc func(ctx context.Context, storyID string, memberships []string) ([]string, error)
 
+// ErrReviewRequiredGateMissing is returned by UpdateStatus when a
+// transition to done|cancelled is rejected because one or more closed
+// work tasks on the chain ran a contract carrying `review_required:
+// true` and lack a paired review with `verdict:pass`. Wrapped by
+// *ReviewRequiredGateError, which carries the offending work task ids.
+// Sty_f49c378d (pr_review_required_gate).
+var ErrReviewRequiredGateMissing = errors.New("story: closed work tasks lack review verdict:pass")
+
+// ReviewRequiredGateError is the typed concrete error returned when
+// the review-required gate fires. errors.Is(err,
+// ErrReviewRequiredGateMissing) is true; callers extract the ids via
+// errors.As to *ReviewRequiredGateError. The wire envelope at
+// portal/story_status_handler.go encodes WorkTaskIDsMissingPass as
+// the JSON `work_tasks_missing_pass` field.
+type ReviewRequiredGateError struct {
+	StoryID                string
+	WorkTaskIDsMissingPass []string
+}
+
+func (e *ReviewRequiredGateError) Error() string {
+	return fmt.Sprintf("%s: %s has %d work task(s) missing verdict:pass", ErrReviewRequiredGateMissing.Error(), e.StoryID, len(e.WorkTaskIDsMissingPass))
+}
+
+// Unwrap supports errors.Is(err, ErrReviewRequiredGateMissing).
+func (e *ReviewRequiredGateError) Unwrap() error { return ErrReviewRequiredGateMissing }
+
+// ReviewRequiredFunc returns the ids of CLOSED work tasks on storyID
+// whose contract declares `review_required: true` and which lack a
+// paired closed-success kind=review sibling carrying a kind:verdict /
+// verdict:pass ledger row. The Store calls this after the open-tasks
+// gate passes, under the same `isTerminalStatus(newStatus)` guard. A
+// nil func disables the gate (boot ordering / unit-test paths).
+// Sty_f49c378d.
+type ReviewRequiredFunc func(ctx context.Context, storyID string, memberships []string) ([]string, error)
+
 // UpdateFields names the per-call mutable subset for Update. Nil-valued
 // pointers mean "leave alone"; non-nil means "set to this value". The
 // Tags slice is wholesale-replace: a non-nil empty slice clears the tag
@@ -145,10 +180,11 @@ type transitionPayload struct {
 // It emits a ledger row on every successful UpdateStatus; if the ledger
 // append fails, the in-memory status change is reverted.
 type MemoryStore struct {
-	mu          sync.Mutex
-	rows        map[string]Story
-	ledger      ledger.Store
-	openTasksFn OpenTasksFunc
+	mu               sync.Mutex
+	rows             map[string]Story
+	ledger           ledger.Store
+	openTasksFn      OpenTasksFunc
+	reviewRequiredFn ReviewRequiredFunc
 }
 
 // SetOpenTasksFunc wires the terminal-transition gate. When set,
@@ -156,6 +192,13 @@ type MemoryStore struct {
 // chain has any task at status=published or status=planned. Nil disables
 // the gate (boot ordering / unit-test paths). Sty_0233fabd.
 func (m *MemoryStore) SetOpenTasksFunc(fn OpenTasksFunc) { m.openTasksFn = fn }
+
+// SetReviewRequiredFunc wires the review-required terminal-transition
+// gate. When set, UpdateStatus rejects transitions to done|cancelled
+// while any closed work task on the chain ran a contract declaring
+// `review_required: true` and lacks a paired review with verdict:pass.
+// Nil disables the gate. Sty_f49c378d.
+func (m *MemoryStore) SetReviewRequiredFunc(fn ReviewRequiredFunc) { m.reviewRequiredFn = fn }
 
 // NewMemoryStore returns an empty MemoryStore backed by the supplied
 // ledger.Store. A nil ledger is rejected — status transitions MUST emit
@@ -248,6 +291,7 @@ func inStoryMemberships(wsID string, memberships []string) bool {
 func (m *MemoryStore) UpdateStatus(ctx context.Context, id, newStatus, actor string, now time.Time, memberships []string) (Story, error) {
 	m.mu.Lock()
 	fn := m.openTasksFn
+	reviewFn := m.reviewRequiredFn
 	m.mu.Unlock()
 	if fn != nil && isTerminalStatus(newStatus) {
 		ids, err := fn(ctx, id, memberships)
@@ -256,6 +300,19 @@ func (m *MemoryStore) UpdateStatus(ctx context.Context, id, newStatus, actor str
 		}
 		if len(ids) > 0 {
 			return Story{}, &StoryHasOpenTasksError{StoryID: id, OpenTaskIDs: ids}
+		}
+	}
+	// sty_f49c378d: review-required gate. Closed work tasks whose
+	// contract declared review_required:true must have a paired review
+	// carrying verdict:pass — else the close is rejected with the
+	// offending work task ids in the error payload.
+	if reviewFn != nil && isTerminalStatus(newStatus) {
+		missing, err := reviewFn(ctx, id, memberships)
+		if err != nil {
+			return Story{}, fmt.Errorf("story: review-required lookup: %w", err)
+		}
+		if len(missing) > 0 {
+			return Story{}, &ReviewRequiredGateError{StoryID: id, WorkTaskIDsMissingPass: missing}
 		}
 	}
 	m.mu.Lock()

@@ -38,6 +38,7 @@ permitted_actions:
 evidence_required: |
   Build + test outputs.
 validation_mode: llm
+review_required: true
 ---
 # Test Contract
 
@@ -253,6 +254,7 @@ name: test_straggler_contract
 category: push
 dispatch_class: hot
 validation_mode: llm
+review_required: false
 ---
 # Test Straggler Contract (frontmatter still carries dispatch_class — must be dropped)
 `
@@ -275,6 +277,53 @@ validation_mode: llm
 	}
 	if _, has := payload["dispatch_class"]; has {
 		t.Errorf("contract Structured carries dispatch_class %v — sty_447b9fe0 dropped the field; contractToInput must not pass it through", payload["dispatch_class"])
+	}
+}
+
+// TestRun_RealSeedContractsCarryReviewRequired (sty_f49c378d AC2) —
+// every contract loaded from the real seed tree must carry a bool
+// `review_required` key in its Structured payload. The configseed
+// parser rejects missing keys at load time; this test asserts the
+// post-load shape end-to-end across both the system and workspace
+// tiers' contract files.
+func TestRun_RealSeedContractsCarryReviewRequired(t *testing.T) {
+	t.Parallel()
+	seedDir, err := filepath.Abs(filepath.Join("..", "..", "config", "seed"))
+	if err != nil {
+		t.Fatalf("abs seed dir: %v", err)
+	}
+	docs := document.NewMemoryStore()
+	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
+	if _, err := Run(context.Background(), docs, seedDir, "wksp_sys", "system", now); err != nil {
+		t.Fatalf("Run real seed: %v", err)
+	}
+	if _, err := RunWorkspace(context.Background(), docs, seedDir, "wksp_5b3257d1", "system", now); err != nil {
+		t.Fatalf("RunWorkspace real seed: %v", err)
+	}
+	contracts, err := docs.List(context.Background(), document.ListOptions{
+		Type:  document.TypeContract,
+		Limit: 100,
+	}, nil)
+	if err != nil {
+		t.Fatalf("List contracts: %v", err)
+	}
+	if len(contracts) == 0 {
+		t.Fatal("no contract docs loaded from real seed")
+	}
+	for _, c := range contracts {
+		var payload map[string]any
+		if err := json.Unmarshal(c.Structured, &payload); err != nil {
+			t.Errorf("contract %q: decode Structured: %v", c.Name, err)
+			continue
+		}
+		raw, present := payload["review_required"]
+		if !present {
+			t.Errorf("contract %q: Structured missing review_required", c.Name)
+			continue
+		}
+		if _, ok := raw.(bool); !ok {
+			t.Errorf("contract %q: review_required type = %T, want bool", c.Name, raw)
+		}
 	}
 }
 

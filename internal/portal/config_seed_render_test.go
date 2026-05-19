@@ -38,6 +38,7 @@ permitted_actions:
   - "Read:**"
 evidence_required: |
   Fixture evidence for the integration test.
+review_required: true
 tags: [fixture]
 ---
 # Fixture Contract

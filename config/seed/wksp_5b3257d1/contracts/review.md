@@ -2,6 +2,7 @@
 name: review
 category: review
 validation_mode: llm
+review_required: false
 tags: [v4, lifecycle, workspace]
 ---
 # Review Contract

@@ -19,6 +19,7 @@ evidence_required: |
     "scope": "system" | "workspace:<wksp_id>" | "project:<proj_id>",
     "audited_at": "<RFC3339>"
   }
+review_required: false
 tags: [v4, lifecycle, system]
 ---
 # Substrate Audit Contract

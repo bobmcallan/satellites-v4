@@ -8,6 +8,7 @@ evidence_required: |
   cited principle ids, named gaps (each tied to an AC or principle),
   the prior task id, the commit SHA the verdict applies to, and on
   pass the resolution slot the story_close verb will record.
+review_required: true
 tags: [v4, lifecycle, system]
 ---
 # Story Review Contract

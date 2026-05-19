@@ -186,6 +186,9 @@ func buildWSConfig(active wsChip, r *http.Request) WSConfig {
 
 // memberWorkspaces returns the caller's full workspace membership set as
 // view-model chips, plus the canonical id slice the store reads expect.
+// Chip names are disambiguated (sty_a21f61a6 AC4) so two workspaces whose
+// trimmed display names collide case-insensitively render distinctly in
+// the header + dropdown surfaces.
 func (p *Portal) memberWorkspaces(r *http.Request, user auth.User) ([]wsChip, []string) {
 	if p.workspaces == nil {
 		return nil, nil
@@ -200,7 +203,32 @@ func (p *Portal) memberWorkspaces(r *http.Request, user auth.User) ([]wsChip, []
 		chips = append(chips, wsChip{ID: w.ID, Name: displayWorkspaceName(w.Name)})
 		ids = append(ids, w.ID)
 	}
+	chips = disambiguateChipNames(chips)
 	return chips, ids
+}
+
+// disambiguateChipNames appends `(wksp_<id>)` to chip names that collide
+// case-insensitively with another chip in the slice, so two workspaces
+// named e.g. "personal" and "Personal" render distinguishably. Single
+// chips and slices with no collisions are returned unchanged. Sty_a21f61a6
+// AC4.
+func disambiguateChipNames(chips []wsChip) []wsChip {
+	if len(chips) < 2 {
+		return chips
+	}
+	counts := make(map[string]int, len(chips))
+	for _, c := range chips {
+		counts[strings.ToLower(c.Name)]++
+	}
+	out := make([]wsChip, len(chips))
+	for i, c := range chips {
+		if counts[strings.ToLower(c.Name)] > 1 {
+			out[i] = wsChip{ID: c.ID, Name: c.Name + " (" + c.ID + ")"}
+		} else {
+			out[i] = c
+		}
+	}
+	return out
 }
 
 // currentSession reads the session cookie. Returns (Session{}, false) when
@@ -218,9 +246,22 @@ func (p *Portal) currentSession(r *http.Request) (auth.Session, bool) {
 }
 
 // activeWorkspace returns the user's current scope chip + the id slice
-// the store reads expect. When the session has an ActiveWorkspaceID and
-// the user is still a member of it, scope narrows to that single workspace.
-// Otherwise scope spans every workspace the user belongs to.
+// the store reads expect. Behaviour (sty_a21f61a6):
+//
+//   - Sticky session + the saved id is still a current membership → active
+//     is that workspace, scope narrows to it.
+//   - Single membership → that workspace is unambiguously active (the
+//     user has no other choice), scope narrows to it.
+//   - Multiple memberships, no sticky / stale sticky → active is the
+//     empty wsChip{}, header renders the em-dash placeholder, dropdown
+//     shows every chip (the template hides whichever chip matches
+//     $activeID; the empty string matches none). Scope still spans every
+//     membership so the "see everything" presentation is honest.
+//
+// The previous fallback returned chips[0] as active while keeping the
+// scope wide — the header lied about a single-workspace identity while
+// the data path was multi-workspace, and the dropdown hid the fake
+// active.
 func (p *Portal) activeWorkspace(r *http.Request, user auth.User) (wsChip, []wsChip, []string) {
 	chips, ids := p.memberWorkspaces(r, user)
 	if chips == nil {
@@ -237,7 +278,10 @@ func (p *Portal) activeWorkspace(r *http.Request, user auth.User) (wsChip, []wsC
 			}
 		}
 	}
-	return chips[0], chips, ids
+	if len(chips) == 1 {
+		return chips[0], chips, []string{chips[0].ID}
+	}
+	return wsChip{}, chips, ids
 }
 
 // resolveMemberships mirrors the MCP handler helper: nil when the workspace

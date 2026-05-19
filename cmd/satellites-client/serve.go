@@ -44,11 +44,11 @@ func registerServeNoun(root *cobra.Command) {
 func addServeFlags(c *cobra.Command) {
 	c.Flags().Int("port", 0, "(reserved) future TCP listener port — unused in v1.")
 	c.Flags().Int("parallelism", clientdaemon.DefaultParallelism, "Concurrent dispatch slot cap.")
-	c.Flags().String("socket", clientdaemon.DefaultSocketPath(), "Unix domain socket path.")
-	c.Flags().String("pidfile", clientdaemon.DefaultPidfilePath(), "Pidfile path.")
-	c.Flags().String("state", clientdaemon.DefaultStatePath(), "State.json path.")
-	c.Flags().String("logfile", clientdaemon.DefaultLogfilePath(), "Daemon log file (start/run).")
-	c.Flags().String("logs-dir", clientdaemon.DefaultLogsDir(), "Per-task subprocess log directory.")
+	c.Flags().String("socket", clientdaemon.DefaultSocketPath(), "Unix domain socket path. Defaults to satellites-client.sock under the resolved daemon home (per-project: <repo>/.satellites/daemon/).")
+	c.Flags().String("pidfile", clientdaemon.DefaultPidfilePath(), "Pidfile path. Defaults to satellites-client.pid under the resolved daemon home (per-project: <repo>/.satellites/daemon/).")
+	c.Flags().String("state", clientdaemon.DefaultStatePath(), "State.json path. Defaults to state.json under the resolved daemon home (per-project: <repo>/.satellites/daemon/).")
+	c.Flags().String("logfile", clientdaemon.DefaultLogfilePath(), "Daemon log file (start/run). Defaults to daemon.log under the resolved daemon home (per-project: <repo>/.satellites/daemon/).")
+	c.Flags().String("logs-dir", clientdaemon.DefaultLogsDir(), "Per-task subprocess log directory. Defaults to logs/ under the resolved daemon home (per-project: <repo>/.satellites/daemon/).")
 	c.Flags().Duration("drain-timeout", clientdaemon.DefaultDrainTimeout, "Drain deadline before daemon-initiated SIGTERM.")
 	c.Flags().Int("max-queue", clientdaemon.DefaultMaxQueue, "Soft cap on the in-memory FIFO before /v1/enqueue 503s.")
 	c.Flags().Duration("heartbeat", clientdaemon.DefaultHeartbeat, "Lifecycle heartbeat cadence for daemon-spawned tasks.")
@@ -80,7 +80,7 @@ func newServeStopCmd() *cobra.Command {
 		Short: "SIGTERM the daemon at --pidfile and wait for drain.",
 		RunE:  runServeStop,
 	}
-	c.Flags().String("pidfile", clientdaemon.DefaultPidfilePath(), "Pidfile path.")
+	c.Flags().String("pidfile", clientdaemon.DefaultPidfilePath(), "Pidfile path. Defaults to satellites-client.pid under the resolved daemon home (per-project: <repo>/.satellites/daemon/).")
 	c.Flags().Duration("grace", 30*time.Second, "Wait this long for the pid to exit before reporting failure.")
 	return c
 }
@@ -91,7 +91,7 @@ func newServeStatusCmd() *cobra.Command {
 		Short: "Report daemon state (running / stale / stopped) from --pidfile.",
 		RunE:  runServeStatus,
 	}
-	c.Flags().String("pidfile", clientdaemon.DefaultPidfilePath(), "Pidfile path.")
+	c.Flags().String("pidfile", clientdaemon.DefaultPidfilePath(), "Pidfile path. Defaults to satellites-client.pid under the resolved daemon home (per-project: <repo>/.satellites/daemon/).")
 	return c
 }
 

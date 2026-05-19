@@ -6,4 +6,4 @@ build = 2026-05-18-13-50-50
 version = 0.0.9
 
 [satellites-client]
-version = 0.0.285
+version = 0.0.286

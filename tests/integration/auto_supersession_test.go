@@ -8,9 +8,10 @@
 //   - The substrate's TaskAdd inner detection step stamps
 //     PriorTaskID on the auto-minted successor.
 //   - The merge_to_main chain-shape gate accepts the linked chain
-//     (replicates internal/agent/worker/hotpath.go's
-//     verifyChainPriorWorkSuccess in-test since the symbol is package-
-//     private).
+//     (replicates the chain-shape prose carried in
+//     skill:git_merge_to_main, which the dispatched releaser invokes
+//     post-sty_447b9fe0 — the substrate-side TaskAdd auto-supersession
+//     stamp is what makes that shape detectable).
 //
 // AC1 is exercised by the unit tests in internal/client/task_test.go;
 // this file's purpose is the cross-cutting wire-layer + chain-shape
@@ -183,11 +184,11 @@ func TestAutoSupersession_ChainShapeGateAccepts(t *testing.T) {
 	}
 }
 
-// verifyChainShape replicates internal/agent/worker/hotpath.go's
-// verifyChainPriorWorkSuccess algorithm against the task_walk wire
-// payload. It is a thin re-implementation, NOT a separate gate — the
-// production gate is unmodified per the AC2 review-criteria
-// ("verifyChainPriorWorkSuccess is NOT modified").
+// verifyChainShape applies the merge skill's chain-shape gate
+// (skill:git_merge_to_main body, post-sty_447b9fe0) against the
+// task_walk wire payload. It re-implements the algorithm in-test so
+// the substrate-side TaskAdd auto-supersession behaviour can be
+// asserted without needing to dispatch the skill itself.
 func verifyChainShape(walk map[string]any, ignoreID string) error {
 	rawTasks, ok := walk["tasks"].([]any)
 	if !ok {

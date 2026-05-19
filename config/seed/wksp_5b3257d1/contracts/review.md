@@ -1,7 +1,6 @@
 ---
 name: review
 category: review
-dispatch_class: heavy
 validation_mode: llm
 tags: [v4, lifecycle, workspace]
 ---

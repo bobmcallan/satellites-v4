@@ -1,7 +1,6 @@
 ---
 name: substrate_audit
 category: substrate_audit
-dispatch_class: heavy
 validation_mode: llm
 evidence_required: |
   One ledger row tagged task_id:<this_audit_task>, kind:audit-report,

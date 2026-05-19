@@ -3,6 +3,9 @@ name: releaser_agent
 delivers:
   - "contract:commit"
   - "contract:merge_to_main"
+skill_refs:
+  - git_commit
+  - git_merge_to_main
 instruction: |
   Ship developer-committed work to origin and own the atomic release.
   In commit, run git push (non-force) on the work branch's upstream.
@@ -61,6 +64,23 @@ cleanly.
   the pushed SHA. The trunk-based flow rejects merge commits —
   `--ff-only` is mandatory. Emits one `kind:release-evidence`
   ledger row carrying SHAs + GH run id + pprod-converge polling.
+
+## Invoke + observe pattern
+
+The recipes for `commit` and `merge_to_main` are skill documents
+(`skill:git_commit`, `skill:git_merge_to_main`). On dispatch, run
+`satellites-client skill get --name <git_commit|git_merge_to_main>`
+to fetch the recipe body; then run the bash steps via the `Bash`
+tool **one command at a time**, capturing each step's stdout +
+stderr. Match the captured output against the documented success
+and failure shapes in the skill body — recognise a failure shape
+explicitly (do not assume a zero exit code means success — see
+the sty_517a7db3 commit phase: `git push` returned exit 0 on an
+empty branch and produced a false-success row, `ldg_a4e759a9`).
+
+Close the task with the literal stdout in the evidence row's
+content — never a paraphrase. The literal is the audit-of-record
+a future reader will use to reconstruct what happened.
 
 ## How
 

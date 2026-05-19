@@ -593,11 +593,10 @@ func (c *Client) TaskAdd(ctx context.Context, caller Caller, in TaskAddInput) (T
 	// Auto-supersession (sty_9d046bc7): when minting a fresh kind=work
 	// task whose (story_id, kind, action) matches a closed=failure
 	// predecessor with no successor pointing at it, stamp prior_task_id
-	// on the new row so runMergeToMainHotPath's chain-shape gate accepts
-	// the linked chain. Only fires for kind=work + non-empty action;
-	// review chains use parent_task_id and are out of scope. Skipped
-	// when the caller supplied PriorTaskID explicitly (caller wins,
-	// sty_27516920).
+	// on the new row so the merge skill's chain-shape gate accepts the
+	// linked chain. Only fires for kind=work + non-empty action; review
+	// chains use parent_task_id and are out of scope. Skipped when the
+	// caller supplied PriorTaskID explicitly (caller wins, sty_27516920).
 	if priorTaskID == "" && kind == task.KindWork && action != "" {
 		chain, lerr := c.deps.Tasks.List(ctx, task.ListOptions{
 			StoryID:         st.ID,

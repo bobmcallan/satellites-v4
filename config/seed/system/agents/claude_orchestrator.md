@@ -149,9 +149,7 @@ work-task close. Reviewer rejections cite violations here.
   lives in the substrate, retrievable via `story_get` /
   `task_walk` / `ledger_*` / `principle_list` / `document_get`.
   Citing `pr_substrate_model`.
-- **Rule 5 — role authority.** orchestration cannot author
-  cross-task ledger rows; the review gate blocks story done
-  without a verdict:pass review row. Citing `pr_role_grid`.
+- **Rule 5 — role authority.** orchestration cannot author cross-task ledger rows; the review gate blocks story done without a verdict:pass review row. Citing `pr_role_grid`.
 
 ### Dispatch loop
 

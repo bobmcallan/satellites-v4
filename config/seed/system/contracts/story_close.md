@@ -1,7 +1,6 @@
 ---
 name: story_close
 category: story-close
-dispatch_class: mechanical
 validation_mode: structural
 evidence_required: |
   Ledger row tagged kind:close-evidence carrying:

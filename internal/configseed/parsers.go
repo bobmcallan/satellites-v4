@@ -54,22 +54,14 @@ func agentToInput(fm Frontmatter, body []byte, workspaceID, actor string) (docum
 // contractToInput builds a document.UpsertInput for a kind=contract file.
 //
 // Contract documents carry contract-level concerns: category,
-// required_categories, evidence_required, validation_mode, and
-// dispatch_class. The action-claim path sources permission_patterns
-// exclusively from the claiming agent document (story_b39b393f /
-// story_cc55e093).
+// required_categories, evidence_required, validation_mode. The
+// action-claim path sources permission_patterns exclusively from the
+// claiming agent document (story_b39b393f / story_cc55e093).
 //
-// dispatch_class (sty_3b3e4e66) selects the worker's execution path:
-//   - "heavy" (default when unset): satellites-agent dispatches a fresh
-//     `claude --permission-mode bypassPermissions -p <prompt>` subprocess
-//     with a cleansed HOME + per-task worktree. Used for plan + develop +
-//     review contracts where LLM judgment is load-bearing.
-//   - "hot": satellites-agent runs the action in-process via an embedded
-//     hot-path runner (git push, ff-only merge). ~10s vs ~90s for the
-//     heavy path. Used for execution-shape contracts: push, merge_to_main.
-//
-// Defaulting to "heavy" on missing is the safe shape — an unmarked
-// contract still gets the full claude dispatch path.
+// Dispatch is action-agnostic — every task runs the seven-step heavy
+// path that spawns a fresh claude subprocess. Action-specific
+// behaviour (e.g. commit, merge_to_main) lives in type=skill markdown
+// the dispatched agent fetches and executes via Bash (pr_substrate_model).
 func contractToInput(fm Frontmatter, body []byte, workspaceID, actor string) (document.UpsertInput, error) {
 	name := fm.String("name")
 	if name == "" {
@@ -80,7 +72,6 @@ func contractToInput(fm Frontmatter, body []byte, workspaceID, actor string) (do
 		"required_categories": fm.StringSlice("required_categories"),
 		"evidence_required":   fm.String("evidence_required"),
 		"validation_mode":     fm.String("validation_mode"),
-		"dispatch_class":      fm.String("dispatch_class"),
 	}
 	pruneEmpty(payload)
 	structured, err := json.Marshal(payload)

@@ -1,7 +1,6 @@
 ---
 name: story_review
 category: story-review
-dispatch_class: heavy
 validation_mode: llm
 evidence_required: |
   Ledger row tagged task_id:<story_review_task>, kind:verdict carrying

@@ -25,13 +25,11 @@
 //  7. Leave the worktree in place on terminal outcome (forensic).
 //
 // Transport: every substrate call this package issues — the
-// dispatcher's pre-spawn fetches (task / agent / contract / story),
-// the post-spawn evidence row, and the hot-path runners in
-// hotpath.go — POSTs to /api/v1/<noun>/<verb> via
-// internal/cliremote.Client. That client.Client typed surface is the
-// same one the MCP and HTTP transports both delegate to
-// (pr_mcp_cli_shared_path). sty_74e67353 work#2 retired the residual
-// MCP tools/call transport hotpath.go used to carry.
+// dispatcher's pre-spawn fetches (task / agent / contract / story)
+// and the post-spawn evidence row — POSTs to /api/v1/<noun>/<verb>
+// via internal/cliremote.Client. That client.Client typed surface is
+// the same one the MCP and HTTP transports both delegate to
+// (pr_mcp_cli_shared_path).
 
 package worker
 
@@ -46,7 +44,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/bobmcallan/satellites/internal/cliremote"
 	"github.com/bobmcallan/satellites/internal/config"
@@ -56,9 +53,8 @@ import (
 // claudeClient drives the orchestrator-side dispatch flow: composing
 // the thin-pointer prompt, materialising the worktree, and spawning
 // the claude subprocess. The api field carries the shared /api/v1
-// HTTP client all substrate calls — pre-spawn fetches,
-// appendExecuteEvidence, and the hot-path runners in hotpath.go —
-// route through.
+// HTTP client all substrate calls — pre-spawn fetches and
+// appendExecuteEvidence — route through.
 type claudeClient struct {
 	cfg    config.AgentConfig
 	logger arbor.ILogger
@@ -71,52 +67,6 @@ type claudeClient struct {
 	// gitRunner runs a git command in dir. Production uses exec.Command;
 	// tests inject a recorder.
 	gitRunner func(ctx context.Context, dir string, args ...string) ([]byte, error)
-
-	// ghRunner runs a `gh` command. Production uses exec.Command; tests
-	// inject a recorder. Consumed by the merge_to_main hot-path runner
-	// for the GitHub Actions deploy watch (run list + run watch).
-	ghRunner func(ctx context.Context, args ...string) ([]byte, error)
-
-	// pprodInfoFetcher returns the commit currently reported by
-	// pprod's satellites_info verb. Production routes through c.api;
-	// tests inject a stub that returns a scripted sequence so the
-	// converge poll path is exercised deterministically.
-	pprodInfoFetcher func(ctx context.Context) (string, error)
-
-	// pprodPollInterval is the sleep between converge polls. Zero
-	// uses the default (defaultPprodPollInterval). Tests override to
-	// drive timeout cases without sleeping.
-	pprodPollInterval time.Duration
-
-	// pprodConvergeTimeout caps how long the runner waits for pprod
-	// to report the pushed SHA. Zero uses the default
-	// (defaultPprodConvergeTimeout).
-	pprodConvergeTimeout time.Duration
-
-	// convergeRequestTimeout is the per-request HTTP timeout the
-	// converge poll applies to each satellites_info call. Zero uses
-	// the default (defaultConvergeRequestTimeout = 60s). Sized for Fly
-	// cold-start headroom — separate from the loop-budget timeout the
-	// converge gate as a whole runs under. sty_1cb6e9fa.
-	convergeRequestTimeout time.Duration
-
-	// convergeConsecutiveSuccesses is the N-of-M consecutive matching
-	// poll results required before the runner declares pprod
-	// convergence. Zero uses the default
-	// (defaultConvergeConsecutiveSuccesses = 1) which preserves
-	// pre-sty_1cb6e9fa behaviour.
-	convergeConsecutiveSuccesses int
-
-	// convergePollObserver is invoked once per converge-poll attempt
-	// alongside the arbor logger row. Tests inject a recorder to
-	// assert on attempt shape (attempt#, elapsed_ms, pushed_sha,
-	// commit, matches_target_sha, error). Production leaves it nil —
-	// the arbor log is the operator-facing sink. sty_1cb6e9fa.
-	convergePollObserver func(ConvergePollAttempt)
-
-	// ghWatchTimeout caps how long `gh run watch` is allowed to run.
-	// Zero uses the default (defaultGHWatchTimeout).
-	ghWatchTimeout time.Duration
 
 	// stdoutTee / stderrTee mirror the dispatched claude subprocess's
 	// stdout+stderr to additional writers when set (alongside the
@@ -136,7 +86,6 @@ func newClaudeClient(cfg config.AgentConfig, logger arbor.ILogger) *claudeClient
 		cfg:       cfg,
 		logger:    logger,
 		gitRunner: runGit,
-		ghRunner:  runGH,
 	}
 }
 
@@ -162,12 +111,6 @@ func RunDispatched(ctx context.Context, cfg config.AgentConfig, logger arbor.ILo
 	c.api = api
 	c.stdoutTee = stdout
 	c.stderrTee = stderr
-	// sty_1cb6e9fa: per-request HTTP timeout + N-of-M consecutive
-	// success knobs flow from cliconfig → AgentConfig → claudeClient.
-	// Zero values fall through to the effective-getter defaults so the
-	// daemon and async paths don't have to plumb non-zero overrides.
-	c.convergeRequestTimeout = cfg.ConvergeRequestTimeout
-	c.convergeConsecutiveSuccesses = cfg.ConvergeConsecutiveSuccesses
 	return c.Execute(ctx, env)
 }
 
@@ -183,12 +126,6 @@ type taskInfo struct {
 	AgentID     string `json:"agent_id"`
 	Action      string `json:"action"`
 	Description string `json:"description"`
-	// Trigger is the orchestrator-supplied JSON blob the hot-path
-	// runners consult when present — push / merge honour `branch` +
-	// `sha`. Empty when the task was minted without an explicit
-	// trigger payload (the chain-inference path handles that case).
-	// sty_4994caa3.
-	Trigger json.RawMessage `json:"trigger,omitempty"`
 }
 
 // agentInfo is the subset of agent_get the orchestrator reads.
@@ -198,31 +135,8 @@ type agentInfo struct {
 }
 
 // contractInfo is the subset of contract_get the orchestrator reads.
-// Structured is the decoded JSON of the document's frontmatter payload
-// (category, evidence_required, validation_mode, dispatch_class …);
-// the wire format base64-encodes []byte fields, so json.Unmarshal of
-// the contract_get response transparently decodes the base64 into the
-// raw JSON bytes here. sty_3b3e4e66.
 type contractInfo struct {
-	Name       string `json:"name"`
-	Structured []byte `json:"structured"`
-}
-
-// dispatchClass returns the contract's dispatch_class frontmatter field.
-// Returns "" when the contract has no structured payload or the field
-// is absent; callers MUST treat "" as the "heavy" default so unmarked
-// contracts continue to dispatch the existing claude subprocess.
-func (c contractInfo) dispatchClass() string {
-	if len(c.Structured) == 0 {
-		return ""
-	}
-	var payload struct {
-		DispatchClass string `json:"dispatch_class"`
-	}
-	if err := json.Unmarshal(c.Structured, &payload); err != nil {
-		return ""
-	}
-	return payload.DispatchClass
+	Name string `json:"name"`
 }
 
 // storyInfo is the subset of story_get the orchestrator reads.
@@ -375,9 +289,8 @@ func (c *claudeClient) fetchAgentInfo(ctx context.Context, id string) (agentInfo
 // fetchContractInfo POSTs to /api/v1/document/get with type=contract.
 // task.Action is shaped `contract:<name>`; the leading prefix is
 // stripped. A free-form action (no contract row) surfaces as a
-// contractInfo carrying just the resolved name — the heavy-path
-// fallthrough is preserved per the prior callTool error-tolerant
-// shape.
+// contractInfo carrying just the resolved name — the error-tolerant
+// fallthrough is preserved per the prior callTool shape.
 func (c *claudeClient) fetchContractInfo(ctx context.Context, action, projectID string) (contractInfo, error) {
 	name := strings.TrimPrefix(action, "contract:")
 	if name == "" {
@@ -388,13 +301,12 @@ func (c *claudeClient) fetchContractInfo(ctx context.Context, action, projectID 
 		args["project_id"] = projectID
 	}
 	var doc struct {
-		Name       string `json:"name"`
-		Structured []byte `json:"structured"`
+		Name string `json:"name"`
 	}
 	if err := c.api.Call(ctx, "document_get", args, &doc); err != nil {
 		return contractInfo{Name: name}, nil
 	}
-	co := contractInfo{Name: doc.Name, Structured: doc.Structured}
+	co := contractInfo{Name: doc.Name}
 	if co.Name == "" {
 		co.Name = name
 	}
@@ -431,20 +343,6 @@ func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return out, fmt.Errorf("git %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	return out, nil
-}
-
-// runGH executes `gh` with the supplied args. Returned bytes are the
-// combined output for transport into evidence rows. Errors include
-// the captured stderr so callers can surface gh's complaint. Used by
-// the merge_to_main hot-path runner for the GitHub Actions deploy
-// watch (run list + run watch).
-func runGH(ctx context.Context, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "gh", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return out, fmt.Errorf("gh %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return out, nil
 }
@@ -557,13 +455,11 @@ func buildSpawnMCPConfigJSON(cfg config.AgentConfig) (string, error) {
 // Execute spawns claude per the seven-step shape. Errors are surfaced
 // as (OutcomeFailure, err); ctx cancellation maps to OutcomeTimeout.
 //
-// sty_3b3e4e66 (Layer A): the resolved contract's dispatch_class is
-// fetched and logged on every dispatch. The in-process hot-path
-// runner that consumes this field — bypassing the claude subprocess
-// for "hot" contracts (push, merge_to_main) — lands in the
-// Layer B+C follow-up. This commit ships only the data plumbing
-// so contracts can declare their dispatch class without changing the
-// runtime selector. Layer B will branch on ci.dispatchClass() here.
+// Dispatch is action-agnostic: every task — regardless of contract —
+// runs the seven-step heavy path. Action-specific behaviour lives in
+// the dispatched claude's prompt (see developActionEpilogue) and in
+// type=skill markdown the dispatched agent fetches at runtime; it is
+// NEVER encoded as a runtime branch in this function (pr_substrate_model).
 func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome, error) {
 	// Step 1 + 2: fetch the four context bundles.
 	ti, err := c.fetchTaskInfo(ctx, task.ID)
@@ -582,33 +478,6 @@ func (c *claudeClient) Execute(ctx context.Context, task TaskEnvelope) (Outcome,
 	}
 	if ti.ProjectID == "" {
 		ti.ProjectID = task.ProjectID
-	}
-
-	// sty_4994caa3 Layer B — branch on the contract's dispatch_class.
-	// "hot" contracts (push, merge_to_main) execute in-process via
-	// runHotPath, skipping the seven-step claude subprocess that
-	// the heavy path runs. errHotUnimplemented falls back to the
-	// heavy path so a misclassified contract degrades gracefully
-	// rather than failing the dispatch.
-	dispatchClass := ci.dispatchClass()
-	if c.logger != nil {
-		c.logger.Debug().
-			Str("task_id", task.ID).
-			Str("contract", ci.Name).
-			Str("dispatch_class", dispatchClass).
-			Msg("worker dispatch resolved")
-	}
-	if dispatchClass == "hot" {
-		outcome, err := c.runHotPath(ctx, task, ti, ai, ci, si)
-		if err == nil || !errors.Is(err, errHotUnimplemented) {
-			return outcome, err
-		}
-		if c.logger != nil {
-			c.logger.Warn().
-				Str("task_id", task.ID).
-				Str("contract", ci.Name).
-				Msg("hot-path runner missing — falling back to heavy claude subprocess")
-		}
 	}
 
 	// Step 3: worktree.

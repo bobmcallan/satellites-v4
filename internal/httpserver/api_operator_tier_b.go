@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/bobmcallan/satellites/internal/auth"
+	"github.com/bobmcallan/satellites/internal/client"
 	"github.com/bobmcallan/satellites/internal/configseed"
 	"github.com/bobmcallan/satellites/internal/document"
 	"github.com/bobmcallan/satellites/internal/ledger"
@@ -51,9 +52,11 @@ func (a *APIRegistrar) handleAgentAPIKeyCreate(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var req struct {
-		Name      string `json:"name"`
-		ProjectID string `json:"project_id"`
-		ExpiresAt string `json:"expires_at"`
+		Name         string   `json:"name"`
+		ProjectID    string   `json:"project_id"`
+		TaskID       string   `json:"task_id"`
+		AllowedVerbs []string `json:"allowed_verbs"`
+		ExpiresAt    string   `json:"expires_at"`
 	}
 	if err := decodeJSONBody(r, &req); err != nil {
 		writeAPIError(w, err)
@@ -75,74 +78,54 @@ func (a *APIRegistrar) handleAgentAPIKeyCreate(w http.ResponseWriter, r *http.Re
 	}
 	cc := a.clientCaller(r)
 	cc.Memberships = a.client.ResolveCallerMemberships(r.Context(), cc)
-	workspaceID := ""
-	if req.ProjectID != "" {
-		workspaceID = a.client.ResolveProjectWorkspaceID(r.Context(), req.ProjectID)
-		if workspaceID == "" {
-			writeAPIStatus(w, http.StatusNotFound, "project_not_found")
-			return
-		}
-		if !cc.GlobalAdmin && !apiKeyWorkspaceInMemberships(workspaceID, cc.Memberships) {
-			writeAPIStatus(w, http.StatusForbidden, "caller is not a member of the project's workspace")
-			return
-		}
-	} else {
-		workspaceID = a.client.ResolveCallerWorkspaceID(r.Context(), cc)
+	// sty_056b68f6: delegate to the typed surface so task_id-based
+	// role clamping + audit ledger row + cross-tenant guard live in
+	// one place (pr_mcp_cli_shared_path). The HTTP handler now only
+	// parses the request and renders the response.
+	id, _ := auth.UserFrom(r.Context())
+	in := client.AgentAPIKeyCreateInput{
+		Name:         req.Name,
+		ProjectID:    req.ProjectID,
+		TaskID:       req.TaskID,
+		AllowedVerbs: req.AllowedVerbs,
+		ExpiresAt:    expiresAt,
+		ActorSource:  id.Source,
+		Now:          time.Now().UTC(),
 	}
-	cleartext, salt, err := auth.GenerateAPIKey()
+	out, err := a.client.AgentAPIKeyCreate(r.Context(), cc, in)
 	if err != nil {
+		var envErr *client.AgentAPIKeyError
+		if errors.As(err, &envErr) {
+			switch envErr.Code {
+			case "project_not_found", "task_not_found":
+				writeAPIStatus(w, http.StatusNotFound, envErr.Body())
+				return
+			case "forbidden":
+				writeAPIStatus(w, http.StatusForbidden, envErr.Body())
+				return
+			case "allowed_verbs_not_subset", "unknown_role", "agent_role_unresolved":
+				writeAPIStatus(w, http.StatusBadRequest, envErr.Body())
+				return
+			}
+			writeAPIStatus(w, http.StatusBadRequest, envErr.Body())
+			return
+		}
 		writeAPIError(w, err)
 		return
-	}
-	now := time.Now().UTC()
-	row := auth.APIKey{
-		ID:          auth.NewAPIKeyID(),
-		WorkspaceID: workspaceID,
-		ProjectID:   req.ProjectID,
-		OwnerUserID: cc.UserID,
-		Name:        req.Name,
-		Prefix:      auth.APIKeyCleartextPrefix(cleartext),
-		KeyHash:     auth.HashAPIKey(salt, cleartext),
-		KeySalt:     salt,
-		Status:      auth.APIKeyStatusActive,
-		ExpiresAt:   expiresAt,
-		CreatedAt:   now,
-	}
-	if err := stores.APIKeys.Create(r.Context(), row); err != nil {
-		writeAPIError(w, err)
-		return
-	}
-	auditPayload, _ := json.Marshal(map[string]any{
-		"id":            row.ID,
-		"name":          row.Name,
-		"prefix":        row.Prefix,
-		"owner_user_id": row.OwnerUserID,
-		"project_id":    row.ProjectID,
-		"workspace_id":  row.WorkspaceID,
-		"actor":         cc.UserID,
-	})
-	if stores.Ledger != nil {
-		_, _ = stores.Ledger.Append(r.Context(), ledger.LedgerEntry{
-			WorkspaceID: workspaceID,
-			ProjectID:   req.ProjectID,
-			Type:        ledger.TypeDecision,
-			Tags:        []string{"kind:agent-apikey-created", "apikey:" + row.ID},
-			Content:     "agent api-key minted",
-			Structured:  auditPayload,
-			CreatedBy:   cc.UserID,
-		}, now)
 	}
 	writeAPIJSON(w, map[string]any{
-		"id":            row.ID,
-		"key":           cleartext,
-		"prefix":        row.Prefix,
-		"name":          row.Name,
-		"owner_user_id": row.OwnerUserID,
-		"project_id":    row.ProjectID,
-		"workspace_id":  row.WorkspaceID,
-		"status":        row.Status,
-		"expires_at":    row.ExpiresAt,
-		"created_at":    row.CreatedAt,
+		"id":            out.ID,
+		"key":           out.Key,
+		"prefix":        out.Prefix,
+		"name":          out.Name,
+		"owner_user_id": out.OwnerUserID,
+		"project_id":    out.ProjectID,
+		"workspace_id":  out.WorkspaceID,
+		"status":        out.Status,
+		"task_id":       out.TaskID,
+		"allowed_verbs": out.AllowedVerbs,
+		"expires_at":    out.ExpiresAt,
+		"created_at":    out.CreatedAt,
 	})
 }
 

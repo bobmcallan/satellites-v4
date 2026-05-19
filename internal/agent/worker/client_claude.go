@@ -43,6 +43,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/bobmcallan/satellites/internal/cliremote"
@@ -431,6 +432,12 @@ func worktreeExists(path string) (string, bool) {
 // dispatched agent sees only the satellites MCP server — strict-mcp-
 // config + this single-server file means no operator-side MCP
 // connections (vire, jcodemunch, drive) leak in.
+//
+// sty_056b68f6: when cfg.AllowedVerbs is non-empty, the server entry
+// carries the `allowedTools` array (Claude Code's documented per-
+// server narrowing) so the dispatched subprocess cannot even attempt
+// out-of-set verbs. Server-side enforcement (AC2) remains canonical;
+// this is defence in depth + a reviewer-friendly artefact.
 func buildSpawnMCPConfigJSON(cfg config.AgentConfig) (string, error) {
 	server := map[string]any{
 		"type": "http",
@@ -440,6 +447,13 @@ func buildSpawnMCPConfigJSON(cfg config.AgentConfig) (string, error) {
 		server["headers"] = map[string]string{
 			"Authorization": "Bearer " + cfg.AuthToken,
 		}
+	}
+	if len(cfg.AllowedVerbs) > 0 {
+		// Claude Code reads `allowedTools` per MCP server entry. Sort
+		// for deterministic test output + reviewer-friendly diffs.
+		tools := append([]string(nil), cfg.AllowedVerbs...)
+		sort.Strings(tools)
+		server["allowedTools"] = tools
 	}
 	out, err := json.Marshal(map[string]any{
 		"mcpServers": map[string]any{

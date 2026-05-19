@@ -108,9 +108,36 @@ const dispatchedTaskIDHeader = "X-Satellites-Dispatched-Task-ID"
 // carries the dispatched-task-id header. The middleware delegates
 // emission to client.Client.PublishTaskLog so the wire layer never
 // imports internal/tasklog directly (pr_mcp_cli_shared_path).
+//
+// sty_056b68f6: every handler is ALSO wrapped with the verb-allowlist
+// gate (`gateHTTPVerbs`). The gate is in-process: it reads
+// CallerIdentity off ctx, calls auth.AssertVerbAllowed, and short-
+// circuits with the JSON envelope on rejection. Project-scoped keys
+// / OAuth / session callers pass through as a no-op. The wrapping
+// order is `gate(telemetry(handler))` so a denied call never emits a
+// KindToolCallStart row.
 func (a *APIRegistrar) handle(mux *http.ServeMux, pattern string, h http.HandlerFunc) {
 	toolName := deriveToolName(pattern)
-	mux.HandleFunc(pattern, a.withDispatchedToolCallTelemetry(toolName, h))
+	mux.HandleFunc(pattern, gateHTTPVerbs(toolName, a.withDispatchedToolCallTelemetry(toolName, h)))
+}
+
+// gateHTTPVerbs wraps next with the verb-allowlist gate. The gate
+// reads CallerIdentity.AllowedVerbs off ctx; nil means the caller is
+// un-narrowed (project-scoped key / OAuth / session) and the
+// wrapper passes through. Task-scoped callers run through
+// auth.AssertVerbAllowed; out-of-set verbs return HTTP 403 + the
+// wire envelope `{"error":"verb_not_in_allowlist","verb":"<v>","allowed":[…]}`.
+// sty_056b68f6.
+func gateHTTPVerbs(verb string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if denied := auth.AssertVerbAllowed(r.Context(), verb); denied != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(denied.Body()))
+			return
+		}
+		next.ServeHTTP(w, r)
+	}
 }
 
 // deriveToolName turns "POST /api/v1/task/log/append" into

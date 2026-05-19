@@ -25,18 +25,20 @@ type SurrealAgentAPIKeyStore struct {
 // agentAPIKeyRow is the on-disk shape. JSON tags match APIKey so the
 // public type can be returned directly.
 type agentAPIKeyRow struct {
-	ID          string     `json:"id"`
-	WorkspaceID string     `json:"workspace_id"`
-	ProjectID   string     `json:"project_id"`
-	OwnerUserID string     `json:"owner_user_id"`
-	Name        string     `json:"name"`
-	Prefix      string     `json:"prefix"`
-	KeyHash     string     `json:"key_hash"`
-	KeySalt     string     `json:"key_salt"`
-	Status      string     `json:"status"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID           string     `json:"id"`
+	WorkspaceID  string     `json:"workspace_id"`
+	ProjectID    string     `json:"project_id"`
+	OwnerUserID  string     `json:"owner_user_id"`
+	Name         string     `json:"name"`
+	Prefix       string     `json:"prefix"`
+	KeyHash      string     `json:"key_hash"`
+	KeySalt      string     `json:"key_salt"`
+	Status       string     `json:"status"`
+	TaskID       string     `json:"task_id,omitempty"`
+	AllowedVerbs []string   `json:"allowed_verbs,omitempty"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 // NewSurrealAgentAPIKeyStore wraps db with the agent_apikeys table
@@ -58,7 +60,7 @@ func NewSurrealAgentAPIKeyStore(db *surrealdb.DB) *SurrealAgentAPIKeyStore {
 	return s
 }
 
-const agentAPIKeyCols = "meta::id(id) AS id, workspace_id, project_id, owner_user_id, name, prefix, key_hash, key_salt, status, expires_at, last_used_at, created_at"
+const agentAPIKeyCols = "meta::id(id) AS id, workspace_id, project_id, owner_user_id, name, prefix, key_hash, key_salt, status, task_id, allowed_verbs, expires_at, last_used_at, created_at"
 
 // Create UPSERTs the row keyed by k.ID. UPSERT mirrors the user /
 // session store shapes — duplicate ids replace the existing row; in
@@ -183,6 +185,33 @@ func (s *SurrealAgentAPIKeyStore) Delete(ctx context.Context, id string) error {
 	return s.write(ctx, row)
 }
 
+// RevokeByTaskID flips every active row whose task_id == taskID to
+// archived and returns the count flipped. Idempotent — re-call
+// returns 0 once the rows are already archived. sty_056b68f6.
+func (s *SurrealAgentAPIKeyStore) RevokeByTaskID(ctx context.Context, taskID string) (int, error) {
+	if taskID == "" {
+		return 0, nil
+	}
+	sql := fmt.Sprintf("SELECT %s FROM agent_apikeys WHERE task_id = $tid AND status = $status", agentAPIKeyCols)
+	vars := map[string]any{"tid": taskID, "status": APIKeyStatusActive}
+	results, err := surrealdb.Query[[]agentAPIKeyRow](ctx, s.db, sql, vars)
+	if err != nil {
+		return 0, fmt.Errorf("auth: agent_apikey revoke by task_id select: %w", err)
+	}
+	if results == nil || len(*results) == 0 {
+		return 0, nil
+	}
+	count := 0
+	for _, row := range (*results)[0].Result {
+		row.Status = APIKeyStatusArchived
+		if err := s.write(ctx, row); err != nil {
+			return count, fmt.Errorf("auth: agent_apikey revoke by task_id write: %w", err)
+		}
+		count++
+	}
+	return count, nil
+}
+
 // Touch best-effort bumps last_used_at. AuthMiddleware drops the
 // returned error on the floor; the explicit return is here so unit
 // tests can wire a Touch implementation that fails and assert the
@@ -224,35 +253,39 @@ func (s *SurrealAgentAPIKeyStore) write(ctx context.Context, row agentAPIKeyRow)
 
 func keyToRow(k APIKey) agentAPIKeyRow {
 	return agentAPIKeyRow{
-		ID:          k.ID,
-		WorkspaceID: k.WorkspaceID,
-		ProjectID:   k.ProjectID,
-		OwnerUserID: k.OwnerUserID,
-		Name:        k.Name,
-		Prefix:      k.Prefix,
-		KeyHash:     k.KeyHash,
-		KeySalt:     k.KeySalt,
-		Status:      k.Status,
-		ExpiresAt:   k.ExpiresAt,
-		LastUsedAt:  k.LastUsedAt,
-		CreatedAt:   k.CreatedAt,
+		ID:           k.ID,
+		WorkspaceID:  k.WorkspaceID,
+		ProjectID:    k.ProjectID,
+		OwnerUserID:  k.OwnerUserID,
+		Name:         k.Name,
+		Prefix:       k.Prefix,
+		KeyHash:      k.KeyHash,
+		KeySalt:      k.KeySalt,
+		Status:       k.Status,
+		TaskID:       k.TaskID,
+		AllowedVerbs: k.AllowedVerbs,
+		ExpiresAt:    k.ExpiresAt,
+		LastUsedAt:   k.LastUsedAt,
+		CreatedAt:    k.CreatedAt,
 	}
 }
 
 func rowToKey(r agentAPIKeyRow) APIKey {
 	return APIKey{
-		ID:          r.ID,
-		WorkspaceID: r.WorkspaceID,
-		ProjectID:   r.ProjectID,
-		OwnerUserID: r.OwnerUserID,
-		Name:        r.Name,
-		Prefix:      r.Prefix,
-		KeyHash:     r.KeyHash,
-		KeySalt:     r.KeySalt,
-		Status:      r.Status,
-		ExpiresAt:   r.ExpiresAt,
-		LastUsedAt:  r.LastUsedAt,
-		CreatedAt:   r.CreatedAt,
+		ID:           r.ID,
+		WorkspaceID:  r.WorkspaceID,
+		ProjectID:    r.ProjectID,
+		OwnerUserID:  r.OwnerUserID,
+		Name:         r.Name,
+		Prefix:       r.Prefix,
+		KeyHash:      r.KeyHash,
+		KeySalt:      r.KeySalt,
+		Status:       r.Status,
+		TaskID:       r.TaskID,
+		AllowedVerbs: r.AllowedVerbs,
+		ExpiresAt:    r.ExpiresAt,
+		LastUsedAt:   r.LastUsedAt,
+		CreatedAt:    r.CreatedAt,
 	}
 }
 

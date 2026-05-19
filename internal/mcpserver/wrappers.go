@@ -7,8 +7,30 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/bobmcallan/satellites/internal/auth"
 	"github.com/bobmcallan/satellites/internal/client"
 )
+
+// addGatedTool registers tool with the mcp-go server behind the
+// verb-allowlist gate. The wrapper extracts the verb name (the tool
+// name itself), calls `auth.AssertVerbAllowed(ctx, verb)`, and
+// short-circuits with the wire envelope on rejection. Un-narrowed
+// callers (project-scoped keys / OAuth / session) pass through the
+// gate as a no-op. sty_056b68f6.
+//
+// Every MCP tool registration goes through this wrapper — there is
+// no escape-hatch AddTool call on `s.mcp` outside this file (modulo
+// the `wrapperGet` / `wrapperList` registrations in this same file,
+// which also route through addGatedTool below).
+func (s *Server) addGatedTool(tool mcpgo.Tool, handler func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error)) {
+	verb := tool.Name
+	s.mcp.AddTool(tool, func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		if denied := auth.AssertVerbAllowed(ctx, verb); denied != nil {
+			return mcpgo.NewToolResultError(denied.Body()), nil
+		}
+		return handler(ctx, req)
+	})
+}
 
 // registerDocumentWrappers exposes the §9 type-specific thin wrappers
 // (`principle_*`, `contract_*`, `skill_*`, `reviewer_*`, `agent_*`,
@@ -72,7 +94,7 @@ func (s *Server) registerWrapperFamily(kind string) {
 			mcpgo.WithString("name", mcpgo.Description("Document name (used when id is omitted).")),
 			mcpgo.WithString("project_id", mcpgo.Description("Project scope for name-keyed lookups.")),
 		)
-		s.mcp.AddTool(get, s.wrapperGet(kind))
+		s.addGatedTool(get, s.wrapperGet(kind))
 	}
 
 	if wrapperKindHasList(kind) {
@@ -85,7 +107,7 @@ func (s *Server) registerWrapperFamily(kind string) {
 				mcpgo.Items(map[string]any{"type": "string"})),
 			mcpgo.WithNumber("limit", mcpgo.Description("Max rows to return.")),
 		)
-		s.mcp.AddTool(list, s.wrapperList(kind))
+		s.addGatedTool(list, s.wrapperList(kind))
 	}
 }
 

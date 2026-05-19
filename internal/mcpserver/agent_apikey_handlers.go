@@ -53,7 +53,22 @@ func (s *Server) handleAgentAPIKeyCreate(ctx context.Context, req mcpgo.CallTool
 		return errRes, nil
 	}
 	memberships := s.resolveCallerMemberships(ctx, caller)
-	in := client.AgentAPIKeyCreateInput{Name: name, ProjectID: req.GetString("project_id", ""), ExpiresAt: expiresAt, ActorSource: caller.Source, Now: s.nowUTC()}
+	// sty_056b68f6: task-scoped fields. task_id + allowed_verbs ride
+	// the MCP request alongside the existing project_id + expires_at;
+	// when supplied the client surface clamps to the role default.
+	var allowedVerbs []string
+	if rawArr := req.GetStringSlice("allowed_verbs", nil); len(rawArr) > 0 {
+		allowedVerbs = append([]string(nil), rawArr...)
+	}
+	in := client.AgentAPIKeyCreateInput{
+		Name:         name,
+		ProjectID:    req.GetString("project_id", ""),
+		TaskID:       req.GetString("task_id", ""),
+		AllowedVerbs: allowedVerbs,
+		ExpiresAt:    expiresAt,
+		ActorSource:  caller.Source,
+		Now:          s.nowUTC(),
+	}
 	out, err := s.cli().AgentAPIKeyCreate(ctx, client.Caller{UserID: caller.UserID, Email: caller.Email, Memberships: memberships, GlobalAdmin: caller.GlobalAdmin}, in)
 	if err != nil {
 		var envErr *client.AgentAPIKeyError

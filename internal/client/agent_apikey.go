@@ -93,33 +93,61 @@ func ToAPIKeyMetadata(k auth.APIKey) APIKeyMetadata {
 // request text. ActorSource carries the auth-resolved source string
 // ("session" | "apikey" | "oauth:<provider>" | …) for stamping on
 // the kind:agent-apikey-created ledger row.
+//
+// sty_056b68f6: TaskID + AllowedVerbs bind a key to a single task.
+// When TaskID is non-empty the mint resolves the task → its agent's
+// role → pr_role_grid defaults; AllowedVerbs (when supplied) must be
+// a SUBSET of those defaults (AC6: shrink-but-not-expand) or the
+// mint is rejected as allowed_verbs_not_subset. When AllowedVerbs is
+// nil the role's full default is stored. ExpiresAt defaults to
+// `now + DefaultTaskScopedKeyTTL` (6h) when caller did not supply.
 type AgentAPIKeyCreateInput struct {
-	Name        string
-	ProjectID   string
-	ExpiresAt   *time.Time
-	ActorSource string
-	Now         time.Time
+	Name         string
+	ProjectID    string
+	TaskID       string
+	AllowedVerbs []string
+	ExpiresAt    *time.Time
+	ActorSource  string
+	Now          time.Time
 }
+
+// DefaultTaskScopedKeyTTL is the default expiry for a task-scoped
+// api-key whose mint did not supply an explicit ExpiresAt. The
+// primary lifecycle bound is `task_update(status=closed) →
+// RevokeByTaskID`; this TTL is the safety net for tasks that crash
+// without closing. sty_056b68f6.
+const DefaultTaskScopedKeyTTL = 6 * time.Hour
 
 // AgentAPIKeyCreateOutput mirrors the JSON shape the wire handler
 // previously emitted. The cleartext key is returned ONCE.
 type AgentAPIKeyCreateOutput struct {
-	ID          string     `json:"id"`
-	Key         string     `json:"key"`
-	Prefix      string     `json:"prefix"`
-	Name        string     `json:"name"`
-	OwnerUserID string     `json:"owner_user_id"`
-	ProjectID   string     `json:"project_id"`
-	WorkspaceID string     `json:"workspace_id"`
-	Status      string     `json:"status"`
-	ExpiresAt   *time.Time `json:"expires_at"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID           string     `json:"id"`
+	Key          string     `json:"key"`
+	Prefix       string     `json:"prefix"`
+	Name         string     `json:"name"`
+	OwnerUserID  string     `json:"owner_user_id"`
+	ProjectID    string     `json:"project_id"`
+	WorkspaceID  string     `json:"workspace_id"`
+	Status       string     `json:"status"`
+	TaskID       string     `json:"task_id,omitempty"`
+	AllowedVerbs []string   `json:"allowed_verbs,omitempty"`
+	ExpiresAt    *time.Time `json:"expires_at"`
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 // AgentAPIKeyCreate mints a new agent api-key, persists the
 // hash + salt + metadata, writes a kind:agent-apikey-created ledger
 // row, and returns the cleartext key ONCE. The cleartext is never
 // retrievable after this call.
+//
+// sty_056b68f6: when in.TaskID is non-empty, the mint is task-scoped:
+//   - resolve the task → resolve the task's AgentID → read the agent
+//     doc's `role:` field → compute the role's verb defaults.
+//   - if in.AllowedVerbs is nil → use the role defaults.
+//   - if in.AllowedVerbs is non-nil → assert subset (AC6: shrink-but-
+//     not-expand). Reject as `allowed_verbs_not_subset` on failure.
+//   - default ExpiresAt to now+DefaultTaskScopedKeyTTL when caller
+//     did not supply one.
 func (c *Client) AgentAPIKeyCreate(ctx context.Context, caller Caller, in AgentAPIKeyCreateInput) (AgentAPIKeyCreateOutput, error) {
 	if c.deps.APIKeys == nil {
 		return AgentAPIKeyCreateOutput{}, ErrAPIKeyStoreNotConfigured
@@ -154,26 +182,84 @@ func (c *Client) AgentAPIKeyCreate(ctx context.Context, caller Caller, in AgentA
 		workspaceID = c.ResolveCallerWorkspaceID(ctx, caller)
 	}
 
-	cleartext, salt, err := auth.GenerateAPIKey()
-	if err != nil {
-		return AgentAPIKeyCreateOutput{}, fmt.Errorf("generate api key: %v", err)
-	}
+	// sty_056b68f6: task-scoped path. Resolve role and clamp
+	// AllowedVerbs to the role's defaults.
 	now := in.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	allowedVerbs := in.AllowedVerbs
+	var resolvedTaskID string
+	if in.TaskID != "" {
+		if c.deps.Tasks == nil {
+			return AgentAPIKeyCreateOutput{}, errors.New("task store not configured")
+		}
+		tsk, err := c.deps.Tasks.GetByID(ctx, in.TaskID, memberships)
+		if err != nil {
+			return AgentAPIKeyCreateOutput{}, &AgentAPIKeyError{
+				Code:    "task_not_found",
+				Payload: map[string]any{"task_id": in.TaskID},
+			}
+		}
+		resolvedTaskID = tsk.ID
+		role, rerr := c.resolveAgentRole(ctx, tsk.AgentID, memberships)
+		if rerr != nil {
+			return AgentAPIKeyCreateOutput{}, &AgentAPIKeyError{
+				Code: "agent_role_unresolved",
+				Payload: map[string]any{
+					"task_id":  in.TaskID,
+					"agent_id": tsk.AgentID,
+					"reason":   rerr.Error(),
+				},
+			}
+		}
+		defaults := auth.DefaultsForRole(role)
+		if defaults == nil {
+			return AgentAPIKeyCreateOutput{}, &AgentAPIKeyError{
+				Code:    "unknown_role",
+				Payload: map[string]any{"role": role, "task_id": in.TaskID},
+			}
+		}
+		if in.AllowedVerbs == nil {
+			allowedVerbs = defaults
+		} else {
+			ok, offending := auth.VerbAllowlistSubset(role, in.AllowedVerbs)
+			if !ok {
+				return AgentAPIKeyCreateOutput{}, &AgentAPIKeyError{
+					Code: "allowed_verbs_not_subset",
+					Payload: map[string]any{
+						"role":      role,
+						"task_id":   in.TaskID,
+						"offending": offending,
+					},
+				}
+			}
+			allowedVerbs = append([]string(nil), in.AllowedVerbs...)
+		}
+		if in.ExpiresAt == nil {
+			t := now.Add(DefaultTaskScopedKeyTTL)
+			in.ExpiresAt = &t
+		}
+	}
+
+	cleartext, salt, err := auth.GenerateAPIKey()
+	if err != nil {
+		return AgentAPIKeyCreateOutput{}, fmt.Errorf("generate api key: %v", err)
+	}
 	row := auth.APIKey{
-		ID:          auth.NewAPIKeyID(),
-		WorkspaceID: workspaceID,
-		ProjectID:   in.ProjectID,
-		OwnerUserID: caller.UserID,
-		Name:        in.Name,
-		Prefix:      auth.APIKeyCleartextPrefix(cleartext),
-		KeyHash:     auth.HashAPIKey(salt, cleartext),
-		KeySalt:     salt,
-		Status:      auth.APIKeyStatusActive,
-		ExpiresAt:   in.ExpiresAt,
-		CreatedAt:   now,
+		ID:           auth.NewAPIKeyID(),
+		WorkspaceID:  workspaceID,
+		ProjectID:    in.ProjectID,
+		OwnerUserID:  caller.UserID,
+		Name:         in.Name,
+		Prefix:       auth.APIKeyCleartextPrefix(cleartext),
+		KeyHash:      auth.HashAPIKey(salt, cleartext),
+		KeySalt:      salt,
+		Status:       auth.APIKeyStatusActive,
+		TaskID:       resolvedTaskID,
+		AllowedVerbs: allowedVerbs,
+		ExpiresAt:    in.ExpiresAt,
+		CreatedAt:    now,
 	}
 	if err := c.deps.APIKeys.Create(ctx, row); err != nil {
 		return AgentAPIKeyCreateOutput{}, fmt.Errorf("store create: %v", err)
@@ -189,6 +275,8 @@ func (c *Client) AgentAPIKeyCreate(ctx context.Context, caller Caller, in AgentA
 		"owner_user_id": row.OwnerUserID,
 		"project_id":    row.ProjectID,
 		"workspace_id":  row.WorkspaceID,
+		"task_id":       row.TaskID,
+		"allowed_verbs": row.AllowedVerbs,
 		"actor":         caller.UserID,
 		"actor_source":  in.ActorSource,
 	})
@@ -205,17 +293,47 @@ func (c *Client) AgentAPIKeyCreate(ctx context.Context, caller Caller, in AgentA
 	}
 
 	return AgentAPIKeyCreateOutput{
-		ID:          row.ID,
-		Key:         cleartext,
-		Prefix:      row.Prefix,
-		Name:        row.Name,
-		OwnerUserID: row.OwnerUserID,
-		ProjectID:   row.ProjectID,
-		WorkspaceID: row.WorkspaceID,
-		Status:      row.Status,
-		ExpiresAt:   row.ExpiresAt,
-		CreatedAt:   row.CreatedAt,
+		ID:           row.ID,
+		Key:          cleartext,
+		Prefix:       row.Prefix,
+		Name:         row.Name,
+		OwnerUserID:  row.OwnerUserID,
+		ProjectID:    row.ProjectID,
+		WorkspaceID:  row.WorkspaceID,
+		Status:       row.Status,
+		TaskID:       row.TaskID,
+		AllowedVerbs: row.AllowedVerbs,
+		ExpiresAt:    row.ExpiresAt,
+		CreatedAt:    row.CreatedAt,
 	}, nil
+}
+
+// resolveAgentRole resolves agentID via the Documents store and
+// reads `role:` off the structured payload. Returns the role string
+// or an error when the doc is absent / unreadable / missing role.
+func (c *Client) resolveAgentRole(ctx context.Context, agentID string, memberships []string) (string, error) {
+	if agentID == "" {
+		return "", errors.New("agent_id is empty")
+	}
+	if c.deps.Documents == nil {
+		return "", errors.New("document store not configured")
+	}
+	doc, err := c.deps.Documents.GetByID(ctx, agentID, memberships)
+	if err != nil {
+		return "", fmt.Errorf("get agent doc: %w", err)
+	}
+	if len(doc.Structured) == 0 {
+		return "", errors.New("agent doc has no structured payload")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(doc.Structured, &payload); err != nil {
+		return "", fmt.Errorf("unmarshal agent structured: %w", err)
+	}
+	role, _ := payload["role"].(string)
+	if role == "" {
+		return "", errors.New("agent doc has no role field")
+	}
+	return role, nil
 }
 
 // AgentAPIKeyListInput captures the agent_apikey_list request shape.

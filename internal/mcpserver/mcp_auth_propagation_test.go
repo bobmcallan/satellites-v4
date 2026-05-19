@@ -41,7 +41,9 @@ func TestPropagateCallerIdentity_FunctionLevel(t *testing.T) {
 	if !ok {
 		t.Fatalf("propagateCallerIdentity dropped CallerIdentity")
 	}
-	if caller != want {
+	// CallerIdentity contains AllowedVerbs []string (sty_056b68f6) so
+	// it is no longer comparable. Compare scalar fields individually.
+	if caller.UserID != want.UserID || caller.Email != want.Email || caller.Source != want.Source || caller.GlobalAdmin != want.GlobalAdmin || caller.TaskID != want.TaskID {
 		t.Errorf("CallerIdentity = %+v, want %+v", caller, want)
 	}
 	if scoped := ScopedProjectIDFrom(got); scoped != "proj_test" {

@@ -55,19 +55,28 @@ var ErrAPIKeyNotFound = errors.New("auth: agent api-key not found")
 // match the JSON tags surrealdb.go marshals against. Per AC4 the
 // struct MUST NOT carry a RawKey-shaped field — the cleartext key
 // exists only on the `agent_apikey_create` response wire.
+//
+// sty_056b68f6: TaskID + AllowedVerbs bind a key to a single task's
+// permission envelope. When TaskID == "" the key is project-scoped
+// (legacy shape) and AllowedVerbs is ignored. When TaskID != ""
+// AuthMiddleware stamps both fields onto CallerIdentity so the
+// verb-allowlist gate (`AssertVerbAllowed`) can reject out-of-set
+// calls per `pr_role_grid`.
 type APIKey struct {
-	ID          string     `json:"id"`
-	WorkspaceID string     `json:"workspace_id"`
-	ProjectID   string     `json:"project_id,omitempty"`
-	OwnerUserID string     `json:"owner_user_id"`
-	Name        string     `json:"name"`
-	Prefix      string     `json:"prefix"`
-	KeyHash     string     `json:"key_hash"`
-	KeySalt     string     `json:"key_salt"`
-	Status      string     `json:"status"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID           string     `json:"id"`
+	WorkspaceID  string     `json:"workspace_id"`
+	ProjectID    string     `json:"project_id,omitempty"`
+	OwnerUserID  string     `json:"owner_user_id"`
+	Name         string     `json:"name"`
+	Prefix       string     `json:"prefix"`
+	KeyHash      string     `json:"key_hash"`
+	KeySalt      string     `json:"key_salt"`
+	Status       string     `json:"status"`
+	TaskID       string     `json:"task_id,omitempty"`
+	AllowedVerbs []string   `json:"allowed_verbs,omitempty"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 // APIKeyStore is the storage surface AuthMiddleware and the MCP
@@ -92,6 +101,12 @@ type APIKeyStore interface {
 	List(ctx context.Context, ownerUserID string, projectID string, includeArchived bool) ([]APIKey, error)
 	Delete(ctx context.Context, id string) error
 	Touch(ctx context.Context, id string, t time.Time) error
+	// RevokeByTaskID flips every active row whose TaskID == taskID to
+	// archived and returns the count flipped. Idempotent — re-call
+	// against the same id returns 0 once the rows are already
+	// archived. sty_056b68f6: invoked from task_update(status=closed)
+	// so a task-scoped key cannot outlive its task.
+	RevokeByTaskID(ctx context.Context, taskID string) (int, error)
 }
 
 // NewAPIKeyID returns a fresh `apk_<8hex>` id. Mirrors the rest of
@@ -282,6 +297,30 @@ func (m *MemoryAgentAPIKeyStore) Touch(ctx context.Context, id string, t time.Ti
 	k.LastUsedAt = &tt
 	m.rows[id] = k
 	return nil
+}
+
+// RevokeByTaskID flips every active row whose TaskID == taskID to
+// archived and returns the count flipped. Idempotent — re-call
+// returns 0 once the rows are already archived. sty_056b68f6.
+func (m *MemoryAgentAPIKeyStore) RevokeByTaskID(ctx context.Context, taskID string) (int, error) {
+	if taskID == "" {
+		return 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	count := 0
+	for id, k := range m.rows {
+		if k.TaskID != taskID {
+			continue
+		}
+		if k.Status == APIKeyStatusArchived {
+			continue
+		}
+		k.Status = APIKeyStatusArchived
+		m.rows[id] = k
+		count++
+	}
+	return count, nil
 }
 
 // Compile-time assertion that MemoryAgentAPIKeyStore satisfies

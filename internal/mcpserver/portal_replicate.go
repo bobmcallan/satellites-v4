@@ -33,7 +33,7 @@ func (s *Server) registerPortalReplicate() {
 		mcpgo.WithString("actions", mcpgo.Required(), mcpgo.Description("JSON array of {type, selector?, value?, timeout_ms?, label?}. Type may be a canonical action or a vocabulary alias.")),
 		mcpgo.WithString("cookies", mcpgo.Description("Optional JSON array of {name, value, domain?, path?, secure?, http_only?}. Domain defaults to target_url host.")),
 	)
-	s.mcp.AddTool(tool, s.handlePortalReplicate)
+	s.addGatedTool(tool, s.handlePortalReplicate)
 }
 
 // handlePortalReplicate is the wire adapter: read JSON args off the

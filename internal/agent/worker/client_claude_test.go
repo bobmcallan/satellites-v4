@@ -294,6 +294,48 @@ func TestBuildMCPConfigJSON_NoToken_OmitsAuthHeader(t *testing.T) {
 	assert.NotContains(t, raw, "Bearer")
 }
 
+// TestBuildMCPConfigJSON_AllowedToolsRenderedSorted asserts the
+// dispatcher's task-scoped narrowing reaches the worktree's
+// .mcp.json. sty_056b68f6: the server-side gate is canonical (AC2);
+// the client narrowing is defence in depth + a reviewer-friendly
+// artefact.
+func TestBuildMCPConfigJSON_AllowedToolsRenderedSorted(t *testing.T) {
+	cfg := config.AgentConfig{
+		SpawnMCPURL:  "http://localhost:8080/mcp",
+		AuthToken:    "sat_taskscoped",
+		AllowedVerbs: []string{"ledger_append", "task_update", "satellites_info"},
+	}
+	raw, err := buildSpawnMCPConfigJSON(cfg)
+	require.NoError(t, err)
+
+	var got struct {
+		MCPServers map[string]struct {
+			Type         string            `json:"type"`
+			URL          string            `json:"url"`
+			Headers      map[string]string `json:"headers"`
+			AllowedTools []string          `json:"allowedTools"`
+		} `json:"mcpServers"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &got))
+	srv := got.MCPServers["satellites"]
+	// Sorted output → deterministic diff.
+	assert.Equal(t, []string{"ledger_append", "satellites_info", "task_update"}, srv.AllowedTools)
+}
+
+// TestBuildMCPConfigJSON_EmptyAllowedVerbsOmitsField asserts the
+// orchestrator's project-scoped path (AllowedVerbs nil) does NOT
+// render an empty `allowedTools` field — that would silently deny
+// every verb under claude code's documented contract.
+func TestBuildMCPConfigJSON_EmptyAllowedVerbsOmitsField(t *testing.T) {
+	cfg := config.AgentConfig{
+		SpawnMCPURL: "http://localhost:8080/mcp",
+		AuthToken:   "sat_orch",
+	}
+	raw, err := buildSpawnMCPConfigJSON(cfg)
+	require.NoError(t, err)
+	assert.NotContains(t, raw, "allowedTools")
+}
+
 // TestFetchHelpers_RouteThroughAPIv1 drives each fetch helper plus
 // appendExecuteEvidence against a per-test httptest server, asserting
 // the request path + decoded request body shape. The cliremote client

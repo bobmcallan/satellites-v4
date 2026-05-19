@@ -158,7 +158,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	infoTool := mcpgo.NewTool("satellites_info",
 		mcpgo.WithDescription("Return the satellites server's version metadata and the calling user's identity."),
 	)
-	s.mcp.AddTool(infoTool, s.handleInfo)
+	s.addGatedTool(infoTool, s.handleInfo)
 
 	// Per cli-primary order:07c (sty_0881d04b): the two surviving
 	// advisory verbs alongside satellites_info. order:07d will
@@ -166,7 +166,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	helpTool := mcpgo.NewTool("satellites_help",
 		mcpgo.WithDescription("Return the bin/satellites-client CLI catalogue (noun groups + verbs + flags + persistent-flag list + exit-code map) as structured JSON. IDE agents call this once at session boot to discover the surface without paying the per-MCP-tool token cost."),
 	)
-	s.mcp.AddTool(helpTool, s.handleSatellitesHelp)
+	s.addGatedTool(helpTool, s.handleSatellitesHelp)
 
 	execTool := mcpgo.NewTool("satellites_exec",
 		mcpgo.WithDescription("Proxy a bin/satellites-client invocation. Spawns the CLI server-side with the supplied argv + optional stdin; returns stdout, stderr, exit_code. Caller's bearer is forwarded via SATELLITES_TOKEN env. Output is bounded by SATELLITES_EXEC_PAYLOAD_CAP (default 1 MiB); wall clock by SATELLITES_EXEC_TIMEOUT (default 30s)."),
@@ -176,7 +176,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		mcpgo.WithString("stdin",
 			mcpgo.Description("Optional stdin body forwarded to the subprocess.")),
 	)
-	s.mcp.AddTool(execTool, s.handleSatellitesExec)
+	s.addGatedTool(execTool, s.handleSatellitesExec)
 
 	// sty_64e69db8: system_version surfaces the GitHub Release
 	// manifest stamp so satellites-client boots can detect version
@@ -185,7 +185,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 	systemVersionTool := mcpgo.NewTool("system_version",
 		mcpgo.WithDescription("Return the latest published satellites-client release stamp by fetching the configured GitHub Release manifest. Cached server-side for 60s. Read-only."),
 	)
-	s.mcp.AddTool(systemVersionTool, s.handleSystemVersion)
+	s.addGatedTool(systemVersionTool, s.handleSystemVersion)
 
 	// sty_796b8fe1: satellites_init returns the structured install /
 	// refresh payload for the canonical `./.satellites/` install layout
@@ -203,7 +203,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		mcpgo.WithString("agent_name",
 			mcpgo.Description("Label for the project-scoped agent API key minted on project-bound sessions. Default cli_default. Idempotent on (caller, project_id, agent_name) — a re-run returns the existing key's metadata.")),
 	)
-	s.mcp.AddTool(satellitesInitTool, s.handleSatellitesInit)
+	s.addGatedTool(satellitesInitTool, s.handleSatellitesInit)
 
 	// sty_2f0db922: substrate_audit mints a kind=work
 	// action=contract:substrate_audit task naming the substrate_auditor
@@ -221,7 +221,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("workspace_id",
 				mcpgo.Description("Optional workspace scope (wksp_<8hex>). Empty falls back to the caller's resolution chain.")),
 		)
-		s.mcp.AddTool(substrateAuditTool, s.handleSubstrateAudit)
+		s.addGatedTool(substrateAuditTool, s.handleSubstrateAudit)
 	}
 
 	if s.deps.Documents != nil {
@@ -243,7 +243,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 				mcpgo.Description("Optional project scope for name-keyed lookups. Defaults to caller's first owned project or the system default."),
 			),
 		)
-		s.mcp.AddTool(getTool, s.handleDocumentGet)
+		s.addGatedTool(getTool, s.handleDocumentGet)
 
 		listTool := mcpgo.NewTool("document_list",
 			mcpgo.WithDescription("List documents in the caller's workspaces, filtered by type/scope/tags/contract_binding/project_id. Workspace scoping is enforced at the handler."),
@@ -255,7 +255,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 				mcpgo.Items(map[string]any{"type": "string"})),
 			mcpgo.WithNumber("limit", mcpgo.Description("Max rows to return (server caps at 500).")),
 		)
-		s.mcp.AddTool(listTool, s.handleDocumentList)
+		s.addGatedTool(listTool, s.handleDocumentList)
 
 		s.registerDocumentWrappers()
 	}
@@ -274,7 +274,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("workspace_id", mcpgo.Description("Optional workspace scope; defaults to the caller's default workspace.")),
 			mcpgo.WithString("description", mcpgo.Description("Optional free-form description.")),
 		)
-		s.mcp.AddTool(addProjTool, s.handleProjectAdd)
+		s.addGatedTool(addProjTool, s.handleProjectAdd)
 
 		updateProjTool := mcpgo.NewTool("project_update",
 			mcpgo.WithDescription("Patch mutable fields on a project. Cannot change workspace_id or repo_url_canonical (immutable post-mint; rename a remote via repo_add)."),
@@ -283,13 +283,13 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("description", mcpgo.Description("Optional description set/clear (empty string clears).")),
 			mcpgo.WithString("status", mcpgo.Description("Optional status: active | archived. Use project_delete for the cascade archive; status=active here un-archives.")),
 		)
-		s.mcp.AddTool(updateProjTool, s.handleProjectUpdate)
+		s.addGatedTool(updateProjTool, s.handleProjectUpdate)
 
 		deleteProjTool := mcpgo.NewTool("project_delete",
 			mcpgo.WithDescription("Soft-delete a project. Cascades: stories → cancelled; API keys → archived; project_set no longer resolves the project. Rejected with project_has_open_work when any story has open tasks. Ledger rows survive — append-only for audit."),
 			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Project id (proj_<8hex>).")),
 		)
-		s.mcp.AddTool(deleteProjTool, s.handleProjectDelete)
+		s.addGatedTool(deleteProjTool, s.handleProjectDelete)
 
 		getProjTool := mcpgo.NewTool("project_get",
 			mcpgo.WithDescription("Return the orientation bundle for a project the caller owns: project row, mcp_url + mcp_config (paste-ready client snippets that scope an MCP client to this project via ?project_id=), intent_body, and active principles. Cross-owner access returns not-found."),
@@ -298,12 +298,12 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 				mcpgo.Description("Project id (proj_<8hex>)."),
 			),
 		)
-		s.mcp.AddTool(getProjTool, s.handleProjectGet)
+		s.addGatedTool(getProjTool, s.handleProjectGet)
 
 		listProjTool := mcpgo.NewTool("project_list",
 			mcpgo.WithDescription("List the caller's projects, newest-first."),
 		)
-		s.mcp.AddTool(listProjTool, s.handleProjectList)
+		s.addGatedTool(listProjTool, s.handleProjectList)
 
 		// project_set — sty_4db7c3a3 + sty_31d51494 layer 2. The agent's
 		// first call after a user prompt fires when the prompt references
@@ -319,7 +319,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("repo_url", mcpgo.Required(), mcpgo.Description("Git remote URL — accepts ssh, https, or git:// forms. Normalised server-side via the same canonicaliser project_add uses. Typically `git remote get-url origin` from the working directory.")),
 			mcpgo.WithString("session_id", mcpgo.Description("Optional explicit session id. Streamable HTTP callers should let the Mcp-Session-Id header carry the id; this arg is for stdio/test callers that can't set the header.")),
 		)
-		s.mcp.AddTool(setProjTool, s.handleProjectSet)
+		s.addGatedTool(setProjTool, s.handleProjectSet)
 	}
 
 	if s.deps.Ledger != nil {
@@ -336,7 +336,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("source_type", mcpgo.Description("manifest | feedback | agent (default) | user | system | migration.")),
 			mcpgo.WithBoolean("sensitive", mcpgo.Description("Marks the row as sensitive — visible only to its author.")),
 		)
-		s.mcp.AddTool(appendTool, s.handleLedgerAppend)
+		s.addGatedTool(appendTool, s.handleLedgerAppend)
 
 		listLedgerTool := mcpgo.NewTool("ledger_list",
 			mcpgo.WithDescription("List ledger entries for a project, newest-first. Caller must own the project. Default excludes status=dereferenced unless overridden via status or include_dereferenced."),
@@ -351,13 +351,13 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithBoolean("include_dereferenced", mcpgo.Description("Include dereferenced rows in the default-status branch.")),
 			mcpgo.WithNumber("limit", mcpgo.Description("Max entries to return (default 100, max 500).")),
 		)
-		s.mcp.AddTool(listLedgerTool, s.handleLedgerList)
+		s.addGatedTool(listLedgerTool, s.handleLedgerList)
 
 		getLedgerTool := mcpgo.NewTool("ledger_get",
 			mcpgo.WithDescription("Return a ledger row by id. Workspace-membership enforced."),
 			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Ledger entry id (ldg_<8hex>).")),
 		)
-		s.mcp.AddTool(getLedgerTool, s.handleLedgerGet)
+		s.addGatedTool(getLedgerTool, s.handleLedgerGet)
 
 		searchLedgerTool := mcpgo.NewTool("ledger_search",
 			mcpgo.WithDescription("Search ledger rows. Combines structured filters with a case-insensitive substring match on content when query is supplied. Empty query + filter returns updated_at DESC."),
@@ -372,20 +372,20 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithBoolean("include_dereferenced", mcpgo.Description("Include dereferenced rows.")),
 			mcpgo.WithNumber("top_k", mcpgo.Description("Max rows (default 20, capped 100).")),
 		)
-		s.mcp.AddTool(searchLedgerTool, s.handleLedgerSearch)
+		s.addGatedTool(searchLedgerTool, s.handleLedgerSearch)
 
 		recallLedgerTool := mcpgo.NewTool("ledger_recall",
 			mcpgo.WithDescription("Return the chain of ledger rows tagged recall_root:<root_id> plus the root row, ordered by created_at ASC. Used by contract claim/resume to load prior evidence."),
 			mcpgo.WithString("root_id", mcpgo.Required(), mcpgo.Description("Root ledger entry id.")),
 		)
-		s.mcp.AddTool(recallLedgerTool, s.handleLedgerRecall)
+		s.addGatedTool(recallLedgerTool, s.handleLedgerRecall)
 
 		dereferenceLedgerTool := mcpgo.NewTool("ledger_dereference",
 			mcpgo.WithDescription("Soft-retire a ledger row by flipping its status to 'dereferenced' and writing a kind:dereference audit row. The original row stays in the chain for audit; default queries hide it. Hard delete is not exposed (pr_root_cause)."),
 			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Ledger entry id to dereference.")),
 			mcpgo.WithString("reason", mcpgo.Required(), mcpgo.Description("Why this row is being dereferenced. Recorded as the audit row's content.")),
 		)
-		s.mcp.AddTool(dereferenceLedgerTool, s.handleLedgerDereference)
+		s.addGatedTool(dereferenceLedgerTool, s.handleLedgerDereference)
 	}
 
 	if s.deps.Stories != nil {
@@ -400,7 +400,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithArray("tags", mcpgo.Description("Tags/labels."),
 				mcpgo.Items(map[string]any{"type": "string"})),
 		)
-		s.mcp.AddTool(addStoryTool, s.handleStoryAdd)
+		s.addGatedTool(addStoryTool, s.handleStoryAdd)
 
 		updateStoryTool := mcpgo.NewTool("story_update",
 			mcpgo.WithDescription("Update a story. Pass only the keys you want to change; omitted keys are left untouched. Tags replace wholesale — pass an empty array to clear. Status moves the story through the lifecycle (ready | in_progress | done | cancelled); the substrate's pr_story_terminal_gate rejects done/cancelled with open work tasks. Fields writes template-declared values (e.g. repro, fix_commit, root_cause); unknown field names are rejected against the category template. Sty_4db0e025 D1 folded story_update_status + story_field_set into this single verb."),
@@ -415,13 +415,13 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("status", mcpgo.Description("Target status: ready | in_progress | done | cancelled. Transitions are validated; pr_story_terminal_gate blocks done/cancelled while open tasks remain.")),
 			mcpgo.WithObject("fields", mcpgo.Description("Template-declared field writes as {name: value}. Empty string clears the field. Unknown field names are rejected against the resolved category template.")),
 		)
-		s.mcp.AddTool(updateStoryTool, s.handleStoryUpdate)
+		s.addGatedTool(updateStoryTool, s.handleStoryUpdate)
 
 		getStoryTool := mcpgo.NewTool("story_get",
 			mcpgo.WithDescription("Return the orientation bundle for a story: row body/status/fields/tags, owning project, recent ledger evidence, the resolved agent_process instruction markdown, and the category template. Workspace-scoped; cross-project access returns not-found."),
 			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Story id (sty_<8hex>).")),
 		)
-		s.mcp.AddTool(getStoryTool, s.handleStoryGet)
+		s.addGatedTool(getStoryTool, s.handleStoryGet)
 
 		listStoryTool := mcpgo.NewTool("story_list",
 			mcpgo.WithDescription("List stories in a project. Supports status, priority, and tag filters."),
@@ -431,7 +431,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("tag", mcpgo.Description("Tag filter (e.g. epic:v4-stories).")),
 			mcpgo.WithNumber("limit", mcpgo.Description("Max stories (default 100, max 500).")),
 		)
-		s.mcp.AddTool(listStoryTool, s.handleStoryList)
+		s.addGatedTool(listStoryTool, s.handleStoryList)
 
 		closeStoryTool := mcpgo.NewTool("story_close",
 			mcpgo.WithDescription("Mechanical close: gate-checks the story's task chain + story_review verdict + template fields; on PASS appends a kind:close-evidence ledger row and walks the story to status=done via UpdateStatusDerived; on FAIL returns {status:\"fail\", gaps:[…]} without mutation. The reasoning surface lives in the upstream contract:story_review task; this verb is structural only (no LLM, same tier as pr_story_terminal_gate). Multi-tenant deploy:behind: consumer-project callers supply pprod_commit (the deployed commit they expect to match the merge_to_main release-evidence pushed_sha); the satellites-self project falls back to satellites_info when SATELLITES_SELF_PROJECT_ID matches; otherwise the gate emits release-evidence:no-deploy-endpoint instead of a misleading deploy:behind. sty_224774f0."),
@@ -440,7 +440,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("pprod_commit", mcpgo.Description("Deployed commit (full or short SHA, ≥7 chars) the substrate verifies against the release-evidence pushed_sha for the deploy:behind gate. Consumer-project callers (vire, magentus-forge, resumere, …) supply this; the satellites-self project leaves it empty and the resolver falls back to satellites_info.")),
 			mcpgo.WithBoolean("skip_deploy_check", mcpgo.Description("Suppresses the deploy:behind / release-evidence:no-deploy-endpoint comparison entirely. release-evidence:absent still fires when no kind:release-evidence row exists. Operator-driven escape valve for callers that have validated convergence out-of-band.")),
 		)
-		s.mcp.AddTool(closeStoryTool, s.handleStoryClose)
+		s.addGatedTool(closeStoryTool, s.handleStoryClose)
 
 		// story_update_status + story_field_set MCP registrations removed
 		// in sty_4db0e025 slice D1 — both folded into story_update above
@@ -475,7 +475,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("project_id", mcpgo.Description("Required for scope=project.")),
 			mcpgo.WithString("user_id", mcpgo.Description("scope=user only. Defaults to the authenticated caller.")),
 		)
-		s.mcp.AddTool(kvGetTool, s.handleKVGet)
+		s.addGatedTool(kvGetTool, s.handleKVGet)
 
 		kvSetTool := mcpgo.NewTool("kv_set",
 			mcpgo.WithDescription("Write a KV value at the named scope. Appends a Type=kv ledger row tagged scope:<scope> + key:<name> (+ user:<id> for scope=user). scope=system requires global_admin; finer per-scope role gates land in story_eb17cb16."),
@@ -486,7 +486,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("project_id", mcpgo.Description("Required for scope=project.")),
 			mcpgo.WithString("user_id", mcpgo.Description("scope=user only. Defaults to the authenticated caller.")),
 		)
-		s.mcp.AddTool(kvSetTool, s.handleKVSet)
+		s.addGatedTool(kvSetTool, s.handleKVSet)
 
 		kvDeleteTool := mcpgo.NewTool("kv_delete",
 			mcpgo.WithDescription("Delete a KV value at the named scope. Appends a tombstone row (kind:tombstone tag + empty Content) — the projection then suppresses the key. Append-only ledger; the prior values stay in the audit chain. scope=system requires global_admin."),
@@ -496,7 +496,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("project_id", mcpgo.Description("Required for scope=project.")),
 			mcpgo.WithString("user_id", mcpgo.Description("scope=user only. Defaults to the authenticated caller.")),
 		)
-		s.mcp.AddTool(kvDeleteTool, s.handleKVDelete)
+		s.addGatedTool(kvDeleteTool, s.handleKVDelete)
 
 		kvGetResolvedTool := mcpgo.NewTool("kv_get_resolved",
 			mcpgo.WithDescription("Resolve a KV key by walking system → user → project → workspace and returning the first hit. system always wins; otherwise lowest-tier wins (user > project > workspace). Missing identifiers skip the corresponding tier — system-only callers may omit all FKs. Returns {key, value, resolved_scope, ...} on hit or not_found. Read path; no auth gate beyond workspace membership. story_405b7221."),
@@ -505,7 +505,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("project_id", mcpgo.Description("Optional. Required to read the project tier.")),
 			mcpgo.WithString("user_id", mcpgo.Description("Optional. Defaults to the authenticated caller. Required (or defaulted) to read the user tier.")),
 		)
-		s.mcp.AddTool(kvGetResolvedTool, s.handleKVGetResolved)
+		s.addGatedTool(kvGetResolvedTool, s.handleKVGetResolved)
 
 		kvListTool := mcpgo.NewTool("kv_list",
 			mcpgo.WithDescription("List all KV values at the named scope. Returns {scope, count, items[]} sorted by key. Tombstoned keys are excluded."),
@@ -514,7 +514,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("project_id", mcpgo.Description("Required for scope=project.")),
 			mcpgo.WithString("user_id", mcpgo.Description("scope=user only. Defaults to the authenticated caller.")),
 		)
-		s.mcp.AddTool(kvListTool, s.handleKVList)
+		s.addGatedTool(kvListTool, s.handleKVList)
 
 		// agent_compose, agent_ephemeral_summary MCP registrations
 		// remain removed (sty_4db0e025 slice B1) — those verbs stay
@@ -529,25 +529,28 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		// supplied, the project's workspace must be in the caller's
 		// membership slice.
 		apikeyCreateTool := mcpgo.NewTool("agent_apikey_create",
-			mcpgo.WithDescription("Mint a project-scoped agent API key. Returns the cleartext key ONCE. project_id optional — when supplied, the project's workspace must be in the caller's memberships. Wire shape mirrors satellites-client agent apikey-create."),
+			mcpgo.WithDescription("Mint an agent API key. Returns the cleartext key ONCE. project_id optional — when supplied, the project's workspace must be in the caller's memberships. task_id (sty_056b68f6) binds the key to one task: AllowedVerbs is clamped to the task agent's pr_role_grid default, the key auto-expires at +6h, and task close revokes it. allowed_verbs (optional) shrinks the role default at mint time — supersets are rejected as allowed_verbs_not_subset (AC6 / pr_no_unrequested_compat)."),
 			mcpgo.WithString("name", mcpgo.Required(), mcpgo.Description("Label for the key (free-form, operator-readable).")),
 			mcpgo.WithString("project_id", mcpgo.Description("Optional project scope. Without it the key is workspace-scoped to the caller's default workspace.")),
-			mcpgo.WithString("expires_at", mcpgo.Description("Optional RFC3339 expiry. Empty = no expiry.")),
+			mcpgo.WithString("task_id", mcpgo.Description("Optional task scope. When supplied, the key inherits the task agent's role-default verb allowlist, auto-expires at +6h (unless overridden), and is revoked on task_update(status=closed).")),
+			mcpgo.WithArray("allowed_verbs", mcpgo.Description("Optional verb allowlist override. Must be a SUBSET of the role default (allowed_verbs_not_subset on superset). Ignored when task_id is empty."),
+				mcpgo.Items(map[string]any{"type": "string"})),
+			mcpgo.WithString("expires_at", mcpgo.Description("Optional RFC3339 expiry. Empty for project-scoped keys = no expiry; empty for task-scoped keys = now+6h default.")),
 		)
-		s.mcp.AddTool(apikeyCreateTool, s.handleAgentAPIKeyCreate)
+		s.addGatedTool(apikeyCreateTool, s.handleAgentAPIKeyCreate)
 
 		apikeyListTool := mcpgo.NewTool("agent_apikey_list",
 			mcpgo.WithDescription("List API keys owned by the caller. project_id filters; include_archived surfaces deleted rows."),
 			mcpgo.WithString("project_id", mcpgo.Description("Optional project scope filter.")),
 			mcpgo.WithBoolean("include_archived", mcpgo.Description("Include archived (deleted) keys.")),
 		)
-		s.mcp.AddTool(apikeyListTool, s.handleAgentAPIKeyList)
+		s.addGatedTool(apikeyListTool, s.handleAgentAPIKeyList)
 
 		apikeyDeleteTool := mcpgo.NewTool("agent_apikey_delete",
 			mcpgo.WithDescription("Archive (soft-delete) an API key. The caller must own the key; subsequent bearer authentications with the key fail."),
 			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Key id (apk_<8hex>).")),
 		)
-		s.mcp.AddTool(apikeyDeleteTool, s.handleAgentAPIKeyDelete)
+		s.addGatedTool(apikeyDeleteTool, s.handleAgentAPIKeyDelete)
 
 		if s.deps.Sessions != nil {
 			// task_add (sty_a427368d, sty_27516920): mint one task at
@@ -568,7 +571,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 				mcpgo.WithString("parent_task_id", mcpgo.Description("Conversation-thread anchor. Rejected as parent_task_not_found when the referenced task is not visible to the caller.")),
 				mcpgo.WithString("trigger", mcpgo.Description("Optional runner payload as a JSON object string, e.g. `{\"branch\":\"…\",\"sha\":\"…\"}`. Stored verbatim on Task.Trigger; the substrate does not validate the JSON shape (schemaless field — downstream runners parse leniently).")),
 			)
-			s.mcp.AddTool(taskAddTool, s.handleTaskAdd)
+			s.addGatedTool(taskAddTool, s.handleTaskAdd)
 
 			// task_update (sty_a427368d, sty_27516920): mutate a task's
 			// lifecycle (status=closed) OR patch its linkage fields
@@ -583,7 +586,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 				mcpgo.WithString("prior_task_id", mcpgo.Description("Patch the same-slot retry pointer. Empty string clears it. Rejected on terminal rows (task_already_terminal).")),
 				mcpgo.WithString("parent_task_id", mcpgo.Description("Patch the conversation-thread anchor. Empty string clears it. Rejected on terminal rows (task_already_terminal).")),
 			)
-			s.mcp.AddTool(taskUpdateTool, s.handleTaskUpdate)
+			s.addGatedTool(taskUpdateTool, s.handleTaskUpdate)
 
 			// session_whoami and session_register MCP registrations removed
 			// in sty_4db0e025 slice B3 — session_register is auto-applied
@@ -601,18 +604,18 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithDescription("Add a new workspace and record the caller as admin. The caller must be authenticated."),
 			mcpgo.WithString("name", mcpgo.Required(), mcpgo.Description("Workspace display name.")),
 		)
-		s.mcp.AddTool(addWsTool, s.handleWorkspaceAdd)
+		s.addGatedTool(addWsTool, s.handleWorkspaceAdd)
 
 		getWsTool := mcpgo.NewTool("workspace_get",
 			mcpgo.WithDescription("Return a workspace the caller is a member of. Non-member access returns not-found."),
 			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Workspace id (wksp_<8hex>).")),
 		)
-		s.mcp.AddTool(getWsTool, s.handleWorkspaceGet)
+		s.addGatedTool(getWsTool, s.handleWorkspaceGet)
 
 		listWsTool := mcpgo.NewTool("workspace_list",
 			mcpgo.WithDescription("List the caller's member workspaces, newest-first."),
 		)
-		s.mcp.AddTool(listWsTool, s.handleWorkspaceList)
+		s.addGatedTool(listWsTool, s.handleWorkspaceList)
 
 		addMemberTool := mcpgo.NewTool("workspace_member_add",
 			mcpgo.WithDescription("Add a user to a workspace at the given role. Caller must be an admin of the workspace."),
@@ -620,13 +623,13 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("user_id", mcpgo.Required(), mcpgo.Description("User id to add.")),
 			mcpgo.WithString("role", mcpgo.Required(), mcpgo.Description("admin | member | reviewer | viewer")),
 		)
-		s.mcp.AddTool(addMemberTool, s.handleWorkspaceMemberAdd)
+		s.addGatedTool(addMemberTool, s.handleWorkspaceMemberAdd)
 
 		listMemberTool := mcpgo.NewTool("workspace_member_list",
 			mcpgo.WithDescription("List members of a workspace. Caller must be a member (any role)."),
 			mcpgo.WithString("workspace_id", mcpgo.Required(), mcpgo.Description("Workspace id.")),
 		)
-		s.mcp.AddTool(listMemberTool, s.handleWorkspaceMemberList)
+		s.addGatedTool(listMemberTool, s.handleWorkspaceMemberList)
 
 		updateRoleTool := mcpgo.NewTool("workspace_member_update_role",
 			mcpgo.WithDescription("Change an existing member's role. Caller must be an admin. Downgrading the last admin is rejected."),
@@ -634,14 +637,14 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("user_id", mcpgo.Required(), mcpgo.Description("Target user id.")),
 			mcpgo.WithString("role", mcpgo.Required(), mcpgo.Description("New role.")),
 		)
-		s.mcp.AddTool(updateRoleTool, s.handleWorkspaceMemberUpdateRole)
+		s.addGatedTool(updateRoleTool, s.handleWorkspaceMemberUpdateRole)
 
 		removeMemberTool := mcpgo.NewTool("workspace_member_remove",
 			mcpgo.WithDescription("Remove a member from a workspace. Caller must be an admin. Removing the last admin is rejected."),
 			mcpgo.WithString("workspace_id", mcpgo.Required(), mcpgo.Description("Workspace id.")),
 			mcpgo.WithString("user_id", mcpgo.Required(), mcpgo.Description("User id to remove.")),
 		)
-		s.mcp.AddTool(removeMemberTool, s.handleWorkspaceMemberRemove)
+		s.addGatedTool(removeMemberTool, s.handleWorkspaceMemberRemove)
 	}
 
 	// system_seed_run MCP registration removed in sty_4db0e025 slice B3 —
@@ -658,7 +661,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 		mcpgo.WithDescription("Re-run the project-tier configseed loader for one project (config/seed/<project_id>/<kind>/*.md). Global admin only. Produces only scope=project rows; system seeding is unchanged. Returns a summary {project_id, loaded, created, updated, skipped, errors, ledger_id}. Each invocation writes a kind:project-seed-run ledger row attached to the project."),
 		mcpgo.WithString("project_id", mcpgo.Required(), mcpgo.Description("Project to re-seed. The project must already exist; the loader does not auto-create projects.")),
 	)
-	s.mcp.AddTool(projectSeedTool, s.handleProjectSeedRun)
+	s.addGatedTool(projectSeedTool, s.handleProjectSeedRun)
 
 	// sty_51571015: agent dispatch is seed-prescribed, not Go code.
 	// The orchestrator session reads the dispatch mechanism from its
@@ -678,7 +681,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithDescription("Return a task by id. Workspace-scoped."),
 			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Task id.")),
 		)
-		s.mcp.AddTool(getTaskTool, s.handleTaskGet)
+		s.addGatedTool(getTaskTool, s.handleTaskGet)
 
 		listTaskTool := mcpgo.NewTool("task_list",
 			mcpgo.WithDescription("List tasks matching filters. Workspace-scoped. Supports filtering on story_id and kind. Archived rows (sty_dc2998c5 retention sweep) are excluded by default; pass include_archived=true to opt in."),
@@ -691,14 +694,14 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithBoolean("include_archived", mcpgo.Description("Include rows with status=archived. Default false — the retention sweep moves closed rows older than the project window into archived; opt in to include them in history queries.")),
 			mcpgo.WithNumber("limit", mcpgo.Description("Max rows to return.")),
 		)
-		s.mcp.AddTool(listTaskTool, s.handleTaskList)
+		s.addGatedTool(listTaskTool, s.handleTaskList)
 
 		claimTaskTool := mcpgo.NewTool("task_claim",
 			mcpgo.WithDescription("Atomic claim: picks highest-priority oldest-queued task from the worker's workspace(s). Returns null when queue is empty. Writes a kind:task-claimed ledger row."),
 			mcpgo.WithString("worker_id", mcpgo.Description("Worker id. Defaults to the caller's user id.")),
 			mcpgo.WithString("workspace_id", mcpgo.Description("Narrow to one workspace. Defaults to all caller memberships.")),
 		)
-		s.mcp.AddTool(claimTaskTool, s.handleTaskClaim)
+		s.addGatedTool(claimTaskTool, s.handleTaskClaim)
 
 		// sty_41488515 / sty_c6d76a5b: task_walk returns one coherent
 		// payload describing where a story sits in its task chain —
@@ -709,7 +712,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithDescription("Return where a story sits in its task chain: story header, ordered tasks with action / kind / status / claimer / iteration, a current_task_id pointer, and a per-action summary (work/review counts + ledger row count). Single roundtrip orientation. Workspace-scoped. Sty_41488515."),
 			mcpgo.WithString("story_id", mcpgo.Required(), mcpgo.Description("Story whose walk should be returned.")),
 		)
-		s.mcp.AddTool(taskWalkTool, s.handleTaskWalk)
+		s.addGatedTool(taskWalkTool, s.handleTaskWalk)
 
 		// sty_4fb2d985: chain_* router verbs. Substrate-side
 		// auto-router replacing the operator-side `route_epic.sh`
@@ -722,13 +725,13 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithDescription("Read-only chain snapshot: story header, per-phase live task with auto-supersession-aware selection, next dispatchable id, terminal flag, anomalies. Sty_4fb2d985."),
 			mcpgo.WithString("story_id", mcpgo.Required(), mcpgo.Description("Story to inspect.")),
 		)
-		s.mcp.AddTool(chainStatusTool, s.handleChainStatus)
+		s.addGatedTool(chainStatusTool, s.handleChainStatus)
 
 		chainAdvanceTool := mcpgo.NewTool("chain_advance",
 			mcpgo.WithDescription("Compute the next dispatchable task on the chain per canonical phase order with auto-supersession-aware live selection. MCP variant: no daemon coupling — returns next_task_id; caller dispatches via task_run. Sty_4fb2d985."),
 			mcpgo.WithString("story_id", mcpgo.Required(), mcpgo.Description("Story whose chain to advance.")),
 		)
-		s.mcp.AddTool(chainAdvanceTool, s.handleChainAdvance)
+		s.addGatedTool(chainAdvanceTool, s.handleChainAdvance)
 
 		chainRunTool := mcpgo.NewTool("chain_run",
 			mcpgo.WithDescription("Loop chain_advance + poll until terminal. MCP variant is an observability surface — every iteration is a substrate roundtrip; operator-side dispatch belongs to the CLI. Sty_4fb2d985."),
@@ -736,7 +739,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithNumber("poll_interval_seconds", mcpgo.Description("Loop poll cadence in seconds. Default 30.")),
 			mcpgo.WithNumber("timeout_seconds", mcpgo.Description("Hard deadline in seconds. 0 = no timeout.")),
 		)
-		s.mcp.AddTool(chainRunTool, s.handleChainRun)
+		s.addGatedTool(chainRunTool, s.handleChainRun)
 
 		// story_export_walk MCP registration removed in sty_4db0e025 slice
 		// C1+B2 — operator authoring per sty_3dc39a5c "Removed from MCP"
@@ -759,7 +762,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 				mcpgo.WithString("kind", mcpgo.Required(), mcpgo.Description("One of start | heartbeat | stdout | stderr | stop.")),
 				mcpgo.WithString("payload", mcpgo.Description("Opaque JSON payload, one shape per kind.")),
 			)
-			s.mcp.AddTool(taskLogAppendTool, s.handleTaskLogAppend)
+			s.addGatedTool(taskLogAppendTool, s.handleTaskLogAppend)
 
 			taskLogListTool := mcpgo.NewTool("task_log_list",
 				mcpgo.WithDescription("List task_log rows for a task ordered by seq ASC. Use from_seq for replay-after-cursor (matches the SSE Last-Event-ID resume shape). Sty_8c17b89d."),
@@ -767,7 +770,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 				mcpgo.WithNumber("from_seq", mcpgo.Description("Inclusive lower bound on seq. Defaults to 0.")),
 				mcpgo.WithNumber("limit", mcpgo.Description("Max rows to return. Defaults to unbounded.")),
 			)
-			s.mcp.AddTool(taskLogListTool, s.handleTaskLogList)
+			s.addGatedTool(taskLogListTool, s.handleTaskLogList)
 		}
 	}
 
@@ -778,20 +781,20 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("default_branch", mcpgo.Description("Default branch (default: main).")),
 			mcpgo.WithString("project_id", mcpgo.Description("Project scope. Defaults to caller's first owned project.")),
 		)
-		s.mcp.AddTool(addRepoTool, s.handleRepoAdd)
+		s.addGatedTool(addRepoTool, s.handleRepoAdd)
 
 		getRepoTool := mcpgo.NewTool("repo_get",
 			mcpgo.WithDescription("Return a repo by id. Workspace-scoped — cross-workspace returns not-found."),
 			mcpgo.WithString("repo_id", mcpgo.Required(), mcpgo.Description("Repo id.")),
 		)
-		s.mcp.AddTool(getRepoTool, s.handleRepoGet)
+		s.addGatedTool(getRepoTool, s.handleRepoGet)
 
 		listRepoTool := mcpgo.NewTool("repo_list",
 			mcpgo.WithDescription("List repos in a project. Defaults to caller's workspaces and status=active. Pass status=archived for archived rows or status=all for both."),
 			mcpgo.WithString("project_id", mcpgo.Description("Project scope. Defaults to caller's first owned project.")),
 			mcpgo.WithString("status", mcpgo.Description("active (default) | archived | all")),
 		)
-		s.mcp.AddTool(listRepoTool, s.handleRepoList)
+		s.addGatedTool(listRepoTool, s.handleRepoList)
 
 		searchTool := mcpgo.NewTool("repo_search",
 			mcpgo.WithDescription("Symbol search via the satellites code indexer. Writes a kind:repo-query audit row. Returns the indexer payload as JSON. Indexer outage → structured `code_index_unavailable` error."),
@@ -800,7 +803,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("kind", mcpgo.Description("Optional symbol kind filter.")),
 			mcpgo.WithString("language", mcpgo.Description("Optional language filter.")),
 		)
-		s.mcp.AddTool(searchTool, s.handleRepoSearch)
+		s.addGatedTool(searchTool, s.handleRepoSearch)
 
 		searchTextTool := mcpgo.NewTool("repo_search_text",
 			mcpgo.WithDescription("Full-text search via the satellites code indexer. Writes a kind:repo-query audit row."),
@@ -808,28 +811,28 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("query", mcpgo.Required(), mcpgo.Description("Search query.")),
 			mcpgo.WithString("file_pattern", mcpgo.Description("Optional file glob.")),
 		)
-		s.mcp.AddTool(searchTextTool, s.handleRepoSearchText)
+		s.addGatedTool(searchTextTool, s.handleRepoSearchText)
 
 		symbolSourceTool := mcpgo.NewTool("repo_get_symbol_source",
 			mcpgo.WithDescription("Source of one symbol via the satellites code indexer."),
 			mcpgo.WithString("repo_id", mcpgo.Required(), mcpgo.Description("Repo id.")),
 			mcpgo.WithString("symbol_id", mcpgo.Required(), mcpgo.Description("Indexer-internal symbol id.")),
 		)
-		s.mcp.AddTool(symbolSourceTool, s.handleRepoGetSymbolSource)
+		s.addGatedTool(symbolSourceTool, s.handleRepoGetSymbolSource)
 
 		fileTool := mcpgo.NewTool("repo_get_file",
 			mcpgo.WithDescription("Raw file content via the satellites code indexer."),
 			mcpgo.WithString("repo_id", mcpgo.Required(), mcpgo.Description("Repo id.")),
 			mcpgo.WithString("path", mcpgo.Required(), mcpgo.Description("Repo-relative file path.")),
 		)
-		s.mcp.AddTool(fileTool, s.handleRepoGetFile)
+		s.addGatedTool(fileTool, s.handleRepoGetFile)
 
 		outlineTool := mcpgo.NewTool("repo_get_outline",
 			mcpgo.WithDescription("File outline (symbols + nesting) via the satellites code indexer."),
 			mcpgo.WithString("repo_id", mcpgo.Required(), mcpgo.Description("Repo id.")),
 			mcpgo.WithString("path", mcpgo.Required(), mcpgo.Description("Repo-relative file path.")),
 		)
-		s.mcp.AddTool(outlineTool, s.handleRepoGetOutline)
+		s.addGatedTool(outlineTool, s.handleRepoGetOutline)
 	}
 
 	// changelog_*: V3 parity port (sty_12af0bdc). All five verbs honour
@@ -846,13 +849,13 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("content", mcpgo.Required(), mcpgo.Description("Markdown body. The first line is treated as the heading by the portal panel.")),
 			mcpgo.WithString("effective_date", mcpgo.Description("RFC3339 timestamp. Defaults to now.")),
 		)
-		s.mcp.AddTool(addChangelogTool, s.handleChangelogAdd)
+		s.addGatedTool(addChangelogTool, s.handleChangelogAdd)
 
 		getChangelogTool := mcpgo.NewTool("changelog_get",
 			mcpgo.WithDescription("Return a changelog row by id. Workspace-scoped — cross-workspace returns not-found."),
 			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Changelog id (chg_<8hex>).")),
 		)
-		s.mcp.AddTool(getChangelogTool, s.handleChangelogGet)
+		s.addGatedTool(getChangelogTool, s.handleChangelogGet)
 
 		listChangelogTool := mcpgo.NewTool("changelog_list",
 			mcpgo.WithDescription("List changelog rows in a project. Newest-first by created_at. Filter by service when set."),
@@ -860,7 +863,7 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("service", mcpgo.Description("Optional service filter.")),
 			mcpgo.WithNumber("limit", mcpgo.Description("Max rows (default 50, max 500).")),
 		)
-		s.mcp.AddTool(listChangelogTool, s.handleChangelogList)
+		s.addGatedTool(listChangelogTool, s.handleChangelogList)
 
 		updateChangelogTool := mcpgo.NewTool("changelog_update",
 			mcpgo.WithDescription("Edit a changelog row. Service / project / workspace identity is set at create and not editable here. Pass only the fields you want to change."),
@@ -870,13 +873,13 @@ func New(cfg *config.Config, logger arbor.ILogger, startedAt time.Time, deps Dep
 			mcpgo.WithString("content", mcpgo.Description("New markdown body.")),
 			mcpgo.WithString("effective_date", mcpgo.Description("New RFC3339 effective date.")),
 		)
-		s.mcp.AddTool(updateChangelogTool, s.handleChangelogUpdate)
+		s.addGatedTool(updateChangelogTool, s.handleChangelogUpdate)
 
 		deleteChangelogTool := mcpgo.NewTool("changelog_delete",
 			mcpgo.WithDescription("Delete a changelog row. Workspace-scoped — cross-workspace returns not-found."),
 			mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("Changelog id.")),
 		)
-		s.mcp.AddTool(deleteChangelogTool, s.handleChangelogDelete)
+		s.addGatedTool(deleteChangelogTool, s.handleChangelogDelete)
 	}
 
 	// portal_replicate: chromedp-driven UI replication, story-scoped.

@@ -56,8 +56,8 @@ the allowed-values set + the seven-agent grid mapping below:
 
 `role:` rides the existing frontmatter merge path
 (`mergeFrontmatterIntoJSON`) into the agent row's `structured` JSON
-— no parser change is required, no transitional shim, no
-`role: legacy` value. Citing `pr_no_unrequested_compat`.
+— no parser change is required, no transitional shim, no fourth
+"un-migrated" placeholder value. Citing `pr_no_unrequested_compat`.
 
 ## What this forbids
 
@@ -66,7 +66,7 @@ the allowed-values set + the seven-agent grid mapping below:
   before introducing a value.
 - A per-task `role` override. Authority is pinned at the agent doc;
   tasks do not carry escalation knobs.
-- A transitional `role: legacy` value for un-migrated agents. All
+- A transitional placeholder value for un-migrated agents. All
   seven seeded agents land on the grid in the same diff.
 
 ## Citations

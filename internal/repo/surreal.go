@@ -331,7 +331,7 @@ func (s *SurrealStore) DeleteByProjectID(ctx context.Context, projectID string) 
 		return 0, nil
 	}
 	for _, id := range ids {
-		if _, err := surrealdb.Query[any](ctx, s.db, "DELETE repo_commits WHERE repo_id = $repo", map[string]any{"repo": id}); err != nil {
+		if _, err := surrealdb.Query[any](ctx, s.db, "DELETE commits WHERE repo_id = $repo", map[string]any{"repo": id}); err != nil {
 			return 0, fmt.Errorf("repo: delete commits: %w", err)
 		}
 	}
